@@ -1,26 +1,25 @@
 # Almena
 
 `almena` is the application people use to reach the Almena network, and — on a computer — to
-operate the node running on it. It is `node`'s desktop application and `client` becoming one
-codebase for iOS, Android, Windows, Ubuntu and macOS.
+operate the node running on it. One codebase for iOS, Android, Windows, Linux and macOS.
 
 It builds **one program** on **one framework**. It briefly built two — a terminal interface, in
-[spec 0003](https://github.com/almena-network/almena-network/blob/develop/specs/0003-a-workspace-and-a-terminal-interface.md)
-— and [spec 0006](https://github.com/almena-network/almena-network/blob/develop/specs/0006-one-framework-and-tauris-own-cli.md)
+[spec 0003](https://github.com/almena-network/almena-network/blob/main/specs/0003-a-workspace-and-a-terminal-interface.md)
+— and [spec 0006](https://github.com/almena-network/almena-network/blob/main/specs/0006-one-framework-and-tauris-own-cli.md)
 deleted it: everything here is Tauri 2, reachable from one set of documentation and one upgrade
 path. What that gave up, deliberately, is the machine with no desktop on it.
 
-> **Status: a scaffold under construction.** Nothing of the two applications has moved here
-> yet. `node` and `client` are what ships, and they stay that way until a spec says otherwise.
-> Interfaces, data formats, commands and configuration change without notice, and no release
-> has been published.
+> **Status: under construction.** This is the starting point of the application, not a
+> release: interfaces, data formats, commands and configuration change without notice, and no
+> release has been published. There is no client of the node API yet, so the application
+> reaches no node — the first screen says exactly that.
 
-The unification advances one written step at a time, and each step is specified before it is
+Development advances one written step at a time, and each step is specified before it is
 taken. The specs live in the
-[almena-network](https://github.com/almena-network/almena-network/tree/develop/specs)
+[almena-network](https://github.com/almena-network/almena-network/tree/main/specs)
 repository, which is also where the project's working agreements are kept. This repository's
 task runner is
-[spec 0001](https://github.com/almena-network/almena-network/blob/develop/specs/0001-a-task-runner-for-almena.md).
+[spec 0001](https://github.com/almena-network/almena-network/blob/main/specs/0001-a-task-runner-for-almena.md).
 
 ## Stack
 
@@ -68,7 +67,7 @@ task dev:android   # or task dev:ios
 | --- | --- |
 | `task install` | Installs JavaScript dependencies. Skipped when already up to date. |
 | `task catalogs` | Checks that every translation catalog holds the same keys. |
-| `task check` | Checks the Rust formatting, runs clippy over the workspace, type-checks the frontend, and runs `task isolation`. |
+| `task check` | Checks the Rust formatting, runs clippy over the workspace, type-checks the frontend, and runs `task catalogs` and `task isolation`. |
 | `task check:mobile` | Type-checks the application for the mobile targets. `task check` does not — it only ever compiles for this machine. |
 | `task isolation` | Asserts that `almena-log`, which holds the log format, reaches no framework. |
 | `task test` | Runs the test suites across the workspace. Rust only today — see below. |
@@ -236,21 +235,17 @@ Stated rather than discovered by running something and being surprised.
 
 | | Today |
 | --- | --- |
-| The application itself | Still the `create-tauri-app` scaffold's one screen, Vite and Tauri logos included. No screen of `node` or `client` has moved here. The window title is the template's too, and it is text a person reads rather than an icon, so it changes with the first catalog. |
+| A client of the node API | Not written yet. The application reaches no daemon and shows no figure about one; the first screen says it is connected to no node because that is the whole truth available to it. |
 | `task check` | Rust and `tsc` only. ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and there is no `task format` for TypeScript. |
 | `--help` on Windows | The plugin cannot write back to the console that launched a release build, so `--help` and `--version` print nothing there. Everything else about them is the same, and no other platform is affected. |
 | `productName` and `identifier` | Still the scaffold's `desktop` and `network.almena.desktop`, and now visible: the log directory is built from the identifier, so records land under a name nobody chose. The bundle identifier names the directories this application will write to, so settling it is a decision taken in its own step — and the two deploy scripts carry a copy of it that changes with it. |
 
 ## Contributing
 
-The unification advances one specified step at a time, and a step is agreed before it is
+Development advances one specified step at a time, and a step is agreed before it is
 implemented — [CONTRIBUTING.md](CONTRIBUTING.md) says how that works, what a change is expected
 to follow, and what `task check` does and does not cover today. By taking part you agree to the
 [Code of Conduct](CODE_OF_CONDUCT.md).
-
-A screen that has not moved here yet still belongs to
-[node](https://github.com/almena-network/node) or
-[client](https://github.com/almena-network/client), and so does its bug.
 
 ## Security
 

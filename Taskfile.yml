@@ -87,11 +87,11 @@ tasks:
 
   # ----- Checks --------------------------------------------------------------
 
-  # `check`, `format` and `test` are narrower here than in `client`, and deliberately so.
-  # ESLint, Prettier and Vitest are not installed in this repository yet and neither are the
-  # translation catalogs, so the frontend halves of these three — `pnpm lint`,
-  # `pnpm format:check`, `pnpm test` and the `catalogs` task — are absent rather than present
-  # and passing vacuously. Each joins the task below it in the step that brings its tool.
+  # `check`, `format` and `test` are narrower than they will end up, and deliberately so.
+  # ESLint, Prettier and Vitest are not installed in this repository yet, so the frontend
+  # halves of these three — `pnpm lint`, `pnpm format:check`, `pnpm test` — are absent rather
+  # than present and passing vacuously. Each joins the task below it in the step that brings
+  # its tool.
 
   catalogs:
     desc: Check that every translation catalog holds the same keys

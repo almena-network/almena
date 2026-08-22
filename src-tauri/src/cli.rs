@@ -6,9 +6,10 @@
 //! argument was a request to print something and stop, rather than to open a window.
 //!
 //! There is deliberately no `--node`. An address would be accepted, used for nothing and
-//! refused by nothing, and this build has no client of the node API to honour one with —
-//! `.claude/rules/transparency.md`, and `.claude/rules/ipv6-only.md` for the refusal that
-//! would have to come with it.
+//! refused by nothing, and this build has no client of the node API to honour one with. An
+//! argument that does nothing is a lie about the application, and accepting an address means
+//! refusing every IPv4 one — Almena is IPv6-only — so the flag arrives with the code that can
+//! honour both halves.
 
 use log::info;
 use tauri::App;
@@ -20,7 +21,7 @@ use tauri_plugin_cli::CliExt;
 /// exits rather than opening a window. Returns `false` for an ordinary launch, and for a
 /// command line this build could not parse: a person who mistyped a flag is better served by
 /// the application they asked for than by a refusal it cannot explain in their language
-/// (`.claude/rules/user-facing-text.md`).
+/// (`.agents/rules/user-facing-text.md`).
 ///
 /// # The two arrive differently, and neither is obvious
 ///

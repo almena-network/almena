@@ -2,14 +2,8 @@
 
 ## Supported versions
 
-Almena is under construction and has not had a release yet: this repository is a scaffold, and
-what ships today are `node` and `client`. Only the current `develop` branch receives fixes.
-Once versions are published, this section will list which ones are supported.
-
-A vulnerability in a screen that has not moved here yet belongs to the repository it still
-lives in — [node](https://github.com/almena-network/node) or
-[client](https://github.com/almena-network/client). Report it there, and tell us anyway if you
-believe this repository will inherit it.
+Almena is under construction and has not had a release yet. Only the current `develop` branch
+receives fixes. Once versions are published, this section will list which ones are supported.
 
 ## Reporting a vulnerability
 

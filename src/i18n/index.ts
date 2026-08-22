@@ -19,10 +19,9 @@ import es from "@/i18n/locales/es.json";
  * A language belongs in this list only once its catalog is complete: partial support is not
  * shipped, and until then the language is not offered at all.
  *
- * The list is repeated in three places the platforms read rather than this file:
- * `scripts/check-catalogs.mjs`, `CFBundleLocalizations` in `src-tauri/Info.ios.plist`, and
- * `src-tauri/gen/android/app/src/main/res/xml/locales_config.xml`. Adding a language means
- * all four, which is the point — a language is added deliberately, never by accident.
+ * The list is repeated once, in `scripts/check-catalogs.mjs`, which cannot read this file.
+ * Adding a language means both places, which is the point — a language is added
+ * deliberately, never by accident.
  */
 const LANGUAGES = ["en", "es"] as const;
 
@@ -89,11 +88,11 @@ function deviceLanguage(): Language {
  * The document language is what a screen reader and the browser's own hyphenation go by, and
  * the document title is what a browser tab would show.
  *
- * **What the operating system draws is not here yet.** `client` hands the window title and
- * its tray's labels to the Rust side from this function, because only this side has the
- * catalogs. This application has no tray and does not yet set its window title from a catalog:
- * the title in `tauri.conf.json` is what the platform draws until it does, and that is the
- * step which puts the hand-off back.
+ * **What the operating system draws is not here yet.** A native window title or a tray label
+ * is drawn by the platform, not the webview, so localizing one means handing catalog strings
+ * to the Rust side from this function — only this side has the catalogs. This application has
+ * no tray and does not yet set its native title from a catalog: the title in
+ * `tauri.conf.json` is what the platform draws until the step that adds the hand-off.
  *
  * @param language - The language now in use, as a tag for the document element.
  */

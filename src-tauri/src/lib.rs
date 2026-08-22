@@ -23,8 +23,8 @@ use tauri_plugin_window_state::StateFlags;
 /// What the window remembers between runs.
 ///
 /// Everything the plugin tracks: size, position, maximised, decorations, fullscreen and
-/// visibility. `client` withholds `VISIBLE` because closing its window only hides it to a
-/// tray, so a session ended that way would be restored with no window on screen. This
+/// visibility. An application that hides to a tray instead of quitting has to withhold
+/// `VISIBLE`, because a session ended hidden would be restored with no window on screen. This
 /// application has no tray yet and closing it quits, so a run always ends visible and there is
 /// nothing to withhold. **That changes in the same commit the tray arrives.**
 #[cfg(desktop)]

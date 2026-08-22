@@ -5,17 +5,17 @@ issue or a pull request.
 
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-> **This repository is under construction.** `almena` is `node`'s desktop application and
-> `client` becoming one, and today it is a scaffold: `node` and `client` are what ships. What
-> that means for a contributor is the next section — the work here advances one written step
-> at a time, and a change that is not part of a step is a change nobody agreed to.
+> **This repository is under construction.** `almena` is the application of the Almena
+> network, and today it is its starting point: no release has been published. What that means
+> for a contributor is the next section — the work here advances one written step at a time,
+> and a change that is not part of a step is a change nobody agreed to.
 
 ## The work happens in steps, and a step is specified first
 
-Every piece of the unification is written down before it is taken, as a numbered spec in the
-[almena-network](https://github.com/almena-network/almena-network/tree/develop/specs)
-repository, which is also where the project's working agreements live. A spec says what moves,
-what deliberately does not, how it is checked, and what it makes wrong elsewhere.
+Every step of the work is written down before it is taken, as a numbered spec in the
+[almena-network](https://github.com/almena-network/almena-network/tree/main/specs)
+repository, which is also where the project's working agreements live. A spec says what
+changes, what deliberately does not, how it is checked, and what it makes wrong elsewhere.
 
 So, before writing code:
 
@@ -24,10 +24,10 @@ So, before writing code:
 - **If there is no spec, propose one** rather than opening a pull request. An issue describing
   the step is the right start.
 - **A finished step leaves nothing describing the old arrangement** — the rules, this
-  repository's five documentation files, the translation catalogs of every interface it
-  touched. That closing checklist is part of the change, not a follow-up.
+  repository's five documentation files, the translation catalogs. That closing checklist is
+  part of the change, not a follow-up.
 
-A fix that is not part of the migration — a broken command, a wrong sentence in the README, a
+A fix that is not part of a step — a broken command, a wrong sentence in the README, a
 dependency that will not build — needs no spec. Open it directly.
 
 ## Reporting a problem
@@ -36,10 +36,6 @@ Open an issue describing what you did, what you expected, and what happened inst
 device or computer, the operating system and its version, and the commit you were on. If the
 problem is a security vulnerability, do **not** open an issue — follow
 [SECURITY.md](SECURITY.md).
-
-Check first whether the problem is really here: a screen that has not moved yet belongs to
-[node](https://github.com/almena-network/node) or
-[client](https://github.com/almena-network/client), and so does its bug.
 
 ## Setting up
 
@@ -63,15 +59,15 @@ is text an end user reads.
 comes from a translation catalog, looked up by key. This includes the easily forgotten ones:
 window titles, menu entries, notifications, empty states, validation messages, and errors
 that surface to the user — including errors raised in the Rust backend, which travel as an
-identifier the frontend translates, never as prose. There is no catalog here yet; the first
-screen that needs one brings it, in English and Spanish together.
+identifier the frontend translates, never as prose. The catalogs live in `src/i18n/locales/`,
+English and Spanish together, and `task catalogs` holds them to the same keys.
 
 **Nothing about a person is stored, sent or inferred.** No account, no sign-up, no field
 asking for a name, an e-mail address or a telephone number, and no value pre-filled from the
 hostname or the logged-in user. This application talks to a node over the node API and to
 nothing else: no telemetry, no analytics, no crash reporting, no update ping, in any build.
 
-**Every platform moves together.** iOS, Android, Windows, Ubuntu and macOS are supported
+**Every platform moves together.** iOS, Android, Windows, Linux and macOS are supported
 equally: none gets a feature first. A change that needs platform-specific code carries the
 equivalent path for the rest in the same pull request, and no dependency is adopted unless it
 builds everywhere.
@@ -108,13 +104,11 @@ caller, a `# Errors` section on anything returning `Result`, and a documented pa
 wherever its name and type do not already say everything.
 
 **Modules have one responsibility.** Name it without the word "and". Extract on the third
-occurrence rather than the second, when you know which part is genuinely shared, and never
-across repositories: `node`, `client`, `registry` and `almena` share no source. Code arriving
-here from another repository is copied, not linked.
+occurrence rather than the second, when you know which part is genuinely shared.
 
 `crates/almena-log` is the one crate beside the application today, and it is one because the
 shape of a record is a decision rather than a helper — see
-[logging.md](https://github.com/almena-network/almena-network/blob/develop/.claude/rules/logging.md).
+[logging.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/logging.md).
 A second crate needs an argument of that kind, not a pile of things that had nowhere else to go.
 
 **`task check` never compiles for a phone.** `--all-targets` means every kind of target — lib,
@@ -124,10 +118,10 @@ anything under a `mobile` cfg, and before a release. It names every target it sk
 of a `rustup` toolchain rather than passing quietly.
 
 **The tools settle style.** `task check` — `cargo fmt --check`, `cargo clippy -D warnings`,
-`tsc --noEmit` and `task isolation` — passes before you push, and `task format` is what settles
-an argument about layout. Both are narrower here than in the other repositories: ESLint,
-Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and
-`task format` formats Rust alone.
+`tsc --noEmit`, `task catalogs` and `task isolation` — passes before you push, and
+`task format` is what settles an argument about layout. Both are narrower than they will end
+up: ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs
+Rust alone and `task format` formats Rust alone.
 
 **The log format knows about no framework.** `task isolation` fails a build in which
 `almena-log` can reach `tauri`. That crate holds the shape of a record and the sizes a log is

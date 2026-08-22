@@ -5,9 +5,9 @@
  * palette instead of a colour per file. A screen that needs a value not in this list is
  * either wrong or the list is short one token — never a literal in place.
  *
- * **Two things about it are the reader's to choose**, and both are settings on the settings
- * screen — see `src/features/appearance/`. They are set as attributes on the document
- * element and nothing else in the project reads them:
+ * **Two things about it are the reader's to choose**, and both belong to the Settings screen
+ * once it is built — today nothing sets them, so every device gets the defaults. They are set
+ * as attributes on the document element and nothing else in the project reads them:
  *
  * - `data-theme="light"` swaps the palette. With no attribute at all the values below apply,
  *   and the attribute is put there either by a stored choice or, when there is none, by what
