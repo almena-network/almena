@@ -6,6 +6,11 @@
     "module": "ESNext",
     "skipLibCheck": true,
 
+    /* Imports inside `src/` are absolute from the project root: `@/i18n`, never `../../i18n`.
+       Declared here and in `vite.config.ts`, and the two have to agree. */
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/*"] },
+
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

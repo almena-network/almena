@@ -1,0 +1,23 @@
+{
+  "app": {
+    "name": "Almena"
+  },
+  "common": {
+    "notBuilt": "Esta sección aún no tiene pantalla. Aparece en la lista para que se vea la forma de la aplicación mientras se construye."
+  },
+  "section": {
+    "home": "Inicio",
+    "network": "Red",
+    "settings": "Ajustes"
+  },
+  "shell": {
+    "nav": "Secciones"
+  },
+  "home": {
+    "version": "versión {{version}}",
+    "disconnected": {
+      "title": "Sin conexión a ningún nodo.",
+      "body": "Esta versión no puede alcanzar ninguno: el cliente de la API del nodo aún no está escrito, así que no hay aquí nada que pudiera informar con verdad sobre uno."
+    }
+  }
+}

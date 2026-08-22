@@ -1,0 +1,23 @@
+{
+  "app": {
+    "name": "Almena"
+  },
+  "common": {
+    "notBuilt": "This section has no screen yet. It is listed so that the shape of the application is visible while it is being built."
+  },
+  "section": {
+    "home": "Home",
+    "network": "Network",
+    "settings": "Settings"
+  },
+  "shell": {
+    "nav": "Sections"
+  },
+  "home": {
+    "version": "version {{version}}",
+    "disconnected": {
+      "title": "Not connected to a node.",
+      "body": "This build cannot reach one: the client of the node API is not written yet, so there is nothing here that could truthfully report on one."
+    }
+  }
+}

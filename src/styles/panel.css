@@ -1,0 +1,15 @@
+/*
+ * The panel: the raised surface every screen puts its content on.
+ *
+ * One class, in a file of its own, because it is the one piece of appearance that has to be
+ * identical in every feature — a card in the overview and a card in the settings must be the
+ * same object, or the window stops looking like one application.
+ */
+
+.panel {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-l);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}

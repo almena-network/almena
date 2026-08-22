@@ -1,0 +1,65 @@
+# The workspace, and where every program in this repository is held to the same standard.
+#
+# One program is built here, on one framework. A workspace still earns its place: it is where
+# the lint tables live, so that a crate added tomorrow is held to the same standard as the one
+# added today without anybody remembering to copy a table.
+#
+# The lint tables are here, and deliberately: a member that set its own would be a member held
+# to a different standard, and the point of denying a warning is that the count never grows to
+# where nobody reads it.
+
+[workspace]
+resolver = "3"
+members = ["crates/almena-log", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["The Almena Network Authors"]
+repository = "https://github.com/almena-network/almena"
+
+[workspace.lints.rust]
+# Every public item carries a doc comment. This is what makes the rule enforceable rather
+# than a thing a reviewer has to remember.
+missing_docs = "deny"
+# Lifted per module, with a `// SAFETY:` comment on every block, never crate-wide.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+# Pedantic, and therefore off until asked for. The threshold is in `clippy.toml`.
+too_many_lines = "deny"
+# A panic in an interface is an interface that vanishes mid-sentence. Allowed in tests, which
+# `clippy.toml` states.
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "deny"
+
+# Every third-party version this repository pins, written once. A member names a dependency
+# and not a number, so two members can never end up on two versions of the same crate and
+# nobody has to grep to find out which version is in use.
+[workspace.dependencies]
+# This repository's own crates. Paths, because they are published with it or not at all.
+almena-log = { path = "crates/almena-log" }
+
+# The application.
+tauri = { version = "2", features = [] }
+tauri-build = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+# What a person reads back when something went wrong. Registered on every platform: a phone
+# writes records too, and this plugin supports Android and iOS.
+tauri-plugin-log = "2"
+# Desktop only. A phone's operating system owns the window and guarantees one instance of an
+# application already, so neither of these is compiled into the mobile binary.
+tauri-plugin-window-state = "2"
+tauri-plugin-single-instance = "2"
+# What this application answers on a command line. Desktop only, and for the same reason: a
+# phone has no command line to be launched from.
+tauri-plugin-cli = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The facade every program writes records through. What they look like is `almena-log`.
+log = "0.4"
+time = "0.3.55"

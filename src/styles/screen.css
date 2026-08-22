@@ -1,0 +1,31 @@
+/*
+ * The column every screen is laid out in.
+ *
+ * One class, in a file of its own, because it is the piece that has to be identical in every
+ * feature: the same margin down both edges, the same gap between panels, and the same
+ * behaviour when the window gets wide.
+ *
+ * It takes the whole width it is given, at every size, so that on a computer the application
+ * fills the window the person sized rather than sitting in a phone-shaped strip down the
+ * middle of it. What stops a card from becoming a line of text too wide to read is the card
+ * itself: a screen with more than one of them lets them sit side by side once there is room,
+ * which is a grid of its own and never a number written here.
+ */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  padding: calc(var(--space-4) + env(safe-area-inset-top, 0px))
+    calc(var(--space-4) + env(safe-area-inset-right, 0px)) 0
+    calc(var(--space-4) + env(safe-area-inset-left, 0px));
+}
+
+/* The name of the screen, where a screen has one. The first one does not: it opens with the
+   product's own name instead, which is the only place that belongs. */
+.screen__title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}

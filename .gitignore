@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Cargo, for the whole workspace
+/target
+
+# Task runner checksums
+.task
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

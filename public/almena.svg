@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <title>Almena</title>
+  <g stroke="#eb7229" stroke-width="60" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M511 237 237 784" />
+    <path d="M511 237 784 784" />
+    <path d="M237 784 648 511" />
+  </g>
+  <circle cx="511" cy="237" r="94" fill="#eb7229" />
+  <circle cx="237" cy="784" r="94" fill="#eb7229" />
+  <circle cx="784" cy="784" r="94" fill="#eb7229" />
+</svg>

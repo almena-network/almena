@@ -1,25 +1,46 @@
 [package]
-name = "desktop"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+name = "almena-app"
+description = "Almena, the windowed application, on phones and on computers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "desktop_lib"
+# Everything but the launch lives in the library, so that a test can link against it.
+#
+# All three crate types, unlike the desktop-only siblings: `staticlib` and `cdylib` are what
+# iOS and Android link against, and this application ships on both. The `_lib` suffix is what
+# keeps the library's artifact name from colliding with the binary's on Windows.
+name = "almena_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[lints]
+workspace = true
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { workspace = true }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+tauri = { workspace = true }
+tauri-plugin-opener = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The facade this program writes records through, and the format they take. The format is a
+# crate of its own because it is a decision — the line shape, the rotation, the retention that
+# `.claude/rules/logging.md` sets — and a decision is easier to hold to in one place than in a
+# builder call halfway down a plugin registration.
+almena-log = { workspace = true }
+log = { workspace = true }
+tauri-plugin-log = { workspace = true }
 
+# Desktop only, and compiled out of the mobile binary entirely. A phone's operating system
+# owns the window's geometry and already guarantees one running instance of an application, and
+# no phone launches an application from a command line, so none of the three has anything to do
+# there. This is the shape `.claude/rules/supported-platforms.md` asks for: not a feature one
+# platform lacks, but a platform that does not have the thing the feature is about.
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-window-state = { workspace = true }
+tauri-plugin-single-instance = { workspace = true }
+tauri-plugin-cli = { workspace = true }

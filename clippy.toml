@@ -1,0 +1,12 @@
+# The size limits, as numbers a tool can check.
+#
+# `self` is not an argument, which is why the argument threshold is 5 where the rule says
+# four: a method taking `&self` and four arguments complies.
+too-many-lines-threshold = 50
+too-many-arguments-threshold = 5
+
+# `unwrap` and `expect` are denied in the workspace lint table because a panic takes an
+# interface off the screen. A test asserting an invariant is the opposite case: there, a panic
+# is the assertion.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

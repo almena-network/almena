@@ -1,50 +1,41 @@
+/**
+ * The application: which section is open, and the frame it is shown in.
+ *
+ * This is the only place that knows both — the frame draws whatever it is handed, and a screen
+ * knows nothing about the navigation that led to it. Adding a destination is an entry in
+ * `@/features/shell/sections` and a line below.
+ *
+ * The stylesheets every screen relies on are imported here, in the order they have to load:
+ * the values first, then the document, then the two surfaces built from both.
+ */
+
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useTranslation } from "react-i18next";
 
+import NotBuilt from "@/components/NotBuilt";
+import Home from "@/features/home/Home";
+import AppShell from "@/features/shell/AppShell";
+import { sectionNameKey, type SectionId } from "@/features/shell/sections";
+import "@/styles/tokens.css";
+import "@/styles/base.css";
+import "@/styles/panel.css";
+import "@/styles/screen.css";
+
+/** The application. */
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const { t } = useTranslation();
+  const [section, setSection] = useState<SectionId>("home");
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <AppShell section={section} onSelect={setSection}>
+      {section === "home" ? (
+        <Home />
+      ) : (
+        // Every other entry is listed and has no screen. Saying so is what stops an
+        // unfinished application from reading as a broken one.
+        <NotBuilt title={t(sectionNameKey(section))} />
+      )}
+    </AppShell>
   );
 }
 

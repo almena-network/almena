@@ -1,0 +1,47 @@
+/*
+ * The first screen.
+ *
+ * Nothing here is a layout decision about width: the column is `.screen`'s and the panel takes
+ * whatever it is given. This file is the brand line at the top and the one panel under it.
+ */
+
+.home__brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* The mark sits on the text baseline rather than above it, which is what makes the two read
+   as one line instead of a picture with a caption. */
+.home__brand .logo {
+  align-self: center;
+}
+
+.home__name {
+  font-size: var(--text-xxl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.home__version {
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-s);
+}
+
+.home__standing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.home__standing-title {
+  font-size: var(--text-l);
+  font-weight: 600;
+}
+
+.home__standing-body {
+  color: var(--color-text-soft);
+  max-width: 60ch;
+}

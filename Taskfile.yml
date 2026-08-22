@@ -1,0 +1,382 @@
+version: "3"
+
+vars:
+  # Override to pick a specific device, e.g. task deploy:android DEVICE=emulator-5554
+  DEVICE: ""
+
+tasks:
+  # Announce the project and the operation about to run. Every task calls it as
+  # its first command, passing OPERATION.
+  banner:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        cat <<'ART'
+            _     _      __  __  _____  _   _     _
+           / \   | |    |  \/  || ____|| \ | |   / \
+          / _ \  | |    | |\/| ||  _|  |  \| |  / _ \
+         / ___ \ | |___ | |  | || |___ | |\  | / ___ \
+        /_/   \_\|_____||_|  |_||_____||_| \_|/_/   \_\
+        ART
+      - |
+        # The operation is drawn character by character, so a new task needs no
+        # artwork of its own. Only shell builtins are used, so that the banner
+        # also runs on Windows, where Task interprets these commands itself.
+        draw() {
+          rest="$1"; top=''; mid=''; bot=''
+          while [ -n "$rest" ]; do
+            c="${rest%"${rest#?}"}"; rest="${rest#?}"
+            case "$c" in
+              a|A) t='____'; m='|__|'; b='|  |' ;;
+              b|B) t='___ '; m='|__]'; b='|__]' ;;
+              c|C) t='____'; m='|   '; b='|___' ;;
+              d|D) t='___ '; m='|  \'; b='|__/' ;;
+              e|E) t='____'; m='|___'; b='|___' ;;
+              f|F) t='____'; m='|___'; b='|   ' ;;
+              g|G) t='____'; m='| __'; b='|__]' ;;
+              h|H) t='_  _'; m='|__|'; b='|  |' ;;
+              i|I) t='_'; m='|'; b='|' ;;
+              j|J) t='   _'; m='   |'; b='|__|' ;;
+              k|K) t='_  _'; m='|_/ '; b='| \_' ;;
+              l|L) t='_   '; m='|   '; b='|___' ;;
+              m|M) t='_  _'; m='|\/|'; b='|  |' ;;
+              n|N) t='_  _'; m='|\ |'; b='| \|' ;;
+              o|O) t='____'; m='|  |'; b='|__|' ;;
+              p|P) t='___ '; m='|__]'; b='|   ' ;;
+              q|Q) t='____'; m='|  |'; b='|_\|' ;;
+              r|R) t='____'; m='|__/'; b='|  \' ;;
+              s|S) t='____'; m='[__ '; b='___]' ;;
+              t|T) t='___'; m=' | '; b=' | ' ;;
+              u|U) t='_  _'; m='|  |'; b='|__|' ;;
+              v|V) t='_  _'; m='|  |'; b=' \/ ' ;;
+              w|W) t='_  _'; m='|  |'; b='|/\|' ;;
+              x|X) t='_  _'; m=' \/ '; b='_/\_' ;;
+              y|Y) t='_   _'; m=' \_/ '; b='  |  ' ;;
+              z|Z) t='___'; m='  /'; b='/__' ;;
+              :)   t='  '; m='. '; b='. ' ;;
+              *)   t='  '; m='  '; b='  ' ;;
+            esac
+            top="$top$t "; mid="$mid$m "; bot="$bot$b "
+          done
+          printf '%s\n%s\n%s\n' "$top" "$mid" "$bot"
+        }
+        echo ""
+        draw '{{.OPERATION}}'
+        echo ""
+
+  default:
+    desc: List available tasks
+    cmds:
+      - task: banner
+        vars: { OPERATION: list }
+      - task --list
+    silent: true
+
+  install:
+    desc: Install frontend dependencies
+    cmds:
+      - task: banner
+        vars: { OPERATION: install }
+      - pnpm install
+    sources:
+      - package.json
+      - pnpm-lock.yaml
+    generates:
+      - node_modules/.modules.yaml
+
+  # ----- Checks --------------------------------------------------------------
+
+  # `check`, `format` and `test` are narrower here than in `client`, and deliberately so.
+  # ESLint, Prettier and Vitest are not installed in this repository yet and neither are the
+  # translation catalogs, so the frontend halves of these three — `pnpm lint`,
+  # `pnpm format:check`, `pnpm test` and the `catalogs` task — are absent rather than present
+  # and passing vacuously. Each joins the task below it in the step that brings its tool.
+
+  catalogs:
+    desc: Check that every translation catalog holds the same keys
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: catalogs }
+      - node scripts/check-catalogs.mjs
+
+  check:
+    desc: Run every check a change has to pass before it is pushed
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: check }
+      # Formatting first: it is the cheapest failure and the least interesting to argue
+      # about. A warning is a failure, so that the count never grows past reading.
+      - cargo fmt --all --check
+      - cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - pnpm exec tsc --noEmit
+      - task: catalogs
+      - task: isolation
+
+  check:mobile:
+    desc: Type-check the application for the mobile targets, which `check` does not
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: "check:mobile" }
+      # `--all-targets` in `check` means every *kind* of target — lib, bins, tests, examples —
+      # and not every platform. Nothing there ever compiles for a phone, which is how a
+      # `#[cfg(mobile)]` path can be wrong for weeks and only say so at `task deploy:ios`.
+      #
+      # It checks the targets this machine has and names the ones it skipped rather than
+      # passing quietly, because a check that silently covers less than it looks like is worse
+      # than no check. Having none of them is a failure: there would be nothing to report.
+      - |
+        installed="$(rustup target list --installed)"
+        checked=0
+        for target in aarch64-apple-ios aarch64-apple-ios-sim aarch64-linux-android armv7-linux-androideabi x86_64-linux-android; do
+          if echo "$installed" | grep -qx "$target"; then
+            echo "checking $target"
+            cargo check -q -p almena-app --lib --target "$target" || exit 1
+            checked=$((checked + 1))
+          else
+            echo "skipped $target — not installed (rustup target add $target)"
+          fi
+        done
+        if [ "$checked" -eq 0 ]; then
+          echo "no mobile target is installed: nothing was checked" >&2
+          exit 1
+        fi
+
+  isolation:
+    desc: Check that the crate holding the log format knows about no framework
+    cmds:
+      - task: banner
+        vars: { OPERATION: isolation }
+      # `cargo tree -i` asks which crates depend on a package *within this crate's graph*, and
+      # fails when the package is not in that graph at all — so here success is the failure,
+      # and silence is the pass.
+      #
+      # This was four assertions when two programs were built here and had to stay out of each
+      # other's dependency graph. One program later, three of them could not fail and were
+      # deleted with the terminal interface; this one still can. `almena-log` holds the shape
+      # of a record — the reason it is a crate rather than a call on the log plugin's builder —
+      # and a `tauri` in its graph would mean the format had quietly become the framework's.
+      - |
+        if cargo tree -q -p almena-log -i tauri >/dev/null 2>&1; then
+          echo "almena-log can reach tauri: the log format must know about no framework" >&2
+          exit 1
+        fi
+
+  test:
+    desc: Run the test suites
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: test }
+      - cargo test --workspace
+
+  format:
+    desc: Format the source
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: format }
+      - cargo fmt --all
+
+  # ----- Branding ------------------------------------------------------------
+
+  icons:
+    desc: Regenerate every icon from assets/branding
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: icons }
+      # The manifest drives the whole set: the desktop sizes, the Windows Store logos, and
+      # the Android adaptive layers — background, foreground and monochrome — which cannot be
+      # derived from a single square. Where a native project has been generated, the mobile
+      # icons are written straight into it rather than into `src-tauri/icons/`.
+      - pnpm tauri icon assets/branding/icon-manifest.json
+      # macOS wants its own padding inside the rounded square, which the manifest has no way
+      # to express, so the `.icns` is generated a second time from the artwork that has it.
+      # Without this the icon in the Dock is visibly larger than every other one there.
+      - cmd: pnpm tauri icon assets/branding/app-icon-macos.png -o /tmp/almena-icons
+        platforms: [darwin]
+      - cmd: cp /tmp/almena-icons/icon.icns src-tauri/icons/icon.icns
+        platforms: [darwin]
+      - cmd: rm -rf /tmp/almena-icons
+        platforms: [darwin]
+      # The two tray glyphs, at the size a menu bar draws them. `tray.png` is the bare mark:
+      # macOS is handed it as a template image, tints it itself, and would draw a square of
+      # its own as a square. `trayNegative.png` is the reversed one, for the platforms that do
+      # not tint and may put it on a dark bar.
+      - cmd: sips -z 32 32 assets/branding/tray/tray-icon.png --out src-tauri/icons/tray.png
+        platforms: [darwin]
+      - cmd: sips -z 32 32 assets/branding/tray/tray-icon-negative.png --out src-tauri/icons/trayNegative.png
+        platforms: [darwin]
+
+  devices:
+    desc: List connected Android and iOS devices
+    silent: true
+    cmds:
+      - task: banner
+        vars: { OPERATION: devices }
+      - echo "Android:"
+      - adb devices -l | tail -n +2 | sed '/^$/d;s/^/  /' || true
+      - cmd: echo "iOS:"
+        platforms: [darwin]
+      - cmd: xcrun devicectl list devices 2>/dev/null | sed 's/^/  /' || true
+        platforms: [darwin]
+
+  # ----- Native project generation -------------------------------------------
+
+  init:
+    desc: Generate the native projects for every platform this host can build
+    cmds:
+      - task: banner
+        vars: { OPERATION: init }
+      - task: init:android
+      - cmd: task init:ios
+        platforms: [darwin]
+
+  init:android:
+    desc: Generate the Android project in src-tauri/gen/android
+    deps: [install]
+    preconditions:
+      - sh: test -n "$ANDROID_HOME" && test -n "$NDK_HOME"
+        msg: "ANDROID_HOME and NDK_HOME must be set. See README.md#requirements"
+    status:
+      - test -d src-tauri/gen/android
+    cmds:
+      - task: banner
+        vars: { OPERATION: "init:android" }
+      - pnpm tauri android init
+
+  init:ios:
+    desc: Generate the iOS project in src-tauri/gen/apple
+    deps: [install]
+    platforms: [darwin]
+    preconditions:
+      - sh: xcrun --find xcodebuild >/dev/null 2>&1
+        msg: "Xcode command line tools not found. See README.md#requirements"
+    status:
+      - test -d src-tauri/gen/apple
+    cmds:
+      - task: banner
+        vars: { OPERATION: "init:ios" }
+      - pnpm tauri ios init
+
+  # ----- Development ---------------------------------------------------------
+
+  dev:
+    aliases: [dev:desktop]
+    desc: Run on this computer, with hot reload
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: dev }
+      - pnpm tauri dev
+
+  dev:android:
+    desc: Run on a connected Android device or emulator, with hot reload
+    deps: [install]
+    preconditions:
+      - sh: test -d src-tauri/gen/android
+        msg: "Android project not generated. Run: task init:android"
+      - sh: adb devices | grep -qw device
+        msg: "No Android device connected. Check with: task devices"
+    cmds:
+      - task: banner
+        vars: { OPERATION: "dev:android" }
+      - pnpm tauri android dev {{.DEVICE}}
+
+  dev:ios:
+    desc: Run on a connected iOS device or simulator, with hot reload
+    deps: [install]
+    platforms: [darwin]
+    preconditions:
+      - sh: test -d src-tauri/gen/apple
+        msg: "iOS project not generated. Run: task init:ios"
+    cmds:
+      - task: banner
+        vars: { OPERATION: "dev:ios" }
+      - pnpm tauri ios dev {{.DEVICE}}
+
+  # ----- Release builds ------------------------------------------------------
+
+  build:
+    aliases: [build:desktop]
+    desc: Build the desktop installer for this host's operating system
+    deps: [install, catalogs]
+    cmds:
+      - task: banner
+        vars: { OPERATION: build }
+      - pnpm tauri build
+
+  build:android:
+    desc: Build the Android release package
+    deps: [install]
+    preconditions:
+      - sh: test -d src-tauri/gen/android
+        msg: "Android project not generated. Run: task init:android"
+    cmds:
+      - task: banner
+        vars: { OPERATION: "build:android" }
+      - pnpm tauri android build
+
+  build:ios:
+    desc: Build the iOS release package
+    deps: [install]
+    platforms: [darwin]
+    preconditions:
+      - sh: test -d src-tauri/gen/apple
+        msg: "iOS project not generated. Run: task init:ios"
+    cmds:
+      - task: banner
+        vars: { OPERATION: "build:ios" }
+      - pnpm tauri ios build
+
+  # ----- Install on a connected device ---------------------------------------
+
+  deploy:android:
+    desc: Choose an Android device or emulator, build the app for it, and install it there
+    deps: [install]
+    # The script asks which destination to use, so Task has to leave it the terminal.
+    interactive: true
+    preconditions:
+      - sh: test -d src-tauri/gen/android
+        msg: "Android project not generated. Run: task init:android"
+    cmds:
+      - task: banner
+        vars: { OPERATION: "deploy:android" }
+      # Everything is in the script because the steps depend on each other: what is built
+      # depends on where it is going, so the destination is chosen — and started, if it is an
+      # emulator that was not running — before the build begins. Set DEVICE to skip the
+      # prompt; a serial, an AVD name or a model all work.
+      - DEVICE='{{.DEVICE}}' ./scripts/deploy-android.sh
+
+  deploy:ios:
+    desc: Choose an iOS device or simulator, build the app for it, and install it there
+    deps: [install]
+    platforms: [darwin]
+    # The script asks which destination to use, so Task has to leave it the terminal.
+    interactive: true
+    preconditions:
+      - sh: test -d src-tauri/gen/apple
+        msg: "iOS project not generated. Run: task init:ios"
+    cmds:
+      - task: banner
+        vars: { OPERATION: "deploy:ios" }
+      # Everything is in the script because the steps depend on each other: what is built
+      # depends on where it is going, so the destination is chosen before the build starts.
+      # Set DEVICE to skip the prompt — a name or an identifier both work.
+      - DEVICE='{{.DEVICE}}' ./scripts/deploy-ios.sh
+
+  # ----- Housekeeping --------------------------------------------------------
+
+  clean:
+    desc: Remove build artifacts, keeping the generated native projects
+    cmds:
+      - task: banner
+        vars: { OPERATION: clean }
+      - rm -rf dist
+      # One target directory for the whole workspace, at the root, so this is run from here
+      # rather than pointed at a member's manifest.
+      - cargo clean
