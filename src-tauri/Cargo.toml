@@ -29,18 +29,23 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # The facade this program writes records through, and the format they take. The format is a
 # crate of its own because it is a decision — the line shape, the rotation, the retention that
-# `.claude/rules/logging.md` sets — and a decision is easier to hold to in one place than in a
+# `.agents/rules/logging.md` sets — and a decision is easier to hold to in one place than in a
 # builder call halfway down a plugin registration.
 almena-log = { workspace = true }
 log = { workspace = true }
 tauri-plugin-log = { workspace = true }
+# On every platform, unlike the three below. A phone has no window to own and no command line,
+# but it has a screen to put a notification on, so this one is not a desktop concern.
+tauri-plugin-notification = { workspace = true }
 
 # Desktop only, and compiled out of the mobile binary entirely. A phone's operating system
-# owns the window's geometry and already guarantees one running instance of an application, and
-# no phone launches an application from a command line, so none of the three has anything to do
-# there. This is the shape `.claude/rules/supported-platforms.md` asks for: not a feature one
-# platform lacks, but a platform that does not have the thing the feature is about.
+# owns the window's geometry, already guarantees one running instance of an application,
+# launches nothing from a command line, and decides for itself when an application may run —
+# so none of the four has anything to do there. This is the shape
+# `.agents/rules/supported-platforms.md` asks for: not a feature one platform lacks, but a
+# platform that does not have the thing the feature is about.
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 tauri-plugin-cli = { workspace = true }
+tauri-plugin-autostart = { workspace = true }

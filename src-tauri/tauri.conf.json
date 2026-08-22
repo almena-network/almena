@@ -39,7 +39,13 @@
   "plugins": {
     "cli": {
       "description": "Almena, the application people use to reach the Almena network",
-      "args": []
+      "args": [
+        {
+          "name": "hidden",
+          "description": "Start in the tray, with no window. What the system passes when it starts Almena at login.",
+          "takesValue": false
+        }
+      ]
     }
   }
 }

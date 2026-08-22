@@ -7,28 +7,29 @@ By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 > **This repository is under construction.** `almena` is the application of the Almena
 > network, and today it is its starting point: no release has been published. What that means
-> for a contributor is the next section — the work here advances one written step at a time,
-> and a change that is not part of a step is a change nobody agreed to.
+> for a contributor is the next section — interfaces and configuration move underneath you,
+> and a change is not finished until everything that described what it moved is true again.
 
-## The work happens in steps, and a step is specified first
+## Agreeing a change, and closing it
 
-Every step of the work is written down before it is taken, as a numbered spec in the
-[almena-network](https://github.com/almena-network/almena-network/tree/main/specs)
-repository, which is also where the project's working agreements live. A spec says what
-changes, what deliberately does not, how it is checked, and what it makes wrong elsewhere.
+The project's working agreements live in the
+[almena-network](https://github.com/almena-network/almena-network) repository: the rules this
+code is held to, and `specs/`, where a piece of work is written down when agreeing it in
+writing is worth the wait. **Most changes are not specified first.** A spec is written when
+somebody asks for one, and it then says what changes, what deliberately does not, how it is
+checked, and what it makes wrong elsewhere.
 
 So, before writing code:
 
-- **Find the spec for what you are doing.** A spec marked `accepted` may be implemented; one
-  marked `proposed` has not been agreed yet, and nothing is implemented from it.
-- **If there is no spec, propose one** rather than opening a pull request. An issue describing
-  the step is the right start.
-- **A finished step leaves nothing describing the old arrangement** — the rules, this
+- **A fix needs no ceremony.** A broken command, a wrong sentence in the README, a dependency
+  that will not build: open the pull request.
+- **Agree anything larger first.** Open an issue describing it. For work that will be argued
+  about later — a screen, a data format, a dependency that brings a second way to do
+  something — ask for a spec; a spec marked `accepted` may be implemented, one still marked
+  `proposed` may not.
+- **A finished change leaves nothing describing the old arrangement** — the rules, this
   repository's five documentation files, the translation catalogs. That closing checklist is
   part of the change, not a follow-up.
-
-A fix that is not part of a step — a broken command, a wrong sentence in the README, a
-dependency that will not build — needs no spec. Open it directly.
 
 ## Reporting a problem
 
@@ -64,8 +65,9 @@ English and Spanish together, and `task catalogs` holds them to the same keys.
 
 **Nothing about a person is stored, sent or inferred.** No account, no sign-up, no field
 asking for a name, an e-mail address or a telephone number, and no value pre-filled from the
-hostname or the logged-in user. This application talks to a node over the node API and to
-nothing else: no telemetry, no analytics, no crash reporting, no update ping, in any build.
+hostname or the logged-in user. This application talks to the peers of its network, and to
+the origin it read that network's configuration from, and to nothing else: no telemetry, no
+analytics, no crash reporting, no update ping, in any build.
 
 **Every platform moves together.** iOS, Android, Windows, Linux and macOS are supported
 equally: none gets a feature first. A change that needs platform-specific code carries the

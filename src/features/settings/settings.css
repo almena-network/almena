@@ -1,0 +1,86 @@
+/*
+ * The Settings screen.
+ *
+ * The cards flow the way every screen's do, and the one thing this file really owns is the
+ * switch: a control that has to read as on or off across a room, in both palettes, without
+ * colour being the only thing saying which.
+ */
+
+.settings__cards {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+}
+
+.settings__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings__title {
+  font-size: var(--text-l);
+  font-weight: 600;
+}
+
+.settings__body {
+  color: var(--color-text-soft);
+  max-width: 60ch;
+}
+
+.settings__switch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+.settings__switch:disabled {
+  opacity: 0.5;
+}
+
+/* The track is a rung of the ladder when off and the identity colour when on, which is what
+   the identity colour is for: the thing you came here to do. The knob travels the width of the
+   track less its own width and the padding on both sides. */
+.settings__switch-track {
+  flex: none;
+  display: flex;
+  align-items: center;
+  width: 44px;
+  height: 26px;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-sunken);
+}
+
+.settings__switch[aria-checked="true"] .settings__switch-track {
+  border-color: var(--color-accent-edge);
+  background: var(--color-accent);
+}
+
+.settings__switch-knob {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-faint);
+}
+
+.settings__switch[aria-checked="true"] .settings__switch-knob {
+  margin-left: 18px;
+  background: var(--color-canvas);
+}
+
+/* The word beside the switch. Colour is never the only thing saying which state something is
+   in, and this is the half that is not colour. */
+.settings__switch-state {
+  margin-left: auto;
+  color: var(--color-text-faint);
+  font-size: var(--text-s);
+}
+
+.settings__note {
+  color: var(--color-text-soft);
+  font-size: var(--text-s);
+}

@@ -15,9 +15,34 @@
   },
   "home": {
     "version": "version {{version}}",
-    "disconnected": {
-      "title": "Not connected to a node.",
-      "body": "This build cannot reach one: the client of the node API is not written yet, so there is nothing here that could truthfully report on one."
+    "notJoined": {
+      "title": "Not on the network.",
+      "body": "This build joins none: the peer-to-peer layer is not written yet, so there is nothing here that could truthfully report on one."
+    },
+    "notify": {
+      "heading": "Notifications.",
+      "body": "Nothing announces itself yet, because nothing has happened that would be worth announcing. What does work is the sending of one, on this device, and it can be tried here.",
+      "action": "Send a notification",
+      "message": "Notifications arrive on this device. Nothing else has anything to announce yet.",
+      "outcome": {
+        "sent": "Sent. Some devices do not draw one while this window is the one in front.",
+        "refused": "This device does not permit notifications from Almena. That is changed in its own settings, not here.",
+        "failed": "It could not be sent, and this build cannot say why."
+      }
     }
+  },
+  "settings": {
+    "nothingHere": "There is nothing to set on this device yet. What this screen holds today — whether Almena starts with the system — belongs to a computer, and this is not one.",
+    "autostart": {
+      "heading": "Starting with the system.",
+      "body": "Almena opens with no window when the system starts it and waits in the tray. Closing its window never ends it either: the tray's own menu is where it ends.",
+      "label": "Start Almena when this computer starts",
+      "on": "On",
+      "off": "Off",
+      "refused": "This device did not accept the change, so the setting stays as it was."
+    }
+  },
+  "tray": {
+    "quit": "Quit"
   }
 }

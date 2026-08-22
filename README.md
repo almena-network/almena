@@ -1,25 +1,24 @@
 # Almena
 
-`almena` is the application people use to reach the Almena network, and — on a computer — to
-operate the node running on it. One codebase for iOS, Android, Windows, Linux and macOS.
+`almena` is the application people use to reach the Almena network, and — on a computer — the
+node itself: there is no daemon beside it, and the network is composed of the desktop
+installations taking part in it. One codebase for iOS, Android, Windows, Linux and macOS.
 
-It builds **one program** on **one framework**. It briefly built two — a terminal interface, in
-[spec 0003](https://github.com/almena-network/almena-network/blob/main/specs/0003-a-workspace-and-a-terminal-interface.md)
-— and [spec 0006](https://github.com/almena-network/almena-network/blob/main/specs/0006-one-framework-and-tauris-own-cli.md)
-deleted it: everything here is Tauri 2, reachable from one set of documentation and one upgrade
-path. What that gave up, deliberately, is the machine with no desktop on it.
+It builds **one program** on **one framework**. It briefly built two — a terminal interface
+beside the windowed application — and that one was deleted: everything here is Tauri 2,
+reachable from one set of documentation and one upgrade path. What that gave up, deliberately,
+is the machine with no desktop on it.
 
 > **Status: under construction.** This is the starting point of the application, not a
 > release: interfaces, data formats, commands and configuration change without notice, and no
-> release has been published. There is no client of the node API yet, so the application
-> reaches no node — the first screen says exactly that.
+> release has been published. The peer-to-peer layer is not written yet, so this build joins
+> no network — the first screen says exactly that.
 
-Development advances one written step at a time, and each step is specified before it is
-taken. The specs live in the
-[almena-network](https://github.com/almena-network/almena-network/tree/main/specs)
-repository, which is also where the project's working agreements are kept. This repository's
-task runner is
-[spec 0001](https://github.com/almena-network/almena-network/blob/main/specs/0001-a-task-runner-for-almena.md).
+The project's working agreements are kept in the
+[almena-network](https://github.com/almena-network/almena-network) repository — the rules this
+code is held to, and the specs of work that was agreed in writing before it was built. A spec
+is written when one is asked for, so most changes have none; every change, spec or not, is
+closed by making everything it left describing the old arrangement true again.
 
 ## Stack
 
@@ -36,8 +35,8 @@ Common to every platform:
   [Tauri prerequisites](https://tauri.app/start/prerequisites/).
 - Node.js 20 or newer, pnpm, and Task 3.
 
-To reach a node, rather than only to build this application, the device also needs **IPv6
-connectivity**. Almena is an IPv6 network and there is no second address family.
+To reach the network, rather than only to build this application, the device also needs
+**IPv6 connectivity**. Almena is an IPv6 network and there is no second address family.
 
 That is all the desktop build needs. The mobile builds add:
 
@@ -129,21 +128,53 @@ call on the log plugin's builder, and which a single careless `[dependencies]` l
 ## What it answers on a command line
 
 `tauri-plugin-cli` is registered on the desktop builds, configured in `tauri.conf.json` under
-`plugins.cli`. Today the surface is what `clap` gives it and no argument of our own:
+`plugins.cli`. Three things, and only the first two print anything:
 
 ```bash
 almena-app --help
 almena-app --version
+almena-app --hidden
 ```
 
 Both print and exit without opening a window. **On Windows they print nothing**, because a
 release build there is a windowed binary with no console attached to write back to — the
 plugin's own documented limitation, and the reason it is named here rather than found.
 
-There is deliberately no `--node`. This build has no client of the node API, so an address
-would be accepted, used for nothing, and refused by nothing — and refusing an IPv4 address in
-any of its disguises is not optional in this project. It arrives with the code that can honour
-it.
+`--hidden` starts the application into the tray with no window, and exists for one caller:
+the operating system, which passes it because the login item was registered with it. Nobody
+needs to type it, and typing it does exactly what the login launch does.
+
+There is deliberately no argument naming a peer or a network. This build joins no network, so
+an address would be accepted, used for nothing, and refused by nothing — and refusing an IPv4
+address in any of its disguises is not optional in this project. It arrives with the code that
+can honour it.
+
+## Running in the background
+
+On a computer this application has a tray icon, and having one changes what its window means.
+**Closing the window no longer ends the application**: it puts it away, and the application
+goes on running. It ends from **Quit**, in the tray's own menu, and from nowhere else.
+
+There are three ways back to a window that is not on screen, and they are three because no one
+of them works everywhere:
+
+| | Where |
+| --- | --- |
+| Click the tray icon | Wherever the desktop delivers that click to an application, which is most of them but not all |
+| Click the Dock icon | macOS, where an application with no window is still in the Dock |
+| Launch the application again | Everywhere. The second launch does not start a second one — see below |
+
+If the tray fails to build — on Linux, most often because nothing on the desktop is serving
+one — **the close button goes back to closing.** An application that put itself away with
+nowhere to be found again would be worse than one that simply quit, so it does not.
+
+The tray's menu is built from the frontend rather than at startup, because its entries are
+text a person reads and only that side holds the catalogs. It is the same reason
+`notification::show` takes text and not a key.
+
+**Starting with the system** is a setting, in Settings, and off until somebody turns it on.
+When the system starts the application it passes `--hidden`, so logging in never puts a window
+in front of anybody.
 
 ## Where it runs
 
@@ -162,9 +193,42 @@ tablet and a window somebody dragged wider are the same case. The numbers live i
 
 ## What a second launch does
 
-Nothing, twice over: the running application's window comes back instead. On a computer the
-window also remembers its size, position and state between runs. Both are compiled out of the
-mobile binary, where the operating system owns them already.
+Nothing, twice over: the running application's window comes back instead. That is now also
+the way back from the tray that works on every desktop — launching Almena when Almena is
+already running is a request to see it, and it is answered as one.
+
+The window also remembers its size, position and state between runs — everything except
+whether it was visible. That one is deliberately forgotten: a session that ended with the
+window put away would otherwise be restored with nothing on screen, and an application that
+starts into nothing is one nobody can tell from a broken one.
+
+Both are compiled out of the mobile binary, where the operating system owns them already.
+
+## Notifications
+
+Registered on all five platforms, which is the reason the dependency was adopted at all: one
+that served some of them is one this project does not take.
+
+There are two ways to a notification, and they exist for different sides of the application:
+
+| From | Through | For |
+| --- | --- | --- |
+| The frontend | `src/lib/notifications.ts`, over `@tauri-apps/plugin-notification` | Anything a screen sets off. This side holds the catalogs, so it is the side that can name what it is announcing. |
+| Rust | `notification::show`, in `src-tauri/src/notification.rs` | Code running with no window in front of it. Its text arrives as an argument, because the catalogs are not on this side. |
+
+**Nothing announces itself yet.** There is no network, so nothing has happened that would be
+worth announcing, and the Rust function has no caller in this repository. What there is instead
+is a control on the first screen that sends one, so the capability can be watched working on
+the device in hand rather than taken on trust. It says what the device did with the request,
+because two of the three answers — a refusal, and a failure — draw nothing at all, and a person
+who pressed a button and saw nothing cannot tell those two apart.
+
+Permission is asked for when that control is pressed, never at startup. A permission dialog
+that arrives before anybody has asked for anything is worse than one that arrives a tap later.
+
+**On Windows a notification is only drawn for an installed application.** That is the
+platform's rule rather than this project's: a build started from `task dev` there shows
+nothing, and the same binary installed shows what the other four platforms show.
 
 ## Files kept on your computer
 
@@ -172,6 +236,7 @@ mobile binary, where the operating system owns them already.
 | --- | --- | --- |
 | `almena-app.log` | This program's records. Rotated at 10 MiB, ten kept. Deleting the directory while the application is closed costs nothing but the history. | macOS: `~/Library/Logs/<id>/`<br>Windows: `%LOCALAPPDATA%\<id>\logs\`<br>Linux: `~/.local/share/<id>/logs/` |
 | `window-state.json` | Where the window was and how big. Written by the window-state plugin, which fixes its own location. | The configuration directory for `<id>` |
+| The login item | Written only while *starting with the system* is on, and deleted when it is turned off. The autostart plugin fixes its own location, as it must: a login item is only a login item where the system looks for one. | macOS: `~/Library/LaunchAgents/<productName>.plist`<br>Linux: `~/.config/autostart/<productName>.desktop`<br>Windows: a value under `HKCU\…\CurrentVersion\Run`, not a file |
 
 `<id>` is the bundle identifier, and it is still the scaffold's `network.almena.desktop` — see
 [What is not here yet](#what-is-not-here-yet).
@@ -215,10 +280,22 @@ Those are the same buttons in the same order and the same place in the document.
 query in `src/features/shell/shell.css` moves them, and 600 appears there and nowhere else —
 there is no hook, no `matchMedia` and no component that asks how wide it is.
 
-Three sections: Home, Network, Settings. Only the first has a screen; the other two say so
-rather than doing nothing when touched. The first screen shows what the application is and that
-it is connected to no node, which is the whole of what it can honestly say — there is no client
-of the node API here, so no figure on it is measured and none is invented.
+Three sections: Home, Network, Settings. Two have screens; Network says it has none rather
+than doing nothing when touched.
+
+The first screen carries two cards. One says what the application is and that it is on no
+network, which is the whole of what it can honestly say — the peer-to-peer layer is not here,
+so no figure on it is measured and none is invented. The other is the one thing this build can
+actually do, which is [send a notification](#notifications). They flow rather than stack: side
+by side once there is room for both, one above the other the moment there is not, out of a
+single `grid-template-columns` in `src/features/home/home.css` and with no breakpoint of their
+own.
+
+Settings holds one thing: whether the application
+[starts with the system](#running-in-the-background). That belongs to a computer, so on a
+phone the screen says there is nothing to set on this device rather than drawing an empty
+page — which is the same answer Network gives, for the same reason. Choosing the palette and
+the identity colour will live here too; neither is built.
 
 ## Languages
 
@@ -235,10 +312,12 @@ Stated rather than discovered by running something and being surprised.
 
 | | Today |
 | --- | --- |
-| A client of the node API | Not written yet. The application reaches no daemon and shows no figure about one; the first screen says it is connected to no node because that is the whole truth available to it. |
+| The peer-to-peer layer | Not written yet. On a computer this application is the node, but nothing here joins a network, reads the configuration a network is described by, or speaks to a peer; the first screen says it is on no network because that is the whole truth available to it. |
 | `task check` | Rust and `tsc` only. ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and there is no `task format` for TypeScript. |
 | `--help` on Windows | The plugin cannot write back to the console that launched a release build, so `--help` and `--version` print nothing there. Everything else about them is the same, and no other platform is affected. |
-| `productName` and `identifier` | Still the scaffold's `desktop` and `network.almena.desktop`, and now visible: the log directory is built from the identifier, so records land under a name nobody chose. The bundle identifier names the directories this application will write to, so settling it is a decision taken in its own step — and the two deploy scripts carry a copy of it that changes with it. |
+| `productName` and `identifier` | Still the scaffold's `desktop` and `network.almena.desktop`, and now visible twice over: the log directory is built from the identifier, and the login item is named after `productName`, so both land under a name nobody chose. Settling the pair is a decision taken on its own — and the two deploy scripts carry a copy of the identifier that changes with it. |
+| Choosing the palette and the accent | `tokens.css` has both, `data-theme` and `data-accent` switch between them, and nothing writes either yet. Settings is where they belong and Settings now exists, so this is the next thing that screen grows. |
+| `--help` in one language | The only text a person reads that does not come from a catalog. `clap` builds it from `tauri.conf.json` before anything has loaded a catalog, so it is English wherever it is read. |
 
 ## Contributing
 

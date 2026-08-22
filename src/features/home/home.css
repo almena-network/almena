@@ -1,8 +1,8 @@
 /*
  * The first screen.
  *
- * Nothing here is a layout decision about width: the column is `.screen`'s and the panel takes
- * whatever it is given. This file is the brand line at the top and the one panel under it.
+ * Nothing here is a layout decision about width: the column is `.screen`'s and a panel takes
+ * whatever it is given. This file is the brand line at the top and the cards under it.
  */
 
 .home__brand {
@@ -30,18 +30,62 @@
   font-size: var(--text-s);
 }
 
-.home__standing {
+/* Two cards, so they flow rather than stack: side by side once there is room for both, one
+   above the other the moment there is not. One declaration and no media query — 600 lives in
+   `shell.css` and is the only breakpoint in this project, and a screen does not get a second
+   one of its own (`.agents/rules/screen-sizes.md`). The minimum is the narrowest a card of
+   prose is still worth having, and `min(100%, …)` is what stops it overflowing a window
+   narrower than itself. */
+.home__cards {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+}
+
+.home__card {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
-.home__standing-title {
+.home__card-title {
   font-size: var(--text-l);
   font-weight: 600;
 }
 
-.home__standing-body {
+.home__card-body {
   color: var(--color-text-soft);
   max-width: 60ch;
+}
+
+.home__notify {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* The one element on this screen wearing the identity colour, which is what it is reserved
+   for: the thing you came here to do (`.agents/rules/visual-identity.md`). The reset in
+   `base.css` has already taken the browser's border, background and font off it. */
+.home__notify-action {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-accent-edge);
+  border-radius: var(--radius-m);
+  background: var(--color-accent-dim);
+  color: var(--color-accent-bright);
+  font-weight: 600;
+}
+
+.home__notify-action:hover {
+  background: var(--color-accent-edge);
+}
+
+/* Empty until something has been tried, and it draws nothing at all until then: a paragraph
+   with no text has no line box, so the card does not reserve a gap for an answer nobody has
+   asked for yet. */
+.home__notify-outcome {
+  color: var(--color-text-soft);
+  font-size: var(--text-s);
 }

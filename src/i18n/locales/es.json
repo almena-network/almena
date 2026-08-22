@@ -15,9 +15,34 @@
   },
   "home": {
     "version": "versión {{version}}",
-    "disconnected": {
-      "title": "Sin conexión a ningún nodo.",
-      "body": "Esta versión no puede alcanzar ninguno: el cliente de la API del nodo aún no está escrito, así que no hay aquí nada que pudiera informar con verdad sobre uno."
+    "notJoined": {
+      "title": "Fuera de la red.",
+      "body": "Esta versión no se une a ninguna: la capa entre pares aún no está escrita, así que no hay aquí nada que pudiera informar con verdad sobre ella."
+    },
+    "notify": {
+      "heading": "Notificaciones.",
+      "body": "Todavía nada se anuncia solo, porque no ha ocurrido nada que mereciera anunciarse. Lo que sí funciona es el envío, en este dispositivo, y se puede comprobar aquí mismo.",
+      "action": "Enviar una notificación",
+      "message": "Las notificaciones llegan en este dispositivo. Nada más tiene aún nada que anunciar.",
+      "outcome": {
+        "sent": "Enviada. Algunos dispositivos no la dibujan mientras esta ventana es la que está delante.",
+        "refused": "Este dispositivo no permite notificaciones de Almena. Eso se cambia en sus propios ajustes, no aquí.",
+        "failed": "No se pudo enviar, y esta versión no puede decir por qué."
+      }
     }
+  },
+  "settings": {
+    "nothingHere": "Aquí todavía no hay nada que ajustar. Lo que esta pantalla tiene hoy — si Almena arranca con el sistema — es cosa de un ordenador, y esto no lo es.",
+    "autostart": {
+      "heading": "Arranque con el sistema.",
+      "body": "Almena se abre sin ventana cuando el sistema la arranca, y espera en la bandeja. Cerrar su ventana tampoco la termina: se termina desde el menú de la propia bandeja.",
+      "label": "Arrancar Almena cuando arranque este ordenador",
+      "on": "Activado",
+      "off": "Desactivado",
+      "refused": "Este dispositivo no aceptó el cambio, así que el ajuste queda como estaba."
+    }
+  },
+  "tray": {
+    "quit": "Salir"
   }
 }

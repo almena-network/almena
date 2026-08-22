@@ -43,13 +43,19 @@ todo = "deny"
 # This repository's own crates. Paths, because they are published with it or not at all.
 almena-log = { path = "crates/almena-log" }
 
-# The application.
-tauri = { version = "2", features = [] }
+# The application. `tray-icon` is what lets it live on a bar with no window on screen, and
+# `image-png` is what lets the glyph it wears be one of the files `task icons` generates rather
+# than the application icon at a size nothing designed it for.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 # What a person reads back when something went wrong. Registered on every platform: a phone
 # writes records too, and this plugin supports Android and iOS.
 tauri-plugin-log = "2"
+# What the application says when its own window is not what the person is looking at.
+# Registered on every platform, and adopted because it serves all five of them — a dependency
+# that served only some is one `.agents/rules/supported-platforms.md` refuses.
+tauri-plugin-notification = "2"
 # Desktop only. A phone's operating system owns the window and guarantees one instance of an
 # application already, so neither of these is compiled into the mobile binary.
 tauri-plugin-window-state = "2"
@@ -57,6 +63,9 @@ tauri-plugin-single-instance = "2"
 # What this application answers on a command line. Desktop only, and for the same reason: a
 # phone has no command line to be launched from.
 tauri-plugin-cli = "2"
+# Whether the operating system starts this application when somebody logs in. Desktop only:
+# a phone's operating system owns when an application runs and offers nothing to switch.
+tauri-plugin-autostart = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
