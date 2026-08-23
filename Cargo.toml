@@ -63,9 +63,21 @@ tauri-plugin-single-instance = "2"
 # What this application answers on a command line. Desktop only, and for the same reason: a
 # phone has no command line to be launched from.
 tauri-plugin-cli = "2"
-# Whether the operating system starts this application when somebody logs in. Desktop only:
-# a phone's operating system owns when an application runs and offers nothing to switch.
+# Whether the operating system opens this application when somebody logs in. Windows and
+# Linux only: each has one register for it and this writes to it. macOS keeps two and means
+# different things by them, so it is served by the crate below instead.
 tauri-plugin-autostart = "2"
+# macOS alone. `SMAppService` is the one API that registers an application under *Open at
+# Login* — its own name, its own icon — without asking a person for permission to drive System
+# Events, and without writing the `LaunchAgent` that would land it under *Allow in the
+# Background* instead. Part of the `objc2` family, which is the maintained way into Objective-C
+# from Rust.
+objc2-service-management = { version = "0.3", default-features = false, features = [
+  "std",
+  "SMAppService",
+  "objc2",
+  "objc2-foundation",
+] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

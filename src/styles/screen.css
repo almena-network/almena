@@ -1,31 +1,43 @@
 /*
- * The column every screen is laid out in.
+ * The column every screen is laid out in, and the two pieces of typography every screen
+ * shares.
  *
- * One class, in a file of its own, because it is the piece that has to be identical in every
- * feature: the same margin down both edges, the same gap between panels, and the same
- * behaviour when the window gets wide.
+ * Three classes, in a file of its own, because they are the pieces that have to be identical
+ * in every feature: the same margin down both edges, the same gap between panels, the same
+ * size for the name of a screen and the same one for a line reporting what just happened.
+ * Written once here rather than as a handful of utilities each screen repeats, which is how
+ * the third screen ends up with a title a step larger than the first.
  *
- * It takes the whole width it is given, at every size, so that on a computer the application
- * fills the window the person sized rather than sitting in a phone-shaped strip down the
- * middle of it. What stops a card from becoming a line of text too wide to read is the card
- * itself: a screen with more than one of them lets them sit side by side once there is room,
- * which is a grid of its own and never a number written here.
+ * They are layout and typography, which is exactly what is **not** an element: nobody operates
+ * a paragraph, and a component whose whole body is a `<p>` earns its reader nothing. What a
+ * person operates comes from `src/components/` — see `.agents/rules/interface-elements.md`.
+ *
+ * The column takes the whole width it is given, at every size, so that on a computer the
+ * application fills the window the person sized rather than sitting in a phone-shaped strip
+ * down the middle of it. What stops a card from becoming a line of text too wide to read is
+ * the card beside it, which is `CardGrid`'s and never a maximum width written here.
  */
 
-.screen {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  width: 100%;
-  padding: calc(var(--space-4) + env(safe-area-inset-top, 0px))
-    calc(var(--space-4) + env(safe-area-inset-right, 0px)) 0
-    calc(var(--space-4) + env(safe-area-inset-left, 0px));
-}
+@layer components {
+  .screen {
+    @apply flex w-full flex-col gap-4;
 
-/* The name of the screen, where a screen has one. The first one does not: it opens with the
-   product's own name instead, which is the only place that belongs. */
-.screen__title {
-  font-size: var(--text-xl);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+    /* The inset every screen gets, plus whatever the device cuts out of its own edges. The
+       foot is the frame's: the screen scrolls inside a region that carries the clearance for
+       the floating menu under it. */
+    padding: calc(--spacing(4) + env(safe-area-inset-top, 0px))
+      calc(--spacing(4) + env(safe-area-inset-right, 0px)) 0
+      calc(--spacing(4) + env(safe-area-inset-left, 0px));
+  }
+
+  /* The name of the screen, where a screen has one. The first one does not: it opens with the
+     product's own name instead, which is the only place that belongs. */
+  .screen__title {
+    @apply text-xl font-semibold tracking-tight;
+  }
+
+  /* A line under a control saying what just happened, or what it will not do. */
+  .note {
+    @apply max-w-measure text-xs text-muted-foreground;
+  }
 }

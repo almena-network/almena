@@ -1,13 +1,13 @@
 # Uncomment the next line to define a global platform for your project
 
-target 'desktop_iOS' do
+target 'almena-app_iOS' do
 platform :ios, '14.0'
-  # Pods for desktop_iOS
+  # Pods for almena-app_iOS
 end
 
-target 'desktop_macOS' do
+target 'almena-app_macOS' do
 platform :osx, '11.0'
-  # Pods for desktop_macOS
+  # Pods for almena-app_macOS
 end
 
 # Delete the deployment target for iOS and macOS, causing it to be inherited from the Podfile

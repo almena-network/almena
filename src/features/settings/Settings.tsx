@@ -3,19 +3,27 @@
  *
  * There is one thing to change today and it belongs to a computer, so on a phone this screen
  * says that rather than drawing an empty page. It is the same choice `NotBuilt` makes for a
- * section with no screen: an empty answer is an answer, and a page that draws nothing at all
- * reads as broken rather than as unfinished.
+ * section with no screen, and it is drawn with the same element: an empty answer is an answer,
+ * and a page that draws nothing at all reads as broken rather than as unfinished.
  *
  * Nothing is drawn while the answer is still being fetched. That moment is short and a control
  * that appears and then vanishes is worse than one that arrives a beat late.
  */
 
+import { SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import Autostart from "@/features/settings/Autostart";
+import CardGrid from "@/components/CardGrid";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import OpenAtLogin from "@/features/settings/OpenAtLogin";
 import { isDesktop } from "@/lib/platform";
-import "@/features/settings/settings.css";
 
 /** The Settings screen. */
 function Settings() {
@@ -31,15 +39,21 @@ function Settings() {
       <h1 className="screen__title">{t("section.settings")}</h1>
 
       {desktop === true && (
-        <div className="settings__cards">
-          <Autostart />
-        </div>
+        <CardGrid>
+          <OpenAtLogin />
+        </CardGrid>
       )}
 
       {desktop === false && (
-        <section className="panel settings__card">
-          <p className="settings__body">{t("settings.nothingHere")}</p>
-        </section>
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SlidersHorizontal aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>{t("settings.nothingHereTitle")}</EmptyTitle>
+            <EmptyDescription>{t("settings.nothingHere")}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       )}
     </div>
   );

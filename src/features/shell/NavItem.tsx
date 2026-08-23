@@ -1,23 +1,32 @@
 /**
  * One entry of the navigation, whichever shape the navigation is in.
  *
- * There is one of these and not two. What changes between a phone and a window is where the
- * entries sit and how they are laid out, and both of those are the stylesheet's — see
- * `shell.css`. A component that asked how wide the window was would be a second answer to a
- * question CSS has already answered.
+ * There is one of these and not two. What changes between a phone and a window is how an entry
+ * is laid out, and that is the `expanded:` half of the classes below — the same button, at the
+ * same place in the document, told to stack its icon over its name until there is room for
+ * them side by side. A component that asked how wide the window was would be a second answer
+ * to a question CSS has already given.
+ *
+ * It is shadcn/ui's button rather than markup of its own: an entry of a navigation is a thing
+ * a person operates, and there is one button in this application
+ * (`.agents/rules/interface-elements.md`). `ghost` is the tone for an entry that is not the
+ * current one; the current one is the same button wearing the identity colour, which is one of
+ * exactly two things that colour is allowed to mean.
  */
 
 import { useTranslation } from "react-i18next";
 
-import Icon, { type IconName } from "@/components/Icon";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 import { sectionNameKey, type SectionId } from "@/features/shell/sections";
+import type { LucideIcon } from "lucide-react";
 
 /** What one entry is drawn from. */
 interface NavItemProps {
   /** The section this entry leads to. */
   id: SectionId;
   /** The icon drawn with its name. */
-  icon: IconName;
+  icon: LucideIcon;
   /** Whether this is the section on screen. */
   current: boolean;
   /** Called when the entry is chosen. */
@@ -25,23 +34,32 @@ interface NavItemProps {
 }
 
 /** One navigation entry. */
-function NavItem({ id, icon, current, onSelect }: NavItemProps) {
+function NavItem({ id, icon: Icon, current, onSelect }: NavItemProps) {
   const { t } = useTranslation();
 
   return (
-    <button
-      type="button"
-      className="nav__item"
+    <Button
+      variant="ghost"
       // Which entry is current is said to a screen reader as well as drawn, because colour is
       // never the only carrier of meaning.
       aria-current={current ? "page" : undefined}
       onClick={() => {
         onSelect(id);
       }}
+      className={cn(
+        // Compact: stacked, and at least the 44 points a finger is entitled to. That number is
+        // defended here rather than inherited, and it is the one place in the interface where
+        // it has to be.
+        "h-auto min-h-11 flex-1 flex-col gap-1 rounded-full px-3 text-xs text-muted-foreground",
+        // Expanded: a row down a sidebar, and no longer stretching to fill it.
+        "expanded:min-h-0 expanded:flex-none expanded:flex-row expanded:justify-start expanded:rounded-md expanded:py-2 expanded:text-sm",
+        current &&
+          "bg-identity-dim text-identity hover:bg-identity-dim hover:text-identity",
+      )}
     >
-      <Icon name={icon} />
-      <span className="nav__name">{t(sectionNameKey(id))}</span>
-    </button>
+      <Icon aria-hidden="true" />
+      <span className="whitespace-nowrap">{t(sectionNameKey(id))}</span>
+    </Button>
   );
 }
 

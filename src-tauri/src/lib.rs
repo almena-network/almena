@@ -18,6 +18,8 @@ mod logging;
 // window exists (`.agents/rules/modularity-and-reuse.md`).
 pub mod notification;
 #[cfg(desktop)]
+mod open_at_login;
+#[cfg(desktop)]
 mod tray;
 #[cfg(desktop)]
 mod window;
@@ -55,6 +57,76 @@ fn is_desktop() -> bool {
     cfg!(desktop)
 }
 
+/// Registers everything only a computer has, and returns the builder with it on.
+///
+/// Apart from [`assemble`] because it is the half that does not exist on a phone, not because
+/// it is a different kind of work: the window it remembers between runs, the command line it
+/// answers, who may open it at login, and the close button that no longer ends it.
+///
+/// Single instance is not here, and cannot be: its own documentation requires it to be the
+/// first plugin registered of all, which is before this function is reached.
+#[cfg(desktop)]
+fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(window_state_flags())
+            .build(),
+    );
+
+    // The command line last of the plugins that answer one, and after logging: what it answers
+    // is decided with the application already built, because the plugin reads the matches
+    // through the handle.
+    let builder = builder.plugin(tauri_plugin_cli::init());
+
+    // Whether the operating system opens this application when somebody logs in. The argument
+    // is not decoration: it is written into the entry, so the launch that comes out of it is one
+    // `cli::starts_hidden` recognises and nobody gets a window in their face at login.
+    //
+    // **Windows and Linux only.** Each keeps one register for this and the plugin writes to it.
+    // macOS keeps two — one for opening at login and one for running in the background — and
+    // this plugin can only write the second, which is the wrong one. `open_at_login` is where
+    // that is explained and where macOS is served instead.
+    //
+    // A phone is absent from both: its operating system owns when an application runs and
+    // offers nothing to switch.
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        Some(vec!["--hidden"]),
+    ));
+
+    // The close button stops ending the application and starts putting it away — but only
+    // where there is a tray to find it in again. If the tray failed to build, a close is a
+    // close and the application ends the way it always did, rather than vanishing to somewhere
+    // this screen has no route back to.
+    let builder = builder.on_window_event(|window, event| {
+        let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+            return;
+        };
+
+        if tray::installed(window.app_handle()) {
+            api.prevent_close();
+            window::hide_main(window.app_handle());
+        }
+    });
+
+    // A launch the system started at login puts nothing on the screen. The window is still
+    // built and the interface still loads — the tray has to be named from there — it is simply
+    // never shown.
+    //
+    // This is in `setup` and not beside the command-line answer in `run`, and the reason was
+    // found by running it: the window declared in `tauri.conf.json` does not exist yet when
+    // `build` returns. Asking for it there finds nothing to hide and says so in the log.
+    builder.setup(|app| {
+        if cli::starts_hidden(app) {
+            info!("started_hidden");
+            window::hide_main(app.handle());
+        }
+
+        Ok(())
+    })
+}
+
 /// Registers everything this application is made of, in the order it has to happen.
 ///
 /// Separate from [`run`] because they are two jobs: this one decides what the application *is*
@@ -88,68 +160,18 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
         .plugin(tauri_plugin_opener::init());
 
     #[cfg(desktop)]
-    let builder = builder.plugin(
-        tauri_plugin_window_state::Builder::default()
-            .with_state_flags(window_state_flags())
-            .build(),
-    );
-
-    // The command line last of the plugins that answer one, and after logging: what it answers
-    // is decided with the application already built, because the plugin reads the matches
-    // through the handle.
-    #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_cli::init());
-
-    // Whether the operating system starts this application when somebody logs in. The argument
-    // is not decoration: it is written into the login item, so the launch that comes out of it
-    // is one `cli::starts_hidden` recognises and nobody gets a window in their face at login.
-    //
-    // Desktop only, like the three above. A phone's operating system owns when an application
-    // runs and offers nothing to switch.
-    #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_autostart::init(
-        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-        Some(vec!["--hidden"]),
-    ));
-
-    // The close button stops ending the application and starts putting it away — but only
-    // where there is a tray to find it in again. If the tray failed to build, a close is a
-    // close and the application ends the way it always did, rather than vanishing to somewhere
-    // this screen has no route back to.
-    #[cfg(desktop)]
-    let builder = builder.on_window_event(|window, event| {
-        let tauri::WindowEvent::CloseRequested { api, .. } = event else {
-            return;
-        };
-
-        if tray::installed(window.app_handle()) {
-            api.prevent_close();
-            window::hide_main(window.app_handle());
-        }
-    });
-
-    // A launch the system started at login puts nothing on the screen. The window is still
-    // built and the interface still loads — the tray has to be named from there — it is simply
-    // never shown.
-    //
-    // This is in `setup` and not beside the command-line answer in `run`, and the reason was
-    // found by running it: the window declared in `tauri.conf.json` does not exist yet when
-    // `build` returns. Asking for it there finds nothing to hide and says so in the log.
-    #[cfg(desktop)]
-    let builder = builder.setup(|app| {
-        if cli::starts_hidden(app) {
-            info!("started_hidden");
-            window::hide_main(app.handle());
-        }
-
-        Ok(())
-    });
+    let builder = assemble_desktop(builder);
 
     // What the interface may call. The desktop build answers one more than the mobile one: the
     // tray is built from that side because its menu is text a person reads, and the catalogs
     // are there and not here.
     #[cfg(desktop)]
-    let builder = builder.invoke_handler(tauri::generate_handler![is_desktop, tray::install_tray]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        is_desktop,
+        tray::install_tray,
+        open_at_login::opens_at_login,
+        open_at_login::set_opens_at_login
+    ]);
     #[cfg(mobile)]
     let builder = builder.invoke_handler(tauri::generate_handler![is_desktop]);
 

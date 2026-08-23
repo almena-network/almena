@@ -5,23 +5,34 @@
  * evidence, because two of the three outcomes draw nothing at all: a person who pressed a
  * button and saw nothing happen cannot tell a refusal from a failure, and would be left
  * guessing which. An empty answer is an answer — `AGENTS.md`, Transparency.
+ *
+ * It is shadcn/ui's `Alert`, which carries `role="alert"` and is therefore read out the moment
+ * it appears — so it is absent rather than empty until there is an outcome. Two of the three
+ * outcomes are failures and wear the danger tone; the third is not, and does not.
+ *
+ * The button is the identity colour, which is the second of the two things that colour means:
+ * it is the thing this card is for. Nothing else on the screen wears it.
  */
 
+import { Bell, BellOff, BellRing, CircleAlert } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { notify, type NotifyOutcome } from "@/lib/notifications";
 
 /**
- * What each outcome is called in the catalogs.
+ * How each outcome is reported: its sentence in the catalogs, the icon beside it, and whether
+ * it is a failure.
  *
  * A lookup rather than a key built from the outcome, so that `tsc` checks all three against
  * the English catalog the way it checks every other key.
  */
-const OUTCOME_KEY = {
-  sent: "home.notify.outcome.sent",
-  refused: "home.notify.outcome.refused",
-  failed: "home.notify.outcome.failed",
+const OUTCOME = {
+  sent: { key: "home.notify.outcome.sent", Icon: BellRing, failed: false },
+  refused: { key: "home.notify.outcome.refused", Icon: BellOff, failed: true },
+  failed: { key: "home.notify.outcome.failed", Icon: CircleAlert, failed: true },
 } as const;
 
 /** The button that sends a notification, with the last outcome under it. */
@@ -33,23 +44,25 @@ function NotifyButton() {
     setOutcome(await notify(t("app.name"), t("home.notify.message")));
   }
 
+  const said = outcome === null ? null : OUTCOME[outcome];
+
   return (
-    <div className="home__notify">
-      <button
-        type="button"
-        className="home__notify-action"
+    <div className="flex flex-col items-start gap-3">
+      <Button
         onClick={() => {
           void send();
         }}
       >
+        <Bell aria-hidden="true" />
         {t("home.notify.action")}
-      </button>
+      </Button>
 
-      {/* Always in the document, empty until there is something to say: a region added to the
-          page at the same moment its text appears is one a screen reader may never announce. */}
-      <p className="home__notify-outcome" role="status">
-        {outcome === null ? "" : t(OUTCOME_KEY[outcome])}
-      </p>
+      {said !== null && (
+        <Alert variant={said.failed ? "destructive" : "default"}>
+          <said.Icon aria-hidden="true" />
+          <AlertDescription>{t(said.key)}</AlertDescription>
+        </Alert>
+      )}
     </div>
   );
 }

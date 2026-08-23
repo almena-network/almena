@@ -1,9 +1,16 @@
 {
   "app": {
-    "name": "Almena"
+    "name": "Almena",
+    "version": "version {{version}}"
   },
   "common": {
     "notBuilt": "This section has no screen yet. It is listed so that the shape of the application is visible while it is being built."
+  },
+  "control": {
+    "on": "On",
+    "off": "Off",
+    "unmeasured": "Not measured",
+    "working": "Working"
   },
   "section": {
     "home": "Home",
@@ -13,8 +20,14 @@
   "shell": {
     "nav": "Sections"
   },
+  "tray": {
+    "quit": "Quit"
+  },
+  "status": {
+    "label": "Status",
+    "licence": "Apache 2.0"
+  },
   "home": {
-    "version": "version {{version}}",
     "notJoined": {
       "title": "Not on the network.",
       "body": "This build joins none: the peer-to-peer layer is not written yet, so there is nothing here that could truthfully report on one."
@@ -31,18 +44,38 @@
       }
     }
   },
-  "settings": {
-    "nothingHere": "There is nothing to set on this device yet. What this screen holds today — whether Almena starts with the system — belongs to a computer, and this is not one.",
-    "autostart": {
-      "heading": "Starting with the system.",
-      "body": "Almena opens with no window when the system starts it and waits in the tray. Closing its window never ends it either: the tray's own menu is where it ends.",
-      "label": "Start Almena when this computer starts",
-      "on": "On",
-      "off": "Off",
-      "refused": "This device did not accept the change, so the setting stays as it was."
+  "network": {
+    "about": {
+      "heading": "The network.",
+      "body": "Which network this node belongs to, who it is, and how many peers it is talking to. A dash is not a zero: it means nobody measured that, which is the case for all three until the peer-to-peer layer exists.",
+      "figure": {
+        "network": "Network",
+        "identity": "This node",
+        "peers": "Peers"
+      }
+    },
+    "peers": {
+      "heading": "Peers",
+      "noneTitle": "No peers.",
+      "none": "No peers, and no network for there to be any on — the peer-to-peer layer is not written yet. The list itself is here and working: the first peer to exist appears in it without this screen changing.",
+      "refresh": "Refresh",
+      "lookedAt": "Looked at {{time}}, and again every ten seconds."
+    },
+    "health": {
+      "ok": "Connected",
+      "warn": "Degraded",
+      "bad": "Failed",
+      "idle": "Idle"
     }
   },
-  "tray": {
-    "quit": "Quit"
+  "settings": {
+    "nothingHereTitle": "Nothing to set here.",
+    "nothingHere": "There is nothing to set on this device yet. What this screen holds today — whether Almena opens at login — belongs to a computer, and this is not one.",
+    "openAtLogin": {
+      "heading": "Open at login.",
+      "body": "The system opens Almena when you log in, with no window: it waits in the tray until you ask for it. This is only about who starts it — Almena runs in the tray whenever it is running, whether it was opened at login or by you.",
+      "label": "Open Almena at login",
+      "refused": "The system did not accept the change, so the setting stays as it was. Its own settings are where a refusal like this is undone."
+    }
   }
 }

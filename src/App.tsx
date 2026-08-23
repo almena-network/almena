@@ -5,8 +5,10 @@
  * knows nothing about the navigation that led to it. Adding a destination is an entry in
  * `@/features/shell/sections` and a line below.
  *
- * The stylesheets every screen relies on are imported here, in the order they have to load:
- * the values first, then the document, then the two surfaces built from both.
+ * The one stylesheet is imported here. There is exactly one — `@/styles/index.css` — because
+ * Tailwind has to be handed a single entry: a stylesheet imported on its own by some component
+ * is compiled without the theme, and every value in it is then a name nothing has defined.
+ * What that entry pulls in, and in which order, is written at the top of it.
  */
 
 import { useEffect, useState } from "react";
@@ -14,14 +16,12 @@ import { useTranslation } from "react-i18next";
 
 import NotBuilt from "@/components/NotBuilt";
 import Home from "@/features/home/Home";
+import Network from "@/features/network/Network";
 import Settings from "@/features/settings/Settings";
 import AppShell from "@/features/shell/AppShell";
 import { sectionNameKey, type SectionId } from "@/features/shell/sections";
 import { installTray } from "@/lib/tray";
-import "@/styles/tokens.css";
-import "@/styles/base.css";
-import "@/styles/panel.css";
-import "@/styles/screen.css";
+import "@/styles/index.css";
 
 /**
  * The screen each section shows, where it has one.
@@ -33,6 +33,7 @@ import "@/styles/screen.css";
  */
 const SCREENS: Partial<Record<SectionId, () => React.ReactElement>> = {
   home: Home,
+  network: Network,
   settings: Settings,
 };
 

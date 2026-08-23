@@ -1,0 +1,23 @@
+/*
+ * The one stylesheet the application loads, and the only entry Tailwind is handed.
+ *
+ * Everything below it is imported rather than linked separately, because Tailwind's layers
+ * have to be registered in one place: a file with `@layer base` in it that Tailwind never saw
+ * emits a native cascade layer of its own, and it then loses to utilities it should win
+ * against. One entry, four imports, no rules of its own.
+ *
+ * The order is the order they have to load in: the framework, then the values every utility
+ * resolves against, then the document, then the classes a screen is laid out with, then the
+ * frame those screens are drawn inside.
+ */
+
+/* `source(none)` turns off Tailwind's own guessing about where classes are written, and the
+   line under it says where they are. Everything drawn on screen is in `src/`, and nothing
+   outside it is scanned — `index.html` holds one empty element and no class at all. */
+@import "tailwindcss" source(none);
+@source "../";
+
+@import "./tokens.css";
+@import "./base.css";
+@import "./screen.css";
+@import "./shell.css";

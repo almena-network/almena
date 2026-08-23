@@ -1,0 +1,130 @@
+/*
+ * The frame, in its two shapes: the navigation, the region that scrolls, and the strip along
+ * the bottom.
+ *
+ * It is a stylesheet rather than utilities on the elements because none of what it does is an
+ * element: it is the geometry of the window itself — a grid that changes shape, a menu that
+ * floats out of the flow, and three places a device's own cut-out edges have to be paid for.
+ * Tailwind expresses all three worse than CSS does, and what a person operates inside the
+ * frame comes from `src/components/` like everywhere else
+ * (`.agents/rules/interface-elements.md`).
+ *
+ * It lives here rather than beside the shell feature because Tailwind has to see it: a
+ * stylesheet a component imports on its own is compiled without the theme, and `@variant` and
+ * `--spacing()` are then names nothing has defined. There is one entry — `index.css` — and
+ * every stylesheet in the project hangs off it.
+ *
+ * The shape follows the width of the viewport and nothing else, so a phone in landscape, a
+ * tablet and a window somebody dragged wider are one case and get one layout. `@variant
+ * expanded` is that decision, and the number behind it — 600 — is in the token file and in no
+ * other place.
+ *
+ * The compact shape is a menu floating across the bottom, because that is where a thumb is.
+ * The expanded one is a sidebar down the left, because a pointer is anywhere and a wide window
+ * has room to spare beside a column of text.
+ */
+
+@layer components {
+  /* Two rows in both shapes: the screen, and the status strip along the bottom. In the
+     compact shape the menu takes no row of its own because it is fixed and therefore out of
+     the grid entirely. */
+  .shell {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    height: 100dvh;
+    overflow: hidden;
+
+    @variant expanded {
+      grid-template-columns: auto 1fr;
+    }
+  }
+
+  /* The one region that scrolls. Below 600 it scrolls the whole way under the floating menu,
+     which is why the padding at its foot clears it. The safe area at the bottom is not this
+     region's problem: the status strip is the bottom edge of the window and carries it. */
+  .shell__screen {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: calc(--spacing(8) + --spacing(3));
+
+    @variant expanded {
+      grid-column: 2;
+      grid-row: 1;
+      /* The menu is a sidebar here and overlays nothing, so the foot of the screen needs no
+         more than the gap any other edge gets. */
+      padding-bottom: --spacing(6);
+    }
+  }
+
+  .shell__nav {
+    position: fixed;
+    right: --spacing(4);
+    /* Above the status strip rather than over it: the strip is the bottom edge of the window
+       and nothing floats across it. */
+    bottom: calc(
+      var(--height-status) + --spacing(3) + env(safe-area-inset-bottom, 0px)
+    );
+    left: --spacing(4);
+    display: flex;
+    gap: --spacing(1);
+    padding: --spacing(1);
+    border: 1px solid var(--glass-edge);
+    border-radius: 9999px;
+    background: var(--glass);
+    /* The one surface in the interface made of a material rather than a colour. */
+    backdrop-filter: blur(24px) saturate(180%);
+    box-shadow: var(--elevation-float);
+
+    @variant expanded {
+      position: static;
+      grid-column: 1;
+      grid-row: 1;
+      flex-direction: column;
+      align-content: start;
+      width: var(--width-sidebar);
+      padding: --spacing(4) --spacing(3);
+      border: 0;
+      border-right: 1px solid var(--border-soft);
+      border-radius: 0;
+      background: var(--sunken);
+      backdrop-filter: none;
+      box-shadow: none;
+    }
+  }
+
+  /*
+   * The status strip.
+   *
+   * Thin on purpose: it is read at a glance and never looked at directly, so it spends the
+   * least height that still leaves its text legible, and it is drawn in the faintest of the
+   * three text colours so that it never competes with the screen above it.
+   *
+   * It is the bottom edge of the application, so it carries the safe area under it on a phone —
+   * the text sits above the home indicator and the strip's own background runs beneath it. In
+   * the expanded shape it spans both columns, so it runs under the sidebar as well as under
+   * the screen: the full width of the application, and not the width of what is beside it.
+   */
+  .status {
+    display: flex;
+    align-items: center;
+    gap: --spacing(4);
+    height: calc(var(--height-status) + env(safe-area-inset-bottom, 0px));
+    padding: 0 calc(--spacing(3) + env(safe-area-inset-right, 0px))
+      env(safe-area-inset-bottom, 0px)
+      calc(--spacing(3) + env(safe-area-inset-left, 0px));
+    border-top: 1px solid var(--border-soft);
+    background: var(--sunken);
+    color: var(--faint);
+    font-size: var(--text-xs);
+    line-height: 1;
+    /* The strip never scrolls sideways and never wraps: at 400 points there is room for what
+       is on it, and an item that would not fit is an item that does not go on a status bar. */
+    overflow: hidden;
+    white-space: nowrap;
+
+    @variant expanded {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+}

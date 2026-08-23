@@ -6,16 +6,20 @@
  *
  * There is no text here. A section's name is a catalog key derived from its identifier, which
  * is what keeps this file free of anything a person reads.
+ *
+ * The icons are Lucide's, which is the set shadcn/ui draws with and therefore the project's —
+ * one set, one grid, one stroke weight, and no icon of our own beside them
+ * (`.agents/rules/visual-identity.md`).
  */
 
-import type { IconName } from "@/components/Icon";
+import { House, Network, Settings, type LucideIcon } from "lucide-react";
 
 /** A section: an entry in the navigation and the screen behind it. */
 interface Section {
   /** Stable identifier. It is also how the section's name is looked up in the catalog. */
   id: string;
   /** The icon drawn with its name. */
-  icon: IconName;
+  icon: LucideIcon;
 }
 
 /**
@@ -31,9 +35,9 @@ interface Section {
  * later moves everything beside it, which is worse than an entry that was always there.
  */
 export const SECTIONS = [
-  { id: "home", icon: "home" },
-  { id: "network", icon: "network" },
-  { id: "settings", icon: "settings" },
+  { id: "home", icon: House },
+  { id: "network", icon: Network },
+  { id: "settings", icon: Settings },
 ] as const satisfies readonly Section[];
 
 /** The identifier of one of the sections. */

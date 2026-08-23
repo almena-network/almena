@@ -5,6 +5,17 @@
  * palette instead of a colour per file. A screen that needs a value not in this list is
  * either wrong or the list is short one token — never a literal in place.
  *
+ * The file has two halves and they do different jobs:
+ *
+ * - The `:root` blocks hold the **values**, under the names shadcn/ui's elements already read
+ *   — `--background`, `--card`, `--primary`, `--border`. Vendored elements are left verbatim
+ *   (`.agents/rules/interface-elements.md`), so the palette comes to them rather than the
+ *   other way round, and swapping a palette at runtime is a rewrite of these lines alone.
+ * - The `@theme inline` block turns those values into the **utilities** a screen writes:
+ *   `bg-card`, `text-muted-foreground`, `rounded-lg`, `text-sm`. It is where Tailwind's own
+ *   defaults are cut down to what this project has agreed to — one type scale, one breakpoint,
+ *   and no colour that is not named below.
+ *
  * **Two things about it are the reader's to choose**, and both belong to the Settings screen
  * once it is built — today nothing sets them, so every device gets the defaults. They are set
  * as attributes on the document element and nothing else in the project reads them:
@@ -13,7 +24,7 @@
  *   and the attribute is put there either by a stored choice or, when there is none, by what
  *   the operating system asked for. There is one light block rather than one per screen: a
  *   screen that handles both is how the two drift apart.
- * - `data-accent="…"` swaps the identity colour for one of five. Every other accent token is
+ * - `data-accent="…"` swaps the identity colour for one of five. Every other shade of it is
  *   mixed from that one, so a colour is one line per theme and never four.
  *
  * The four state colours are not among them. Green, amber, red and grey mean well, degraded,
@@ -26,217 +37,226 @@
  * rather than five unrelated darks, and what a warm identity colour is warm against.
  */
 
+/*
+ * Dark is the default and the design, which is the opposite of the way shadcn/ui ships: there,
+ * light is what `:root` holds and `.dark` is the exception. So the variant is redefined to
+ * mean "the document has not been asked for light", and a device with nothing stored and an
+ * operating system with no opinion is dark.
+ */
+@custom-variant dark (&:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *));
+
 :root {
   color-scheme: dark;
 
   /* The five identity colours as they are drawn on this palette. They are named rather than
-     written in place because two things read them: the block that makes one of them the
+     written in place because two things read them: the line that makes one of them the
      identity colour, and the five swatches on the settings screen that have to show the
      colour a person is actually choosing. */
-  --accent-orange: #eb7229;
-  --accent-blue: #4a9eff;
-  --accent-red: #e5484d;
-  --accent-yellow: #f2c94c;
-  --accent-green: #2ecc8f;
+  --identity-orange: #eb7229;
+  --identity-blue: #4a9eff;
+  --identity-red: #e5484d;
+  --identity-yellow: #f2c94c;
+  --identity-green: #2ecc8f;
 
   /* Identity. Orange until the reader says otherwise — it is the colour of the application
      icon, and the one the interface is drawn in when nobody has chosen. Whatever it is, it
      means one of two things and never a third: "this is Almena", or "this is the thing you
      came here for". */
-  --color-accent: var(--accent-orange);
+  --identity: var(--identity-orange);
 
-  /* The three shades every screen actually uses, mixed from the one above rather than written
-     out. That is what makes a new accent a single line instead of four, and what stops the
-     four from drifting apart. */
-  --color-accent-bright: color-mix(in srgb, var(--color-accent) 82%, white);
-  --color-accent-dim: color-mix(in srgb, var(--color-accent) 16%, transparent);
-  --color-accent-edge: color-mix(in srgb, var(--color-accent) 38%, transparent);
+  /* The three shades of it every screen actually uses, mixed from the one above rather than
+     written out. That is what makes a new accent a single line instead of four, and what stops
+     the four from drifting apart. */
+  --identity-bright: color-mix(in srgb, var(--identity) 82%, white);
+  --identity-dim: color-mix(in srgb, var(--identity) 16%, transparent);
+  --identity-edge: color-mix(in srgb, var(--identity) 38%, transparent);
 
   /* The ladder, from the back of the screen to the front. Each rung is a step somebody can
      see, which is the whole reason there are five of them:
 
-     - `sunken` is cut into a surface — a field somebody types an address into.
-     - `canvas` is the screen behind everything.
-     - `surface` is a card. It is the rung that carries the most, so it is the one furthest
-       from its neighbours.
-     - `raised` is a control sitting on a card, and `hover` is a pointer over one. */
-  --color-sunken: #080a0e;
-  --color-canvas: #0e1116;
-  --color-surface: #1c212a;
-  --color-raised: #262b36;
-  --color-hover: #313743;
+     - `sunken` is cut into a surface — the status strip, a field somebody types an address
+       into.
+     - `background` is the screen behind everything.
+     - `card` is a card. It is the rung that carries the most, so it is the one furthest from
+       its neighbours.
+     - `secondary` is a control sitting on a card, and `accent` is a pointer over one.
 
-  /* What darkens whatever is behind the interface's own drawing. There is one such surface
-     today — the camera preview outside the viewfinder — and it is dark rather than tinted so
-     that a camera image reads as an image and the square cut out of it reads as the subject. */
-  --color-scrim: rgb(0 0 0 / 62%);
-
-  /* Lines. The soft one is for a division inside a panel, the plain one between panels. */
-  --color-border: #303745;
-  --color-border-soft: rgb(255 255 255 / 7%);
-
-  /* The light a raised surface catches along its top edge. One hairline, drawn as an inset
-     shadow by `--shadow-card`, and it is most of what makes a card read as lying on the
-     canvas rather than as a rectangle painted on it. */
-  --color-edge: rgb(255 255 255 / 5%);
-
-  /* The canvas, lit from the top. It is the ladder and nothing else — a little of the card's
-     own rung mixed into the canvas, fading out before the first card starts — and it is what
-     stops a screen with little on it from being a flat rectangle of one colour. Written once
-     here so that both palettes get it from their own values and neither has a gradient of its
-     own written down. */
-  --gradient-canvas: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--color-surface) 55%, var(--color-canvas)) 0%,
-    var(--color-canvas) 42%
-  );
+     The last two carry shadcn/ui's names rather than the ones a reader of this file would
+     pick, and `accent` is the one to be careful with: **it is a hover surface and says nothing
+     about identity**. The identity colour is `primary`, below. */
+  --sunken: #080a0e;
+  --background: #0e1116;
+  --card: #1c212a;
+  --popover: #1c212a;
+  --secondary: #262b36;
+  --muted: #262b36;
+  --accent: #313743;
 
   /* Text, in the order it stops being important. */
-  --color-text: #e9ecf1;
-  --color-text-soft: #a2a9b8;
-  --color-text-faint: #798190;
+  --foreground: #e9ecf1;
+  --card-foreground: #e9ecf1;
+  --popover-foreground: #e9ecf1;
+  --secondary-foreground: #e9ecf1;
+  --accent-foreground: #e9ecf1;
+  --muted-foreground: #a2a9b8;
+  --faint: #798190;
+
+  /* What an element wears when it is the thing you came to the screen for. The text on it is
+     the darkest rung rather than white: every one of the five identity colours is a light
+     colour on this palette, and white on any of them is unreadable. */
+  --primary: var(--identity);
+  --primary-foreground: #080a0e;
 
   /* States. Only these four, so that a colour on screen always means the same thing. */
-  --color-ok: #3fb950;
-  --color-warn: #d29922;
-  --color-bad: #f85149;
-  --color-idle: #6b7280;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --bad: #f85149;
+  --idle: #6b7280;
 
-  /* Shape */
-  --radius-s: 6px;
-  --radius-m: 10px;
-  --radius-l: 14px;
-  --radius-pill: 999px;
+  /* The tone an element takes when pressing it destroys something. It is the failed state's
+     own red, deliberately: a red on this screen means "this went wrong or will", and a second
+     red would mean a reader had to tell two of them apart. Nothing draws it today — there is
+     no destructive action in the application — and it is here because the vendored elements
+     name it. */
+  --destructive: var(--bad);
 
-  /* Spacing, doubling. Every gap and every padding comes from this scale. */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
+  /* Lines. The soft one is for a division inside a panel, the plain one between panels;
+     `input` is the line around something a person operates. */
+  --border: #303745;
+  --border-soft: rgb(255 255 255 / 7%);
+  --input: #303745;
+
+  /* Where the keyboard is. It is the identity colour because being the thing you are about to
+     operate is exactly the second of its two meanings. */
+  --ring: var(--identity);
+
+  /* The light a raised surface catches along its top edge. One hairline, drawn as an inset
+     shadow by `--elevation-card`, and it is most of what makes a card read as lying on the
+     canvas rather than as a rectangle painted on it. */
+  --edge: rgb(255 255 255 / 5%);
+
+  /* What darkens whatever is behind the interface's own drawing. Dark rather than tinted, so
+     that what is under it reads as an image and what is cut out of it reads as the subject. */
+  --scrim: rgb(0 0 0 / 62%);
 
   /* Glass. The floating menu is the one surface made of a material rather than a colour, and
-     these are the layers it is made of: a tint dark enough to read text on, a sheen down the
-     face, a lit top edge, and the light a raised element catches on its own. They live here
-     with every other value so that a second glass surface, if one is ever justified, is the
-     same glass.
-
-     The tint is mixed from the card's own rung rather than written out, so that the glass goes
-     on following the ladder instead of becoming the one surface still wearing an older
-     palette. */
-  --glass-tint: color-mix(in srgb, var(--color-surface) 55%, transparent);
-  --glass-sheen: linear-gradient(
-    180deg,
-    rgb(255 255 255 / 14%) 0%,
-    rgb(255 255 255 / 4%) 55%,
-    rgb(255 255 255 / 8%) 100%
-  );
+     these are the two layers it is made of: a tint dark enough to read text on, and a lit
+     edge. The tint is mixed from the card's own rung rather than written out, so that the
+     glass goes on following the ladder instead of becoming the one surface still wearing an
+     older palette. */
+  --glass: color-mix(in srgb, var(--card) 55%, transparent);
   --glass-edge: rgb(255 255 255 / 14%);
-  --glass-lit: rgb(255 255 255 / 26%);
-  --glass-lit-soft: rgb(255 255 255 / 18%);
-  --glass-wash: rgb(255 255 255 / 6%);
-  --glass-blur: blur(24px) saturate(180%);
+
+  /* The canvas, lit from the top. It is the ladder and nothing else — a little of the card's
+     own rung mixed into the background, fading out before the first card starts — and it is
+     what stops a screen with little on it from being a flat rectangle of one colour. */
+  --gradient-canvas: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--card) 55%, var(--background)) 0%,
+    var(--background) 42%
+  );
 
   /* Depth. A card is lit along its top edge, seated by a tight shadow and lifted by a wide
      one — three layers in a single token, because a card that took only some of them would be
      a card that sits differently from every other. */
-  --shadow-card:
-    inset 0 1px 0 var(--color-edge), 0 1px 2px rgb(0 0 0 / 30%),
+  --elevation-card:
+    inset 0 1px 0 var(--edge), 0 1px 2px rgb(0 0 0 / 30%),
     0 10px 24px -16px rgb(0 0 0 / 80%);
-  --shadow-float: 0 12px 32px rgb(0 0 0 / 45%);
+  --elevation-float: 0 12px 32px rgb(0 0 0 / 45%);
 
-  /* What lifts the glass off the screen, and what lights its edges from within. One value,
-     because the four layers only work together. */
-  --shadow-glass:
-    0 12px 32px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 30%),
-    inset 0 1px 0 var(--glass-lit), inset 0 -1px 0 var(--glass-wash);
+  /* Shape. One radius, and shadcn/ui's four sizes are steps off it — 6, 8, 10 and 14 points,
+     which is the scale this project already had. */
+  --radius: 10px;
 
-  /* Type. The monospace face is for anything a person may have to compare character by
-     character — a peer identifier, an address, a version. */
-  --font-sans: system-ui, Inter, Avenir, Helvetica, Arial, sans-serif;
-  --font-mono:
-    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-  --text-s: 12px;
-  --text-m: 13px;
-  --text-l: 15px;
-  --text-xl: 20px;
-  --text-xxl: 28px;
+  /* The narrowest a column of a screen's grid is still worth having: a card of prose below
+     360 points is a column of two-word lines, and a figure below 160 is a label that wraps.
+     Both are the minimum of a `repeat(auto-fit, …)`, which is the whole of how this project
+     reflows — see `.agents/rules/screen-sizes.md`. They are values rather than utilities
+     because Tailwind has no auto-fit grid to hang them off. */
+  --width-card-min: 360px;
+  --width-figure-min: 160px;
+
+  /* The sidebar, in the expanded shape. Wide enough for the longest section name in either
+     catalog beside its icon, and no wider: it is the frame, not a panel. */
+  --width-sidebar: 13rem;
+
+  /* The height of the status strip. It is a token because two files need to agree about it:
+     the strip sets it, and the floating menu sits above it. */
+  --height-status: 28px;
 }
 
 /*
- * The light palette: the same tokens, and only the ones that change.
+ * The light palette: the same names, and only the ones that change.
  *
- * Shape, spacing and type are not in here because they do not change with the light — a
- * radius is a radius. Neither are the accents, which have their own block below and their own
- * value per theme, because a colour that reads on near-black does not read on near-white.
+ * Shape, spacing and type are not in here because they do not change with the light — a radius
+ * is a radius. The identity colours are, and they have their own value per theme, because a
+ * colour that reads on near-black does not read on near-white.
  */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  /* The same five rungs, and the same reason for there being five. The canvas drops further
-     below the card than it used to: white cards on an almost-white page is the light palette's
-     version of the flat slab the dark one had. */
-  --color-sunken: #e4e7ee;
-  --color-canvas: #eceef3;
-  --color-surface: #ffffff;
-  --color-raised: #f2f4f8;
-  --color-hover: #e4e8ef;
-
-  --color-scrim: rgb(0 0 0 / 45%);
-
-  --color-border: #d7dce5;
-  --color-border-soft: rgb(0 0 0 / 8%);
-
-  /* A card in daylight catches no edge light of its own — it is already the brightest thing on
-     the screen. The token stays because `--shadow-card` names it; what it draws is nothing. */
-  --color-edge: rgb(255 255 255 / 0%);
-
-  --color-text: #16181d;
-  --color-text-soft: #4b525e;
-  --color-text-faint: #6b7280;
-
-  /* Darker than their dark-mode counterparts, and the same four meanings. A state colour that
-     cannot be read is a state nobody knows about. */
-  --color-ok: #1a7f37;
-  --color-warn: #9a6700;
-  --color-bad: #cf222e;
-  --color-idle: #6b7280;
-
   /* The same five, pushed down onto a near-white background instead of lifted off a near-black
      one. Yellow is the one that cannot keep its hue: a yellow readable as text on white is a
      dark yellow, which the eye calls brown — the alternative is a colour nobody can read. */
-  --accent-orange: #c2570f;
-  --accent-blue: #1d4ed8;
-  --accent-red: #c1121f;
-  --accent-yellow: #a16207;
-  --accent-green: #0f7a52;
+  --identity-orange: #c2570f;
+  --identity-blue: #1d4ed8;
+  --identity-red: #c1121f;
+  --identity-yellow: #a16207;
+  --identity-green: #0f7a52;
 
   /* Bright means "further from the surface", and the surface is now the pale one, so this
      mixes towards black where the dark palette mixes towards white. */
-  --color-accent-bright: color-mix(in srgb, var(--color-accent) 85%, black);
+  --identity-bright: color-mix(in srgb, var(--identity) 85%, black);
 
-  /* Glass over a pale background is a white tint rather than a dark one, and its lit edge is
-     what light already falls on rather than what the pane catches. */
-  --glass-tint: color-mix(in srgb, var(--color-surface) 62%, transparent);
-  --glass-sheen: linear-gradient(
-    180deg,
-    rgb(255 255 255 / 70%) 0%,
-    rgb(255 255 255 / 30%) 55%,
-    rgb(255 255 255 / 50%) 100%
-  );
+  /* The same five rungs, and the same reason for there being five. The background drops
+     further below the card than it used to: white cards on an almost-white page is the light
+     palette's version of the flat slab the dark one had. */
+  --sunken: #e4e7ee;
+  --background: #eceef3;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --secondary: #f2f4f8;
+  --muted: #f2f4f8;
+  --accent: #e4e8ef;
+
+  --foreground: #16181d;
+  --card-foreground: #16181d;
+  --popover-foreground: #16181d;
+  --secondary-foreground: #16181d;
+  --accent-foreground: #16181d;
+  --muted-foreground: #4b525e;
+  --faint: #6b7280;
+
+  /* The five identity colours are dark on this palette, so what reads on them is white —
+     the mirror of the dark palette's near-black. */
+  --primary-foreground: #ffffff;
+
+  /* Darker than their dark-mode counterparts, and the same four meanings. A state colour that
+     cannot be read is a state nobody knows about. */
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --bad: #cf222e;
+  --idle: #6b7280;
+
+  --border: #d7dce5;
+  --border-soft: rgb(0 0 0 / 8%);
+  --input: #d7dce5;
+
+  /* A card in daylight catches no edge light of its own — it is already the brightest thing on
+     the screen. The token stays because `--elevation-card` names it; what it draws is nothing. */
+  --edge: rgb(255 255 255 / 0%);
+
+  --scrim: rgb(0 0 0 / 45%);
+
+  /* Glass over a pale background is a white tint rather than a dark one, and its edge is what
+     light already falls on rather than what the pane catches. */
+  --glass: color-mix(in srgb, var(--card) 62%, transparent);
   --glass-edge: rgb(0 0 0 / 10%);
-  --glass-lit: rgb(255 255 255 / 85%);
-  --glass-lit-soft: rgb(255 255 255 / 65%);
-  --glass-wash: rgb(0 0 0 / 5%);
 
-  --shadow-card:
-    inset 0 1px 0 var(--color-edge), 0 1px 2px rgb(0 0 0 / 6%),
+  --elevation-card:
+    inset 0 1px 0 var(--edge), 0 1px 2px rgb(0 0 0 / 6%),
     0 10px 24px -18px rgb(0 0 0 / 40%);
-  --shadow-float: 0 12px 32px rgb(0 0 0 / 14%);
-  --shadow-glass:
-    0 12px 32px rgb(0 0 0 / 14%), 0 2px 8px rgb(0 0 0 / 8%),
-    inset 0 1px 0 var(--glass-lit), inset 0 -1px 0 var(--glass-wash);
+  --elevation-float: 0 12px 32px rgb(0 0 0 / 14%);
 }
 
 /*
@@ -248,17 +268,121 @@
  * above, so a colour is chosen once and is right in both.
  */
 :root[data-accent="blue"] {
-  --color-accent: var(--accent-blue);
+  --identity: var(--identity-blue);
 }
 
 :root[data-accent="red"] {
-  --color-accent: var(--accent-red);
+  --identity: var(--identity-red);
 }
 
 :root[data-accent="yellow"] {
-  --color-accent: var(--accent-yellow);
+  --identity: var(--identity-yellow);
 }
 
 :root[data-accent="green"] {
-  --color-accent: var(--accent-green);
+  --identity: var(--identity-green);
+}
+
+/*
+ * The utilities a screen is allowed to write, and nothing else.
+ *
+ * `inline` is what lets a palette be swapped while the application is running: the utility
+ * carries `var(--card)` rather than the colour `--card` held when the stylesheet was built.
+ *
+ * The two `initial` lines are the enforceable half of two rules. Tailwind ships a palette of
+ * about 250 colours and five breakpoints; both are cleared here, so `bg-red-500` and `md:` do
+ * not exist in this project and a screen reaching for one gets nothing rather than getting
+ * away with it — `.agents/rules/visual-identity.md` and `.agents/rules/screen-sizes.md`.
+ */
+@theme inline {
+  --color-*: initial;
+
+  /* The three keywords, which are not colours anybody chose. `white` is named by the vendored
+     destructive elements and `black` by the light palette's mix. */
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  /* The ladder and its text, under the names the vendored elements already use. */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  /* Almena's own two rungs, which shadcn/ui has no name for: the strip cut into the back of
+     the window, and the faintest text on it. */
+  --color-sunken: var(--sunken);
+  --color-faint: var(--faint);
+
+  /* Identity. `primary` is what an element wears; `identity-dim` and `identity-edge` are the
+     two washes of it a surface takes when it is the current one. */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-identity: var(--identity);
+  --color-identity-bright: var(--identity-bright);
+  --color-identity-dim: var(--identity-dim);
+  --color-identity-edge: var(--identity-edge);
+
+  /* The four states, and the danger tone that shares the last one's red. */
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-idle: var(--idle);
+  --color-destructive: var(--destructive);
+
+  /* Lines, focus, glass and the scrim. */
+  --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-glass: var(--glass);
+  --color-glass-edge: var(--glass-edge);
+  --color-scrim: var(--scrim);
+
+  /* Shape. Four steps off the one radius, which is what `rounded-sm` through `rounded-xl`
+     resolve to. `rounded-full` is Tailwind's own and is the pill. */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Depth, under the two names the interface draws with. */
+  --shadow-card: var(--elevation-card);
+  --shadow-float: var(--elevation-float);
+
+  /* Type. The monospace face is for anything a person may have to compare character by
+     character — a peer identifier, an address, a version. */
+  --font-sans: system-ui, Inter, Avenir, Helvetica, Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Six sizes and no seventh. `sm` is the body size, which is what the vendored elements are
+     built around, so an element dropped onto a screen is the size the screen is. */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 28px;
+
+  /* How wide a paragraph of prose is allowed to get, as `max-w-measure`. It is the one width in the project, and
+     it is a measure rather than a size: past about sixty characters an eye loses the start of
+     the next line. It never applies to a screen, a column or a card — see
+     `.agents/rules/screen-sizes.md`. */
+  --container-measure: 60ch;
+
+  /* One breakpoint, at 600, and this is the only place the number appears. Above it the
+     application is in its expanded shape; below it, its compact one. Nothing else about the
+     device is ever asked — `.agents/rules/screen-sizes.md`. */
+  --breakpoint-*: initial;
+  --breakpoint-expanded: 600px;
 }

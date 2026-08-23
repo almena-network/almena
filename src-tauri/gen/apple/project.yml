@@ -1,4 +1,4 @@
-name: desktop
+name: almena-app
 options:
   bundleIdPrefix: network.almena.desktop
   deploymentTarget:
@@ -10,7 +10,7 @@ configs:
 settingGroups:
   app:
     base:
-      PRODUCT_NAME: desktop
+      PRODUCT_NAME: Almena
       PRODUCT_BUNDLE_IDENTIFIER: network.almena.desktop
 targetTemplates:
   app:
@@ -24,20 +24,20 @@ targetTemplates:
     settings:
       groups: [app]
 targets:
-  desktop_iOS:
+  almena-app_iOS:
     type: application
     platform: iOS
     sources:
       - path: Sources
       - path: Assets.xcassets
       - path: Externals
-      - path: desktop_iOS
+      - path: almena-app_iOS
       - path: assets
         buildPhase: resources
         type: folder
       - path: LaunchScreen.storyboard
     info:
-      path: desktop_iOS/Info.plist
+      path: almena-app_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
@@ -54,7 +54,7 @@ targets:
         CFBundleShortVersionString: 0.1.0
         CFBundleVersion: "0.1.0"
     entitlements:
-      path: desktop_iOS/desktop_iOS.entitlements
+      path: almena-app_iOS/almena-app_iOS.entitlements
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full

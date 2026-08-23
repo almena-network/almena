@@ -48,4 +48,13 @@ tauri-plugin-notification = { workspace = true }
 tauri-plugin-window-state = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 tauri-plugin-cli = { workspace = true }
+
+# Windows and Linux, and deliberately not macOS. Each of these two keeps one register for
+# "open this when somebody logs in" and this plugin writes to it.
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = { workspace = true }
+
+# macOS alone, because macOS keeps two registers and this is the one that reaches the right
+# one. See `src/open_at_login.rs` for what the difference is and why it matters.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-service-management = { workspace = true }

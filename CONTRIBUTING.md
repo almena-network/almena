@@ -81,7 +81,8 @@ keyboard shortcut or a context menu is an accelerator, never the only way to do 
 **The application fills the window.** No screen, column or card carries a `max-width`. Where a
 screen has several cards they flow — side by side once there is room, stacked when there is
 not — with one `repeat(auto-fit, minmax(min(100%, …), 1fr))` grid and no new breakpoint. 600
-is the only width written anywhere. See it at 400 × 700 and at a window dragged wide before
+is the only width written anywhere: it is `--breakpoint-expanded` in `src/styles/tokens.css`,
+and the only variant that reads it is `expanded:`. See it at 400 × 700 and at a window dragged wide before
 you call it done.
 
 **Nothing on screen is selectable.** `user-select: none` is declared once, on `body` in the
@@ -108,10 +109,45 @@ wherever its name and type do not already say everything.
 **Modules have one responsibility.** Name it without the word "and". Extract on the third
 occurrence rather than the second, when you know which part is genuinely shared.
 
+**Screens are drawn out of shadcn/ui.** Everything a person operates, and every surface those
+things sit on, comes from `src/components/ui/` — `alert`, `badge`, `button`, `card`, `empty`,
+`field`, `item`, `label`, `separator`, `spinner`, `switch`. Look in the registry before writing
+one: it is larger than it seems, and an element written by hand that already existed is the
+expensive kind of mistake, because it looks finished. Those files are vendored: they arrive by
+`pnpm dlx shadcn@latest add <name>` and are left as the registry wrote them, with a file header
+on top and any deviation named in it. A feature never writes its own `<button>`, `<input>` or
+card, and never nudges an imported element with a `className` that changes how it is drawn
+rather than where it sits. A screen that needs an element to look different is asking for a
+change to that element, and the change has to be nameable as a meaning — which is why only four
+of the variants the registry ships are drawn here, and the list of them is in the rule.
+
+What shadcn/ui has no answer for is composed from what it does, in `src/components/`: `Logo`,
+`Figure`, `StateBadge`, `Setting`, `CardGrid`, `NotBuilt`. Nothing in there invents a second way
+of drawing a surface or a control, and a component the registry turns out to have an element for
+is deleted in favour of it.
+
+**A vendored element's own English is overridden, not edited.** `Spinner` ships
+`aria-label="Loading"`; the translated value is passed as a prop at the call site. Editing the
+vendored file would work until the next update quietly put the English back.
+
+**Every value is a token.** Screens are Tailwind utilities, and every one of them resolves
+against `src/styles/tokens.css` — the one file of colour, shape, spacing and type. An arbitrary
+value carrying a design value is the violation: `bg-[#eb7229]`, `text-[13px]`, `rounded-[12px]`
+and `style={{ … }}` are all the same mistake, and Tailwind's own colour palette and breakpoints
+are cleared in that file so that `bg-red-500` and `md:` do not exist here at all. The identity
+colour is `primary`; shadcn/ui's `accent` is a hover grey and means nothing about identity.
+Icons come from `lucide-react` and from nowhere else.
+
 `crates/almena-log` is the one crate beside the application today, and it is one because the
 shape of a record is a decision rather than a helper — see
 [logging.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/logging.md).
 A second crate needs an argument of that kind, not a pile of things that had nowhere else to go.
+
+**`unsafe` is denied, and lifted in exactly one place.** The workspace denies `unsafe_code`.
+One module lifts it — `src-tauri/src/open_at_login.rs`, whose macOS half calls into
+Objective-C because no safe API reaches the register it has to write — and every block there
+carries a `// SAFETY:` comment saying why it is sound. A second one would take the same shape:
+per module, never crate-wide, and never without the comment.
 
 **`task check` never compiles for a phone.** `--all-targets` means every kind of target — lib,
 bins, tests — and not every platform, so a `#[cfg(mobile)]` path can be wrong for weeks and the
@@ -123,7 +159,9 @@ of a `rustup` toolchain rather than passing quietly.
 `tsc --noEmit`, `task catalogs` and `task isolation` — passes before you push, and
 `task format` is what settles an argument about layout. Both are narrower than they will end
 up: ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs
-Rust alone and `task format` formats Rust alone.
+Rust alone and `task format` formats Rust alone — and the two agreements above that a linter
+would catch, the size limits and the ban on arbitrary Tailwind values, are a reviewer's until
+it arrives.
 
 **The log format knows about no framework.** `task isolation` fails a build in which
 `almena-log` can reach `tauri`. That crate holds the shape of a record and the sizes a log is

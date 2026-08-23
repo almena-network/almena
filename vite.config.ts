@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -11,7 +12,9 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  // Tailwind is a Vite plugin rather than a PostCSS step, and it needs no configuration file:
+  // every value it resolves against is declared in `src/styles/tokens.css`.
+  plugins: [react(), tailwindcss()],
 
   // Imports inside `src/` are absolute from the project root — `@/i18n`, never `../../i18n` —
   // so that moving a file does not rewrite a column of dots. The alias is declared here and

@@ -1,113 +1,95 @@
 /*
  * What the document looks like before any screen has drawn anything.
  *
- * Only element selectors belong here: the reset, the page itself, and the few browser
- * behaviours worth correcting once. Anything with a class name belongs to the component that
- * owns it.
+ * Only element selectors belong here: the page itself, and the few browser behaviours worth
+ * correcting once. Anything with a class name belongs to the element that owns it, and the
+ * reset is Tailwind's Preflight rather than one of ours.
  *
  * This is the same application on a phone and in a window, so the corrections below cover
  * both: a finger gets no grey flash and no double-tap zoom, a pointer gets a visible focus
  * ring, and neither gets a page that bounces away from under the floating menu.
  */
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+@layer base {
+  /* Tailwind's `border` utility takes the current text colour when nothing says otherwise,
+     which would give every vendored element an outline the colour of its own label. This is
+     the line that makes an unqualified border mean the palette's border. */
+  * {
+    border-color: var(--border);
+  }
 
-* {
-  margin: 0;
-  padding: 0;
-}
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
 
-html,
-body,
-#root {
-  height: 100%;
-}
+  body {
+    /* Both, and in this order: the gradient is what is seen, and the flat colour under it is
+       what any surface that only takes a colour falls back to. The page itself never scrolls —
+       the screen inside it does — so the light stays at the top of the window rather than
+       travelling up and off it. */
+    background-color: var(--background);
+    background-image: var(--gradient-canvas);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    font-synthesis: none;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
 
-body {
-  /* Both, and in this order: the gradient is what is seen, and the flat colour under it is
-     what any surface that only takes a colour falls back to. The page itself never scrolls —
-     the screen inside it does — so the light stays at the top of the window rather than
-     travelling up and off it. */
-  background: var(--color-canvas);
-  background-image: var(--gradient-canvas);
-  color: var(--color-text);
-  font-family: var(--font-sans);
-  font-size: var(--text-m);
-  line-height: 1.5;
-  font-synthesis: none;
-  text-rendering: optimizelegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
+    /* The screen is a fixed frame with its own scrolling region inside it, so the page itself
+       never scrolls and never rubber-bands past its own edge. */
+    overflow: hidden;
+    overscroll-behavior: none;
 
-  /* The screen is a fixed frame with its own scrolling region inside it, so the page itself
-     never scrolls and never rubber-bands past its own edge. */
-  overflow: hidden;
-  overscroll-behavior: none;
+    /* No 300ms wait for a second tap that is never a zoom, and no grey rectangle over what was
+       touched. Both are browser defaults that read as lag in an application. */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 
-  /* No 300ms wait for a second tap that is never a zoom, and no grey rectangle over what was
-     touched. Both are browser defaults that read as lag in an application. */
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
+    /* Nothing here is selectable. This is an application rather than a document: a drag across
+       a card should leave no blue smear behind it, and a finger resting on an address should
+       raise neither a magnifier nor a callout menu. Text that is worth taking out of the
+       application gets a button that copies it — a deliberate act, and one that can put the
+       whole of a value on the clipboard rather than whatever the gesture happened to cover. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
 
-  /* Nothing here is selectable. This is an application rather than a document: a drag across
-     a card should leave no blue smear behind it, and a finger resting on an address should
-     raise neither a magnifier nor a callout menu. Text that is worth taking out of the
-     application gets a button that copies it — a deliberate act, and one that can put the
-     whole of a value on the clipboard rather than whatever the gesture happened to cover. */
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-}
+  /* The exception, and the only one: a field cannot be typed into without selecting inside it,
+     and a caret is a selection. */
+  input,
+  textarea {
+    user-select: text;
+    -webkit-user-select: text;
+  }
 
-/* The exception, and the only one: a field cannot be typed into without selecting inside it,
-   and a caret is a selection. */
-input,
-textarea {
-  user-select: text;
-  -webkit-user-select: text;
-}
+  /* Kept, not removed: on a computer this application is driven by a keyboard as readily as by
+     a pointer, and the ring is the only thing saying where the keyboard is. Vendored elements
+     draw their own and this is what everything else gets. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
 
-button,
-input,
-select {
-  font: inherit;
-  color: inherit;
-}
+  ::selection {
+    background: var(--identity-edge);
+  }
 
-button {
-  border: none;
-  background: none;
-  cursor: pointer;
-}
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
 
-button:disabled {
-  cursor: not-allowed;
-}
-
-/* Kept, not removed: on a computer this application is driven by a keyboard as readily as by
-   a pointer, and the ring is the only thing saying where the keyboard is. */
-:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-::selection {
-  background: var(--color-accent-edge);
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: var(--radius-pill);
-  background: var(--color-hover);
-  background-clip: content-box;
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: var(--accent);
+    background-clip: content-box;
+  }
 }

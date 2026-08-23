@@ -24,6 +24,9 @@ closed by making everything it left describing the old arrangement true again.
 
 - [Tauri 2](https://tauri.app) — Rust core, native shell on every platform.
 - [React 19](https://react.dev) with TypeScript, built by [Vite 7](https://vite.dev).
+- [shadcn/ui](https://ui.shadcn.com) on [Tailwind CSS 4](https://tailwindcss.com) —
+  every element a screen draws, and every value it is drawn from.
+- [Lucide](https://lucide.dev) for icons, which is the set shadcn/ui draws with.
 - [pnpm](https://pnpm.io) for JavaScript dependencies, [Task](https://taskfile.dev) as the
   command runner.
 
@@ -172,9 +175,37 @@ The tray's menu is built from the frontend rather than at startup, because its e
 text a person reads and only that side holds the catalogs. It is the same reason
 `notification::show` takes text and not a key.
 
-**Starting with the system** is a setting, in Settings, and off until somebody turns it on.
-When the system starts the application it passes `--hidden`, so logging in never puts a window
-in front of anybody.
+## Open at login, which is not the same as running in the background
+
+**Opening at login** is a setting, in Settings, and off until somebody turns it on. It decides
+only *who starts the application*. Running in the tray is what the application does once it is
+running, whoever started it, and it is not a setting at all.
+
+macOS is the platform that makes the difference visible, because it keeps two registers and
+lists them separately:
+
+| The register | What it is | What Almena does |
+| --- | --- | --- |
+| **Open at Login** | The application, opened for the person who just logged in, under its own name and icon | This is the setting, registered through `SMAppService` |
+| **Allow in the Background** | A helper the system keeps running on its own account. A `LaunchAgent` lands here | Nothing. Almena writes no `LaunchAgent` |
+
+That distinction is why macOS does not go through `tauri-plugin-autostart` like the other two:
+the plugin writes a `LaunchAgent`, which starts the application but lists it under the wrong
+one. `SMAppService` is also the only way to the right register that does not first ask a person
+for permission to drive System Events.
+
+| | Where the entry goes |
+| --- | --- |
+| macOS | `SMAppService`, which keeps its own register — there is no file of ours to point at |
+| Windows | `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`, which is what Task Manager's *Startup apps* lists |
+| Linux | `~/.config/autostart/Almena.desktop`, the XDG entry Ubuntu and Fedora both honour |
+
+Whichever it is, the entry carries `--hidden`, so logging in never puts a window in front of
+anybody.
+
+**On macOS this only works from an installed application.** `SMAppService` registers the bundle
+around the running binary, so a build started by `task dev` has no bundle to register and the
+switch cannot move. Installed, it does.
 
 ## Where it runs
 
@@ -186,7 +217,7 @@ in front of anybody.
 Linux means both packaging families a bundle produces: `.deb` for Debian, Ubuntu and their
 derivatives, `.rpm` for Red Hat, Fedora and theirs, and `.AppImage` for neither in particular.
 
-The application opens at 800 × 700 and never goes below 400 × 700, and its layout has
+The application opens at 1100 × 760 and never goes below 400 × 700, and its layout has
 two shapes chosen by the width of the window and by nothing else — a phone in landscape, a
 tablet and a window somebody dragged wider are the same case. The numbers live in
 `src-tauri/tauri.conf.json` and nowhere else.
@@ -236,7 +267,7 @@ nothing, and the same binary installed shows what the other four platforms show.
 | --- | --- | --- |
 | `almena-app.log` | This program's records. Rotated at 10 MiB, ten kept. Deleting the directory while the application is closed costs nothing but the history. | macOS: `~/Library/Logs/<id>/`<br>Windows: `%LOCALAPPDATA%\<id>\logs\`<br>Linux: `~/.local/share/<id>/logs/` |
 | `window-state.json` | Where the window was and how big. Written by the window-state plugin, which fixes its own location. | The configuration directory for `<id>` |
-| The login item | Written only while *starting with the system* is on, and deleted when it is turned off. The autostart plugin fixes its own location, as it must: a login item is only a login item where the system looks for one. | macOS: `~/Library/LaunchAgents/<productName>.plist`<br>Linux: `~/.config/autostart/<productName>.desktop`<br>Windows: a value under `HKCU\…\CurrentVersion\Run`, not a file |
+| The login entry | Written only while [*open at login*](#open-at-login-which-is-not-the-same-as-running-in-the-background) is on, and removed when it is turned off. Its location is the system's rather than ours, as it must be: an entry is only a login entry where the system looks for one. | macOS: no file — `SMAppService` keeps its own register<br>Linux: `~/.config/autostart/Almena.desktop`<br>Windows: a value under `HKCU\…\CurrentVersion\Run`, not a file |
 
 `<id>` is the bundle identifier, and it is still the scaffold's `network.almena.desktop` — see
 [What is not here yet](#what-is-not-here-yet).
@@ -276,26 +307,106 @@ a tablet and a window somebody dragged wider are the same case and get the same 
 | Below 600 | A menu floating across the bottom, icons above their names |
 | 600 and above | A sidebar down the left, icons beside their names |
 
-Those are the same buttons in the same order and the same place in the document. One media
-query in `src/features/shell/shell.css` moves them, and 600 appears there and nowhere else —
-there is no hook, no `matchMedia` and no component that asks how wide it is.
+Those are the same buttons in the same order and the same place in the document.
+`src/styles/shell.css` moves them, and 600 appears once in the whole project — as
+`--breakpoint-expanded` in `src/styles/tokens.css`, where Tailwind's own five breakpoints are
+cleared so that `sm:` and `md:` do not exist here. There is no hook, no `matchMedia` and no
+component that asks how wide it is.
 
-Three sections: Home, Network, Settings. Two have screens; Network says it has none rather
-than doing nothing when touched.
+Three sections, and all three have a screen now.
+
+**Every element on those screens comes from [shadcn/ui](https://ui.shadcn.com)**, vendored into
+`src/components/ui/` by `pnpm dlx shadcn@latest add <name>` and left as the registry wrote it:
+`alert`, `badge`, `button`, `card`, `empty`, `field`, `item`, `label`, `separator`, `spinner`,
+`switch`. A screen imports what it needs and never writes a control of its own, which is the
+only arrangement in which changing how a button looks changes how every button looks.
+`components.json` is the configuration that command reads; its `aliases.utils` points at
+`@/lib/cn`, because this project has no file called `utils`.
+
+Three of those are worth naming because they carry a promise rather than a look. `Empty` is what
+a region says when it holds nothing — the peer list, a section with no screen, Settings on a
+phone — because an empty answer is an answer and a blank space reads as a broken screen.
+`Alert` and `FieldError` are how a refusal reaches a person: both carry `role="alert"`, so they
+are absent until there is something to say and are read out by arriving.
+
+`src/components/` beside it holds what shadcn/ui has no answer for, built out of the elements
+that it does: `Logo`, `Figure`, `StateBadge`, `Setting`, `CardGrid` and `NotBuilt`. Nothing in
+there invents a second way of drawing a surface or a control, and a component that the registry
+turns out to have an element for is deleted in favour of it.
+
+Two of the registry's own answers are deliberately **not** taken. `sidebar` would bring five
+elements no screen draws — `sheet`, `tooltip`, `input`, `skeleton` and a `use-mobile` hook with
+a second breakpoint at 768 — and its phone shape is a hamburger opening a drawer, which is worse
+than a bar a thumb can reach. `tabs` would fit the navigation but decides its orientation in
+JavaScript, and here the shape follows the width of the viewport and nothing else. The
+navigation is therefore a `<nav>` of shadcn buttons carrying `aria-current="page"`.
+
+The set holds what the interface actually draws today and grows with the screen that needs the
+next thing —
+[interface-elements.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/interface-elements.md)
+is the whole of the agreement, including which of each element's variants a screen may draw.
+
+**Every value comes from `src/styles/tokens.css`** — the palette, the shape, the spacing and the
+type scale, declared once as a Tailwind theme and reached only through utilities. Tailwind's
+default colour palette is cleared there too, so `bg-red-500` does not exist and the only colours
+on a screen are the ones this project named. The identity colour is `primary`; shadcn/ui's
+`accent` is a hover grey and means nothing about identity.
+
+```
+components.json       what `shadcn add` reads: the style, the icon set, the aliases
+src/
+  components/ui/      vendored shadcn/ui elements — not ours to write
+  components/         Almena's own compositions of them, and the mark
+  hooks/              behaviour and state over time
+  features/           one directory per feature: its screens and their own pieces
+  styles/
+    index.css         the one entry Tailwind is handed; it imports the four below
+    tokens.css        every value, as a Tailwind theme, and both palettes
+    base.css          the document: selection, focus, scrollbars, the canvas
+    screen.css        the column a screen is laid out in, and its two text styles
+    shell.css         the frame, in its two shapes
+  lib/cn.ts           the one function the vendored elements import
+```
+
+There is no `tailwind.config.js`: Tailwind 4 is configured in CSS, and `tokens.css` is that
+configuration.
+
+One of Almena's own is worth naming here because it is this project's Transparency principle
+made into code, and because it is the one thing the registry has no element for. `Figure` draws
+a value beside what it is a measurement of, and a value it was given as `null` comes out as a
+dash that says *not measured* to a screen reader. That is not the same as nought: a peer count
+of nought is a measurement, and there has been none.
+
+**A status strip runs along the bottom of the window**, 28 points tall, spanning the full
+width — under the sidebar as well as beside it. It belongs to the frame rather than to a
+screen: it is pinned rather than scrolled to, it is the same strip whichever section is open,
+and on a phone the floating menu sits above it instead of over it.
+
+It has two groups. The right one holds what does not change while the application runs, which
+today is the build and the licence. **The left one is where what the application is doing will
+go** — which network, how many peers, what it is waiting on — and it is empty today rather than
+filled with something plausible, because a status strip is the worst place in an interface to
+invent a value.
 
 The first screen carries two cards. One says what the application is and that it is on no
 network, which is the whole of what it can honestly say — the peer-to-peer layer is not here,
 so no figure on it is measured and none is invented. The other is the one thing this build can
 actually do, which is [send a notification](#notifications). They flow rather than stack: side
 by side once there is room for both, one above the other the moment there is not, out of a
-single `grid-template-columns` in `src/features/home/home.css` and with no breakpoint of their
-own.
+single auto-fitting grid in `src/components/CardGrid.tsx` and with no breakpoint of their own.
+
+Network carries two cards: what is known about the network this node is on, and the peers it
+is talking to. **All of it is a dash and an empty state**, because there is no peer-to-peer
+layer and therefore no network, no identity and no peer. What is real is the machinery — a
+reading taken every ten seconds and on demand, a refresh button, and the time of the last look
+beside it so that pressing the button does something a person can see. The list draws a peer
+the day there is one, without this screen changing.
 
 Settings holds one thing: whether the application
-[starts with the system](#running-in-the-background). That belongs to a computer, so on a
-phone the screen says there is nothing to set on this device rather than drawing an empty
-page — which is the same answer Network gives, for the same reason. Choosing the palette and
-the identity colour will live here too; neither is built.
+[opens at login](#open-at-login-which-is-not-the-same-as-running-in-the-background). That
+belongs to a computer, so on a phone the screen says there is nothing to set on this device
+rather than drawing an empty page. Choosing the palette and the identity colour will live here
+too; neither is built.
 
 ## Languages
 
@@ -313,9 +424,9 @@ Stated rather than discovered by running something and being surprised.
 | | Today |
 | --- | --- |
 | The peer-to-peer layer | Not written yet. On a computer this application is the node, but nothing here joins a network, reads the configuration a network is described by, or speaks to a peer; the first screen says it is on no network because that is the whole truth available to it. |
-| `task check` | Rust and `tsc` only. ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and there is no `task format` for TypeScript. |
+| `task check` | Rust and `tsc` only. ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and there is no `task format` for TypeScript. Until ESLint arrives, the limits on file and function size and the ban on arbitrary Tailwind values are a reviewer's rather than a tool's. |
 | `--help` on Windows | The plugin cannot write back to the console that launched a release build, so `--help` and `--version` print nothing there. Everything else about them is the same, and no other platform is affected. |
-| `productName` and `identifier` | Still the scaffold's `desktop` and `network.almena.desktop`, and now visible twice over: the log directory is built from the identifier, and the login item is named after `productName`, so both land under a name nobody chose. Settling the pair is a decision taken on its own — and the two deploy scripts carry a copy of the identifier that changes with it. |
+| `identifier` | Still the scaffold's `network.almena.desktop`. It names every directory this application writes to, so the log directory is under a name nobody chose, and the two deploy scripts carry a copy of it that changes with it. `productName` is settled: `Almena`, which is what the bundle, the login entry and the mobile applications are called. |
 | Choosing the palette and the accent | `tokens.css` has both, `data-theme` and `data-accent` switch between them, and nothing writes either yet. Settings is where they belong and Settings now exists, so this is the next thing that screen grows. |
 | `--help` in one language | The only text a person reads that does not come from a catalog. `clap` builds it from `tauri.conf.json` before anything has loaded a catalog, so it is English wherever it is read. |
 
