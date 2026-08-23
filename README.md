@@ -2,7 +2,9 @@
 
 `almena` is the application people use to reach the Almena network, and — on a computer — the
 node itself: there is no daemon beside it, and the network is composed of the desktop
-installations taking part in it. One codebase for iOS, Android, Windows, Linux and macOS.
+installations taking part in it. On a phone or a tablet it is a client of that network rather
+than a node of it, reaching the network through an API that is not decided yet. One codebase
+for iOS, Android, Windows, Linux and macOS.
 
 It builds **one program** on **one framework**. It briefly built two — a terminal interface
 beside the windowed application — and that one was deleted: everything here is Tauri 2,
@@ -78,9 +80,10 @@ task dev:android   # or task dev:ios
 | `task devices` | Lists connected Android and iOS devices. |
 | `task init` | Generates the native mobile projects for every platform this host can build. |
 | `task init:android`, `task init:ios` | The same, one platform at a time. |
-| `task dev` | Runs the windowed application on this computer, with hot reload. Also available as `task dev:desktop`. |
+| `task dev` | Runs the windowed application on this computer, with hot reload. Also available as `task dev:desktop`. `ARGS` gives it a command line — `task dev ARGS="--hidden"`. |
 | `task dev:android`, `task dev:ios` | Runs the app on a connected device or emulator, with hot reload. |
-| `task build` | Builds the desktop installer for this host's operating system. Also available as `task build:desktop`. |
+| `task build` | Builds the desktop installer for this host's operating system. Also available as `task build:desktop`. The binary itself lands at `target/release/almena-app`. |
+| `task build:debug` | The same bundle, unoptimized, at `target/debug/`. It keeps `debug_assertions`, so it is the one bundle that still says *Development* on its status strip. |
 | `task build:android`, `task build:ios` | Builds the mobile packages. |
 | `task deploy:android`, `task deploy:ios` | Chooses a destination, builds for it, and installs it there. |
 | `task clean` | Removes build artifacts. The generated native projects are kept. |
@@ -95,6 +98,18 @@ The two deploy tasks are a script each rather than a line each, because what get
 depends on where it is going: the destination is chosen, and started if it is an emulator that
 was not running, before anything is compiled. Set `DEVICE` to skip the prompt —
 `task deploy:android DEVICE=emulator-5554`.
+
+`ARGS` is the other variable, and it exists because the application answers a command line and
+there was otherwise no way to try one without building first:
+
+```bash
+task dev ARGS="--hidden"     # starts into the tray, the way a login launch does
+task dev ARGS="--version"    # answers and exits, without opening a window
+```
+
+It reaches the application through two `--`, which is the Tauri CLI's own convention: the
+first ends what is meant for the CLI, the second what is meant for cargo. Desktop only — a
+phone launches nothing from a command line.
 
 ## One program, and the crates it is built from
 
@@ -173,7 +188,9 @@ nowhere to be found again would be worse than one that simply quit, so it does n
 
 The tray's menu is built from the frontend rather than at startup, because its entries are
 text a person reads and only that side holds the catalogs. It is the same reason
-`notification::show` takes text and not a key.
+`notification::show` takes text and not a key. Changing the language on the Settings screen
+asks for it again, and what happens then is a rename rather than a second tray: the entry keeps
+its identity and its behaviour and takes a new word.
 
 ## Open at login, which is not the same as running in the background
 
@@ -233,6 +250,20 @@ whether it was visible. That one is deliberately forgotten: a session that ended
 window put away would otherwise be restored with nothing on screen, and an application that
 starts into nothing is one nobody can tell from a broken one.
 
+**The size is remembered in points, and that matters on a computer with two displays.** The
+plugin that keeps the rest of the geometry writes the size in pixels, so a window sized on a
+display that draws two pixels to the point comes back twice as large on one that draws one.
+`src-tauri/src/geometry.rs` keeps the same size in the unit a person actually chose it in and
+corrects the window once at startup, and only when the two disagree — so the ordinary launch,
+back onto the display it was on, resizes nothing.
+
+**Dragging the window between two displays needs nothing.** It keeps the size it has, in
+points, across a change of scale — that is `tao`'s doing on all three desktops and not
+something this application has to arrange. What does change is how large a point is on the
+display it arrived at, which is the operating system's business and not an application's to
+undo: the same window looks physically larger on a display with fewer pixels to the inch, in
+Almena as in everything else.
+
 Both are compiled out of the mobile binary, where the operating system owns them already.
 
 ## Notifications
@@ -261,12 +292,48 @@ that arrives before anybody has asked for anything is worse than one that arrive
 platform's rule rather than this project's: a build started from `task dev` there shows
 nothing, and the same binary installed shows what the other four platforms show.
 
+## Registered, and not yet called
+
+Two plugins are compiled into the desktop binary that nothing in this application reaches yet.
+They are here so that the first screen needing one is a screen and not a dependency
+negotiation.
+
+**Dialogs** — `tauri-plugin-dialog` — are the native question, warning and file picker. The
+plugin serves phones as well, and registering it on computers alone is this project's decision
+rather than the plugin's limit: the day a screen puts a decision in a dialog, either a phone
+gets an equivalent path in the same change or the plugin moves. That is
+[supported-platforms.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/supported-platforms.md),
+and it is written here rather than found later.
+
+**Updating** — `tauri-plugin-updater` — is how an application that is a file somebody
+downloaded replaces itself. On a phone the store does that and there is nothing to call, which
+is a platform without the thing rather than a person unable to do something.
+
+It is registered **inert**. `plugins.updater` in `src-tauri/tauri.conf.json` carries an empty
+`endpoints` and an empty `pubkey`, `bundle.createUpdaterArtifacts` is off, and no code here asks
+the plugin anything at all. That is not an oversight waiting for somebody to fill the two fields
+in. The Transparency principle is explicit — *no telemetry, no analytics, no crash reporting, no
+update ping, in any build* — and what the project has settled about where that line falls is
+[updating.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/updating.md):
+nothing checks unless a person asks, finding is not installing, and a request carries the
+target, the architecture and the current version and nothing that could say who this is. What is
+**not** settled is which host serves the releases and which key signs them. Until both are, an
+endpoint in the configuration would be exactly the ping the principle rules out, aimed at a host
+nobody chose.
+
+The frontend bindings for the two — `@tauri-apps/plugin-dialog` and
+`@tauri-apps/plugin-updater` — are deliberately not installed. They arrive with the first
+caller, which is one `pnpm add` in the change that has one; a package nothing imports is a
+dependency nobody is reading.
+
 ## Files kept on your computer
 
 | File | What it is | Where |
 | --- | --- | --- |
 | `almena-app.log` | This program's records. Rotated at 10 MiB, ten kept. Deleting the directory while the application is closed costs nothing but the history. | macOS: `~/Library/Logs/<id>/`<br>Windows: `%LOCALAPPDATA%\<id>\logs\`<br>Linux: `~/.local/share/<id>/logs/` |
-| `window-state.json` | Where the window was and how big. Written by the window-state plugin, which fixes its own location. | The configuration directory for `<id>` |
+| `window-state.json` | Where the window was and how big, in pixels. Written by the window-state plugin, which fixes its own location. | The configuration directory for `<id>` |
+| `preferences.json` | The palette, the identity colour and the language, whenever one of them has been chosen. Absent until then, and deleting it puts every one of them back to what the device asks for. | The configuration directory for `<id>` |
+| `window.json` | The same window's size, in points rather than in pixels, which is what makes it right on a second display. State rather than configuration, so it sits with the log; deleting it costs the remembered size and nothing else. | Beside `almena-app.log` |
 | The login entry | Written only while [*open at login*](#open-at-login-which-is-not-the-same-as-running-in-the-background) is on, and removed when it is turned off. Its location is the system's rather than ours, as it must be: an entry is only a login entry where the system looks for one. | macOS: no file — `SMAppService` keeps its own register<br>Linux: `~/.config/autostart/Almena.desktop`<br>Windows: a value under `HKCU\…\CurrentVersion\Run`, not a file |
 
 `<id>` is the bundle identifier, and it is still the scaffold's `network.almena.desktop` — see
@@ -317,20 +384,22 @@ Three sections, and all three have a screen now.
 
 **Every element on those screens comes from [shadcn/ui](https://ui.shadcn.com)**, vendored into
 `src/components/ui/` by `pnpm dlx shadcn@latest add <name>` and left as the registry wrote it:
-`alert`, `badge`, `button`, `card`, `empty`, `field`, `item`, `label`, `separator`, `spinner`,
-`switch`. A screen imports what it needs and never writes a control of its own, which is the
-only arrangement in which changing how a button looks changes how every button looks.
+`alert`, `badge`, `button`, `card`, `empty`, `field`, `item`, `label`, `select`, `separator`,
+`spinner`, `switch`, `toggle` and `toggle-group`. A screen imports what it needs and never
+writes a control of its own, which is the only arrangement in which changing how a button looks
+changes how every button looks. One of the fourteen is drawn by nothing: `toggle` is where
+`toggle-group` gets its class list, and the registry ships the two together.
 `components.json` is the configuration that command reads; its `aliases.utils` points at
 `@/lib/cn`, because this project has no file called `utils`.
 
 Three of those are worth naming because they carry a promise rather than a look. `Empty` is what
-a region says when it holds nothing — the peer list, a section with no screen, Settings on a
-phone — because an empty answer is an answer and a blank space reads as a broken screen.
+a region says when it holds nothing, and this project only ever reaches it through `EmptyState`,
+which makes the *reason* a required prop — "Nothing to show" is not a sentence shipped here.
 `Alert` and `FieldError` are how a refusal reaches a person: both carry `role="alert"`, so they
 are absent until there is something to say and are read out by arriving.
 
 `src/components/` beside it holds what shadcn/ui has no answer for, built out of the elements
-that it does: `Logo`, `Figure`, `StateBadge`, `Setting`, `CardGrid` and `NotBuilt`. Nothing in
+that it does: `Logo`, `Figure`, `StateBadge`, `Setting`, `CardGrid` and `EmptyState`. Nothing in
 there invents a second way of drawing a surface or a control, and a component that the registry
 turns out to have an element for is deleted in favour of it.
 
@@ -382,11 +451,20 @@ width — under the sidebar as well as beside it. It belongs to the frame rather
 screen: it is pinned rather than scrolled to, it is the same strip whichever section is open,
 and on a phone the floating menu sits above it instead of over it.
 
-It has two groups. The right one holds what does not change while the application runs, which
-today is the build and the licence. **The left one is where what the application is doing will
-go** — which network, how many peers, what it is waiting on — and it is empty today rather than
-filled with something plausible, because a status strip is the worst place in an interface to
-invent a value.
+It has two groups. The right one holds what does not change while the application runs: whether
+this is a development build, the version, and the licence. **The left one is where what the
+application is doing will go** — which network, how many peers, what it is waiting on — and it
+is empty today rather than filled with something plausible, because a status strip is the worst
+place in an interface to invent a value.
+
+**A development build says so, on that strip, always.** The word *Development* is there whenever
+the binary was built with `debug_assertions` — `task dev`, `task dev:ios`, `task build:debug` —
+and absent from anything anybody was given. The strip is the only thing in the application that
+is on screen whatever section is open and whichever shape the window is in, which is what makes
+it the one place a marker like that can live. It is brighter than everything else there because
+it is the one thing on the strip that should be noticed, and it is not drawn in a state colour:
+being a development build is not one of the four states, and borrowing one would cost all four
+their meaning.
 
 The first screen carries two cards. One says what the application is and that it is on no
 network, which is the whole of what it can honestly say — the peer-to-peer layer is not here,
@@ -402,16 +480,36 @@ reading taken every ten seconds and on demand, a refresh button, and the time of
 beside it so that pressing the button does something a person can see. The list draws a peer
 the day there is one, without this screen changing.
 
-Settings holds one thing: whether the application
-[opens at login](#open-at-login-which-is-not-the-same-as-running-in-the-background). That
-belongs to a computer, so on a phone the screen says there is nothing to set on this device
-rather than drawing an empty page. Choosing the palette and the identity colour will live here
-too; neither is built.
+The peer list has **three** ways of holding nothing and says which, because they are three
+different facts: nobody has looked yet, there is no network to have peers on, or there is a
+network and it has none. A screen that shared one sentence between them would be telling a
+reader the wrong one most of the time —
+[honest-emptiness.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/honest-emptiness.md)
+is the agreement, and it is why `readNetwork` returns `null` rather than an empty array.
+
+Settings holds three cards, and one of them is not on every device. **Appearance** is the
+palette — dark, light, or whatever the operating system is asking for — and the identity
+colour, one of five, which is the one screen in the application with five of them on it at
+once because they are the thing being chosen. **Language** is English or Spanish, and it is
+empty of consequence until somebody uses it: Almena opens in the language the device asks for
+and stores nothing until asked to. **Open at login** is the third, and it belongs to a
+computer: a phone's operating system decides for itself when an application may run, so the
+card is simply not there — a platform with no such thing to do rather than a person unable to
+do something.
+
+Both appearance choices are attributes on the document element, written by
+`src/lib/appearance.ts` and read by `src/styles/tokens.css` alone. No screen knows which
+palette it is in, and no component branches on one.
 
 ## Languages
 
 English and Spanish, both complete from the first screen. English is the source language and
 the fallback: a missing translation degrades to readable English rather than to a bare key.
+
+The device is asked first: a Spanish computer opens a Spanish Almena, and nothing is stored
+until somebody chooses otherwise on the Settings screen. Until then, changing the language of
+the device changes Almena's with it. Nobody is asked at startup which language they want —
+the operating system already knows.
 
 `task catalogs` checks that both hold exactly the same keys, and `task check` runs it. Typing
 every catalog against the English one means `tsc` also fails on a key added to one and
@@ -424,10 +522,11 @@ Stated rather than discovered by running something and being surprised.
 | | Today |
 | --- | --- |
 | The peer-to-peer layer | Not written yet. On a computer this application is the node, but nothing here joins a network, reads the configuration a network is described by, or speaks to a peer; the first screen says it is on no network because that is the whole truth available to it. |
+| How the client reaches the network | Undecided. A phone or a tablet is a client and not a node, so it does not speak the peer-to-peer layer above; which API it speaks instead, over which protocol, and who serves it are open questions, and nothing here answers any of them. |
 | `task check` | Rust and `tsc` only. ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and there is no `task format` for TypeScript. Until ESLint arrives, the limits on file and function size and the ban on arbitrary Tailwind values are a reviewer's rather than a tool's. |
 | `--help` on Windows | The plugin cannot write back to the console that launched a release build, so `--help` and `--version` print nothing there. Everything else about them is the same, and no other platform is affected. |
 | `identifier` | Still the scaffold's `network.almena.desktop`. It names every directory this application writes to, so the log directory is under a name nobody chose, and the two deploy scripts carry a copy of it that changes with it. `productName` is settled: `Almena`, which is what the bundle, the login entry and the mobile applications are called. |
-| Choosing the palette and the accent | `tokens.css` has both, `data-theme` and `data-accent` switch between them, and nothing writes either yet. Settings is where they belong and Settings now exists, so this is the next thing that screen grows. |
+| Where updates come from | The updater plugin is registered and inert. Which host serves the releases and which key signs them are both undecided, so `endpoints` and `pubkey` are empty and nothing calls the plugin. See [Registered, and not yet called](#registered-and-not-yet-called). |
 | `--help` in one language | The only text a person reads that does not come from a catalog. `clap` builds it from `tauri.conf.json` before anything has loaded a catalog, so it is English wherever it is read. |
 
 ## Contributing

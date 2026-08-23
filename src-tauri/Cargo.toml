@@ -48,6 +48,13 @@ tauri-plugin-notification = { workspace = true }
 tauri-plugin-window-state = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 tauri-plugin-cli = { workspace = true }
+# Two more that are here for what a computer is rather than for what it can do. An application
+# on a computer is a file somebody downloaded, so it is the one that has to be able to replace
+# itself; a phone's store does that and offers nothing to call. Dialogs are the other way
+# round — the plugin serves all five platforms and this project registers it on three, because
+# a decision a phone puts on a screen is not a decision a phone puts in a dialog.
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-updater = { workspace = true }
 
 # Windows and Linux, and deliberately not macOS. Each of these two keeps one register for
 # "open this when somebody logs in" and this plugin writes to it.

@@ -32,8 +32,11 @@
 		52AF77B86350081C82DC054A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		56DA219FAA6F9C05B567705C /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
 		58A2E759C5D86AABF321BAC2 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		5CB524B9987FDC3D6F4550EA /* preferences.rs */ = {isa = PBXFileReference; path = preferences.rs; sourceTree = "<group>"; };
 		6120B84587E68270517D5AE3 /* window.rs */ = {isa = PBXFileReference; path = window.rs; sourceTree = "<group>"; };
 		616D50E2830937D227026EF1 /* tray.rs */ = {isa = PBXFileReference; path = tray.rs; sourceTree = "<group>"; };
+		63C6FAA1BE621AE9C2562AE3 /* geometry.rs */ = {isa = PBXFileReference; path = geometry.rs; sourceTree = "<group>"; };
+		64C727C7E5A09FEBD860433A /* open_at_login.rs */ = {isa = PBXFileReference; path = open_at_login.rs; sourceTree = "<group>"; };
 		6B2959B6E3692C545B194DD2 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		6CD54176A2F49B1B06CB64DE /* cli.rs */ = {isa = PBXFileReference; path = cli.rs; sourceTree = "<group>"; };
 		716BB83C4B1F71C96D43904A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -110,10 +113,13 @@
 			isa = PBXGroup;
 			children = (
 				6CD54176A2F49B1B06CB64DE /* cli.rs */,
+				63C6FAA1BE621AE9C2562AE3 /* geometry.rs */,
 				05920D4D750D1D11B3D725BE /* lib.rs */,
 				25CAF4B66E20AEE87C288E0C /* logging.rs */,
 				18022888215FFC2C7710E8A0 /* main.rs */,
 				79398FD8153C88227B860B07 /* notification.rs */,
+				64C727C7E5A09FEBD860433A /* open_at_login.rs */,
+				5CB524B9987FDC3D6F4550EA /* preferences.rs */,
 				616D50E2830937D227026EF1 /* tray.rs */,
 				6120B84587E68270517D5AE3 /* window.rs */,
 			);
@@ -192,6 +198,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					507A5B886C75F79A327C791D = {
+						DevelopmentTeam = XDUFSW425R;
+					};
 				};
 			};
 			buildConfigurationList = 455A956437650A6C8F299079 /* Build configuration list for PBXProject "almena-app" */;
@@ -335,6 +344,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "almena-app_iOS/almena-app_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = XDUFSW425R;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -349,7 +359,7 @@
 				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = network.almena.desktop;
-				PRODUCT_NAME = Almena;
+				PRODUCT_NAME = "Almena";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
@@ -366,6 +376,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "almena-app_iOS/almena-app_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = XDUFSW425R;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -380,7 +391,7 @@
 				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = network.almena.desktop;
-				PRODUCT_NAME = Almena;
+				PRODUCT_NAME = "Almena";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;

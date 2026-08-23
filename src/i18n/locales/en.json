@@ -3,14 +3,15 @@
     "name": "Almena",
     "version": "version {{version}}"
   },
-  "common": {
-    "notBuilt": "This section has no screen yet. It is listed so that the shape of the application is visible while it is being built."
-  },
   "control": {
     "on": "On",
     "off": "Off",
     "unmeasured": "Not measured",
     "working": "Working"
+  },
+  "language": {
+    "en": "English",
+    "es": "Español"
   },
   "section": {
     "home": "Home",
@@ -25,6 +26,7 @@
   },
   "status": {
     "label": "Status",
+    "development": "Development",
     "licence": "Apache 2.0"
   },
   "home": {
@@ -56,8 +58,12 @@
     },
     "peers": {
       "heading": "Peers",
+      "lookingTitle": "Looking.",
+      "looking": "Nobody has counted yet. This is the first look since the screen opened, and whatever it finds — peers, or the reason there are none — takes the place of this.",
+      "noNetworkTitle": "No network.",
+      "noNetwork": "There is no network for a peer to be on: the peer-to-peer layer is not written yet. The list itself is here and working — the first peer to exist appears in it without this screen changing.",
       "noneTitle": "No peers.",
-      "none": "No peers, and no network for there to be any on — the peer-to-peer layer is not written yet. The list itself is here and working: the first peer to exist appears in it without this screen changing.",
+      "none": "This node is on a network and is talking to nobody on it. That is an answer rather than a gap: somebody counted, and the count was none.",
       "refresh": "Refresh",
       "lookedAt": "Looked at {{time}}, and again every ten seconds."
     },
@@ -69,8 +75,29 @@
     }
   },
   "settings": {
-    "nothingHereTitle": "Nothing to set here.",
-    "nothingHere": "There is nothing to set on this device yet. What this screen holds today — whether Almena opens at login — belongs to a computer, and this is not one.",
+    "appearance": {
+      "heading": "Appearance.",
+      "body": "How Almena is drawn on this device. Dark is the design and what a device with no opinion gets; light is there for the rooms and the people it suits better. The identity colour is the one colour on a screen that means “this is Almena” or “this is the thing you came here for” — nothing else wears it, and the application icon is the icon whichever is chosen.",
+      "theme": {
+        "label": "Palette",
+        "system": "System",
+        "light": "Light",
+        "dark": "Dark"
+      },
+      "accent": {
+        "label": "Identity colour",
+        "orange": "Orange",
+        "blue": "Blue",
+        "red": "Red",
+        "yellow": "Yellow",
+        "green": "Green"
+      }
+    },
+    "language": {
+      "heading": "Language.",
+      "body": "Almena opens in the language this device asks for, so there is nothing to do here until that is the wrong one. Choose a language and it is remembered from then on; leave it alone and changing the device's own language changes Almena's with it.",
+      "label": "Interface language"
+    },
     "openAtLogin": {
       "heading": "Open at login.",
       "body": "The system opens Almena when you log in, with no window: it waits in the tray until you ask for it. This is only about who starts it — Almena runs in the tray whenever it is running, whether it was opened at login or by you.",

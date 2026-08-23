@@ -1,27 +1,25 @@
 /**
  * The Settings screen: what a person can change about this application.
  *
- * There is one thing to change today and it belongs to a computer, so on a phone this screen
- * says that rather than drawing an empty page. It is the same choice `NotBuilt` makes for a
- * section with no screen, and it is drawn with the same element: an empty answer is an answer,
- * and a page that draws nothing at all reads as broken rather than as unfinished.
+ * Three cards, and one of them is not on every device. How the interface is drawn and which
+ * language it speaks are questions any device can answer; whether the system opens Almena at
+ * login belongs to a computer, and a phone's operating system decides for itself when an
+ * application may run (`.agents/rules/supported-platforms.md`). A phone without that card is
+ * not a person unable to do something — it is a platform with no such thing to do.
  *
- * Nothing is drawn while the answer is still being fetched. That moment is short and a control
- * that appears and then vanishes is worse than one that arrives a beat late.
+ * Which of the two this device is has to be asked of the Rust side, and until the answer is
+ * back the card is not drawn. That is a card arriving rather than a screen claiming there is
+ * nothing to set: the screen is full either way and says nothing about what has not arrived,
+ * which is the difference between a gap and an assertion
+ * (`.agents/rules/honest-emptiness.md`).
  */
 
-import { SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import CardGrid from "@/components/CardGrid";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
+import Appearance from "@/features/settings/Appearance";
+import Language from "@/features/settings/Language";
 import OpenAtLogin from "@/features/settings/OpenAtLogin";
 import { isDesktop } from "@/lib/platform";
 
@@ -38,23 +36,11 @@ function Settings() {
     <div className="screen">
       <h1 className="screen__title">{t("section.settings")}</h1>
 
-      {desktop === true && (
-        <CardGrid>
-          <OpenAtLogin />
-        </CardGrid>
-      )}
-
-      {desktop === false && (
-        <Empty className="border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <SlidersHorizontal aria-hidden="true" />
-            </EmptyMedia>
-            <EmptyTitle>{t("settings.nothingHereTitle")}</EmptyTitle>
-            <EmptyDescription>{t("settings.nothingHere")}</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      )}
+      <CardGrid>
+        <Appearance />
+        <Language />
+        {desktop === true && <OpenAtLogin />}
+      </CardGrid>
     </div>
   );
 }

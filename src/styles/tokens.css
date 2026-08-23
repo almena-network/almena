@@ -16,9 +16,10 @@
  *   defaults are cut down to what this project has agreed to — one type scale, one breakpoint,
  *   and no colour that is not named below.
  *
- * **Two things about it are the reader's to choose**, and both belong to the Settings screen
- * once it is built — today nothing sets them, so every device gets the defaults. They are set
- * as attributes on the document element and nothing else in the project reads them:
+ * **Two things about it are the reader's to choose**, and both are on the Settings screen.
+ * `src/lib/appearance.ts` is the one file that writes them and this is the one file that reads
+ * them; they are attributes on the document element and nothing else in the project touches
+ * either:
  *
  * - `data-theme="light"` swaps the palette. With no attribute at all the values below apply,
  *   and the attribute is put there either by a stored choice or, when there is none, by what
@@ -261,8 +262,8 @@
 
 /*
  * Which of the five is the identity colour. One line each, and orange needs none: it is what
- * `:root` already says, so a device with no stored choice and an attribute that never arrives
- * is drawn in the icon's own colour.
+ * `:root` already says, so a device with no stored choice — and one where nothing wrote an
+ * attribute at all — is drawn in the icon's own colour.
  *
  * Nothing here mentions the palette. The value each name stands for changes with the theme
  * above, so a colour is chosen once and is right in both.
@@ -331,6 +332,16 @@
   --color-identity-bright: var(--identity-bright);
   --color-identity-dim: var(--identity-dim);
   --color-identity-edge: var(--identity-edge);
+
+  /* The five, as themselves. They exist as utilities for exactly one drawing — the swatches on
+     the Settings screen, where the colours are the thing being chosen rather than the colour
+     one thing wears. Anywhere else, a screen wants `primary`: reaching for a named colour is
+     how a second accent arrives on a screen that is only allowed one. */
+  --color-identity-orange: var(--identity-orange);
+  --color-identity-blue: var(--identity-blue);
+  --color-identity-red: var(--identity-red);
+  --color-identity-yellow: var(--identity-yellow);
+  --color-identity-green: var(--identity-green);
 
   /* The four states, and the danger tone that shares the last one's red. */
   --color-ok: var(--ok);

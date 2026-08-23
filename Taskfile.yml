@@ -3,6 +3,10 @@ version: "3"
 vars:
   # Override to pick a specific device, e.g. task deploy:android DEVICE=emulator-5554
   DEVICE: ""
+  # A command line for the application itself, e.g. task dev ARGS="--hidden". What it answers
+  # is declared in src-tauri/tauri.conf.json under plugins.cli and read in src-tauri/src/cli.rs.
+  # Desktop only: a phone launches nothing from a command line.
+  ARGS: ""
 
 tasks:
   # Announce the project and the operation about to run. Every task calls it as
@@ -267,12 +271,17 @@ tasks:
 
   dev:
     aliases: [dev:desktop]
-    desc: Run on this computer, with hot reload
+    desc: 'Run on this computer, with hot reload. ARGS="--hidden" gives it a command line'
     deps: [install]
     cmds:
       - task: banner
         vars: { OPERATION: dev }
-      - pnpm tauri dev
+      # Two `--` and both are load-bearing: the first ends what is meant for the Tauri CLI, the
+      # second ends what is meant for cargo, and what is left over is the application's own
+      # command line. Without them `task dev ARGS="--hidden"` hands `--hidden` to cargo, which
+      # does not know it. This is the only way to try `--hidden`, `--help` or `--version`
+      # without building a binary first.
+      - pnpm tauri dev {{if .ARGS}}-- -- {{.ARGS}}{{end}}
 
   dev:android:
     desc: Run on a connected Android device or emulator, with hot reload
@@ -308,7 +317,22 @@ tasks:
     cmds:
       - task: banner
         vars: { OPERATION: build }
+      # Leaves the installers under target/release/bundle/ and the binary itself at
+      # target/release/almena-app, which is what to run to see the command line answer:
+      # `./target/release/almena-app --help`.
       - pnpm tauri build
+
+  build:debug:
+    desc: Build the desktop bundle unoptimized, so that it still says it is a development build
+    deps: [install, catalogs]
+    cmds:
+      - task: banner
+        vars: { OPERATION: "build:debug" }
+      # `--debug` keeps `debug_assertions`, which is the one thing the status strip reads to
+      # decide whether to say *Development* — so this is how a **bundle** that still admits what
+      # it is gets made, and it takes a fraction of the time the release build does. Everything
+      # lands under target/debug/ instead of target/release/.
+      - pnpm tauri build --debug
 
   build:android:
     desc: Build the Android release package

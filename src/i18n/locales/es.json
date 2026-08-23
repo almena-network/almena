@@ -3,14 +3,15 @@
     "name": "Almena",
     "version": "versión {{version}}"
   },
-  "common": {
-    "notBuilt": "Esta sección aún no tiene pantalla. Aparece en la lista para que se vea la forma de la aplicación mientras se construye."
-  },
   "control": {
     "on": "Activado",
     "off": "Desactivado",
     "unmeasured": "Sin medir",
     "working": "En curso"
+  },
+  "language": {
+    "en": "English",
+    "es": "Español"
   },
   "section": {
     "home": "Inicio",
@@ -25,6 +26,7 @@
   },
   "status": {
     "label": "Estado",
+    "development": "Desarrollo",
     "licence": "Apache 2.0"
   },
   "home": {
@@ -56,8 +58,12 @@
     },
     "peers": {
       "heading": "Pares",
+      "lookingTitle": "Consultando.",
+      "looking": "Todavía no ha contado nadie. Esta es la primera consulta desde que se abrió la pantalla, y lo que encuentre — pares, o el motivo de que no los haya — ocupará el lugar de esto.",
+      "noNetworkTitle": "Ninguna red.",
+      "noNetwork": "No hay ninguna red en la que un par pudiera estar: la capa entre pares aún no está escrita. El listado sí está aquí y funciona — el primer par que exista aparecerá en él sin que esta pantalla cambie.",
       "noneTitle": "Ningún par.",
-      "none": "Ningún par, y ninguna red en la que pudiera haberlos: la capa entre pares aún no está escrita. El listado sí está aquí y funciona: el primer par que exista aparecerá en él sin que esta pantalla cambie.",
+      "none": "Este nodo está en una red y no habla con nadie en ella. Eso es una respuesta, no una ausencia: alguien contó, y el resultado fue ninguno.",
       "refresh": "Actualizar",
       "lookedAt": "Consultado a las {{time}}, y de nuevo cada diez segundos."
     },
@@ -69,8 +75,29 @@
     }
   },
   "settings": {
-    "nothingHereTitle": "Nada que ajustar.",
-    "nothingHere": "Aquí todavía no hay nada que ajustar. Lo que esta pantalla tiene hoy — si Almena se abre al iniciar sesión — es cosa de un ordenador, y esto no lo es.",
+    "appearance": {
+      "heading": "Apariencia.",
+      "body": "Cómo se dibuja Almena en este dispositivo. El oscuro es el diseño y lo que recibe un dispositivo sin preferencia; el claro está para las salas y las personas a las que les sienta mejor. El color de identidad es el único color de una pantalla que significa «esto es Almena» o «esto es aquello a lo que venías» — nada más lo lleva, y el icono de la aplicación es el mismo se elija el que se elija.",
+      "theme": {
+        "label": "Paleta",
+        "system": "Sistema",
+        "light": "Claro",
+        "dark": "Oscuro"
+      },
+      "accent": {
+        "label": "Color de identidad",
+        "orange": "Naranja",
+        "blue": "Azul",
+        "red": "Rojo",
+        "yellow": "Amarillo",
+        "green": "Verde"
+      }
+    },
+    "language": {
+      "heading": "Idioma.",
+      "body": "Almena se abre en el idioma que pide este dispositivo, así que aquí no hay nada que hacer mientras ese sea el correcto. Elige un idioma y queda recordado a partir de entonces; déjalo estar y cambiar el idioma del dispositivo cambia con él el de Almena.",
+      "label": "Idioma de la interfaz"
+    },
     "openAtLogin": {
       "heading": "Abrir al iniciar sesión.",
       "body": "El sistema abre Almena al iniciar sesión, sin ventana: espera en la bandeja hasta que la pidas. Esto solo decide quién la abre — Almena vive en la bandeja siempre que está en marcha, la haya abierto el sistema o tú.",

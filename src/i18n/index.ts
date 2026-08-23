@@ -1,10 +1,11 @@
 /**
  * The language the interface is showing.
  *
- * Nothing here chooses one. The device does, and this file only reads what it decided, hands
- * the result to i18next, and passes on the strings the webview does not draw. Everything a
- * person reads is looked up from here by key; the catalogs themselves sit beside this file,
- * one per language.
+ * Two things can decide it and they are asked in that order: what a person chose on the
+ * Settings screen, and — until somebody chooses — what the device asks for. Nothing in this
+ * file has an opinion of its own; it reads those two, hands the answer to i18next, and applies
+ * the strings the webview draws rather than a component. Everything a person reads is looked up
+ * from here by key, and the catalogs sit beside this file, one per language.
  */
 
 import i18n from "i18next";
@@ -12,6 +13,7 @@ import { initReactI18next } from "react-i18next";
 
 import en from "@/i18n/locales/en.json";
 import es from "@/i18n/locales/es.json";
+import { choose } from "@/lib/preferences";
 
 /**
  * Every language the interface ships in, one catalog each.
@@ -23,7 +25,7 @@ import es from "@/i18n/locales/es.json";
  * Adding a language means both places, which is the point — a language is added
  * deliberately, never by accident.
  */
-const LANGUAGES = ["en", "es"] as const;
+export const LANGUAGES = ["en", "es"] as const;
 
 /** One of the languages the interface ships in. */
 export type Language = (typeof LANGUAGES)[number];
@@ -55,9 +57,9 @@ const catalogs: Record<Language, { translation: typeof en }> = {
  * Narrows an arbitrary string to a language this interface ships in.
  *
  * @param value - Anything that claims to be a language tag: an entry from the device's list,
- *   whatever i18next settled on, or nothing at all.
+ *   what was read off disk, or nothing at all.
  */
-function isLanguage(value: string | null | undefined): value is Language {
+export function isLanguage(value: string | null | undefined): value is Language {
   return LANGUAGES.includes(value as Language);
 }
 
@@ -71,7 +73,7 @@ function isLanguage(value: string | null | undefined): value is Language {
  * one: both platforms fold a per-application language into the list the webview reports, so
  * there is nothing to ask them for and nothing to store.
  */
-function deviceLanguage(): Language {
+export function deviceLanguage(): Language {
   for (const tag of navigator.languages ?? [navigator.language]) {
     const base = tag.split("-")[0].toLowerCase();
     if (isLanguage(base)) {
@@ -101,17 +103,42 @@ function applyLanguage(language: string): void {
   document.title = i18n.t("app.name");
 }
 
-void i18n
-  .use(initReactI18next)
-  .init({
+/**
+ * Settles the language before anything is drawn.
+ *
+ * Called once, from `main.tsx`, and awaited: a screen that rendered before this returned would
+ * be a screen showing keys, and a screen that re-rendered when it returned would be one that
+ * changed language in front of the reader.
+ *
+ * @param chosen - What was stored, which is `null` until somebody chooses one and may be a tag
+ *   this build no longer ships. Either way the device's own answer is what it falls back to.
+ */
+export async function startLanguage(chosen: string | null): Promise<void> {
+  await i18n.use(initReactI18next).init({
     resources: catalogs,
-    lng: deviceLanguage(),
+    lng: isLanguage(chosen) ? chosen : deviceLanguage(),
     fallbackLng: SOURCE_LANGUAGE,
     supportedLngs: LANGUAGES,
     // React escapes what it renders, so escaping here would do it twice and put an entity
     // on screen where an apostrophe belongs.
     interpolation: { escapeValue: false },
-  })
-  .then(() => {
-    applyLanguage(i18n.resolvedLanguage ?? SOURCE_LANGUAGE);
   });
+
+  i18n.on("languageChanged", applyLanguage);
+  applyLanguage(i18n.resolvedLanguage ?? SOURCE_LANGUAGE);
+}
+
+/**
+ * Changes the language and remembers that it was asked for.
+ *
+ * @param language - The language to show from now on.
+ * @returns The language in use afterwards, which is what was stored and not what was asked.
+ */
+export async function setLanguage(language: Language): Promise<Language> {
+  const stored = await choose({ language });
+  const settled = isLanguage(stored.language) ? stored.language : deviceLanguage();
+
+  await i18n.changeLanguage(settled);
+
+  return settled;
+}

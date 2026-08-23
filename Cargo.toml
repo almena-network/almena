@@ -63,6 +63,16 @@ tauri-plugin-single-instance = "2"
 # What this application answers on a command line. Desktop only, and for the same reason: a
 # phone has no command line to be launched from.
 tauri-plugin-cli = "2"
+# The native dialogs — a question, a warning, a file to pick. Registered on computers alone,
+# which is a decision rather than the plugin's limit: it serves phones too. Nothing draws one
+# yet, and the day something does, a phone reaching a decision through a screen instead of a
+# dialog is the shape `.agents/rules/supported-platforms.md` asks for.
+tauri-plugin-dialog = "2"
+# Updating the application in place, on the computers where an application is a file somebody
+# downloaded. A phone updates through its own store and has no equivalent to write. Registered
+# but never asked: `.agents/rules/updating.md` is what it may and may not do, and the endpoint
+# and the key it would need are not decided.
+tauri-plugin-updater = "2"
 # Whether the operating system opens this application when somebody logs in. Windows and
 # Linux only: each has one register for it and this writes to it. macOS keeps two and means
 # different things by them, so it is served by the crate below instead.

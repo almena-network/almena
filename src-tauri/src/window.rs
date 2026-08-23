@@ -3,17 +3,28 @@
 //! Desktop only — on a phone the operating system owns the window, and this module is not in
 //! the mobile binary.
 //!
-//! Two functions, and they exist for reasons that are not local to any caller. A second
+//! Two of the three exist for reasons that are not local to any caller. A second
 //! launch of the application must not become a second process, so the single-instance plugin
 //! turns it into [`show_main`]; and the close button no longer ends the application, so it
 //! turns into [`hide_main`]. Between them they are why the window is somewhere other than on
 //! the screen, and why it comes back.
 
 use log::warn;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Window};
 
 /// Label of the main window, as declared under `app.windows` in `tauri.conf.json`.
 const MAIN_WINDOW: &str = "main";
+
+/// The main window, or nothing when there is none.
+///
+/// The label is written down once, here, so that nothing else in the crate has to know what a
+/// window declared in `tauri.conf.json` is called. A `Window` rather than a `WebviewWindow`
+/// because everything asked of it on this side is asked of the window and not of what is drawn
+/// inside it.
+pub fn main(app: &AppHandle) -> Option<Window> {
+    app.get_webview_window(MAIN_WINDOW)
+        .map(|window| window.as_ref().window())
+}
 
 /// Brings the main window back to the user.
 ///
@@ -26,7 +37,7 @@ const MAIN_WINDOW: &str = "main";
 /// to come forward leaves somebody looking at what they were already looking at, which is not
 /// a reason to take the application down.
 pub fn show_main(app: &AppHandle) {
-    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+    let Some(window) = main(app) else {
         warn!("window_not_shown reason=no_main_window");
         return;
     };
@@ -52,7 +63,7 @@ pub fn show_main(app: &AppHandle) {
 /// A window that refuses to hide stays on screen. That is a worse-looking application, not a
 /// broken one, and taking it down over a refused `hide` would be the actual breakage.
 pub fn hide_main(app: &AppHandle) {
-    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+    let Some(window) = main(app) else {
         warn!("window_not_hidden reason=no_main_window");
         return;
     };

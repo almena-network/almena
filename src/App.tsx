@@ -14,24 +14,26 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import NotBuilt from "@/components/NotBuilt";
 import Home from "@/features/home/Home";
 import Network from "@/features/network/Network";
 import Settings from "@/features/settings/Settings";
 import AppShell from "@/features/shell/AppShell";
-import { sectionNameKey, type SectionId } from "@/features/shell/sections";
+import { type SectionId } from "@/features/shell/sections";
 import { installTray } from "@/lib/tray";
 import "@/styles/index.css";
 
 /**
- * The screen each section shows, where it has one.
+ * The screen each section shows. Every section, with no gaps.
  *
- * A section missing from this map is one that is listed and not built, and it says so rather
- * than doing nothing when touched. That is what keeps an unfinished application from reading
- * as a broken one — and it is why this is a map with a gap in it instead of a chain of
- * conditions with no end.
+ * The type is what enforces that: a total `Record<SectionId, …>`, so a section added to
+ * `sections.ts` with nothing behind it fails `tsc` rather than being discovered by somebody
+ * touching a navigation entry that does nothing. The navigation lists no destination that
+ * leads nowhere — `.agents/rules/honest-emptiness.md`.
+ *
+ * A screen with no data yet is still a screen. It is built whole and reports that it has
+ * nothing, which is the same rule seen from the other side.
  */
-const SCREENS: Partial<Record<SectionId, () => React.ReactElement>> = {
+const SCREENS: Record<SectionId, () => React.ReactElement> = {
   home: Home,
   network: Network,
   settings: Settings,
@@ -53,7 +55,7 @@ function App() {
 
   return (
     <AppShell section={section} onSelect={setSection}>
-      {Screen ? <Screen /> : <NotBuilt title={t(sectionNameKey(section))} />}
+      <Screen />
     </AppShell>
   );
 }

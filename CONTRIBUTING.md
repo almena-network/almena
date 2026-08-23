@@ -69,6 +69,14 @@ hostname or the logged-in user. This application talks to the peers of its netwo
 the origin it read that network's configuration from, and to nothing else: no telemetry, no
 analytics, no crash reporting, no update ping, in any build.
 
+The updater plugin is in the desktop binary and does not change that sentence. It is registered
+and inert — no endpoint, no key, and no code calling it — and the day something does call it,
+what it may do is
+[updating.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/updating.md):
+nothing checks unless a person asks, finding is not installing, and the request says the target,
+the architecture and the current version and nothing that could identify anybody. A check on a
+timer, on startup, or on a window regaining focus is the thing that rule exists to refuse.
+
 **Every platform moves together.** iOS, Android, Windows, Linux and macOS are supported
 equally: none gets a feature first. A change that needs platform-specific code carries the
 equivalent path for the rest in the same pull request, and no dependency is adopted unless it
@@ -109,20 +117,27 @@ wherever its name and type do not already say everything.
 **Modules have one responsibility.** Name it without the word "and". Extract on the third
 occurrence rather than the second, when you know which part is genuinely shared.
 
+**A screen with no data is still built, and reports that it has none.** Never left out, never
+filled with sample data — not under a flag, not "just to see the design". And *nobody has looked
+yet*, *there is nothing to look at* and *somebody looked and found none* are three different
+facts that never share a sentence: a value nobody measured is `null` and never `0` or `[]`, and
+every emptiness is drawn with `EmptyState`, which will not draw one without the reason for it.
+
 **Screens are drawn out of shadcn/ui.** Everything a person operates, and every surface those
 things sit on, comes from `src/components/ui/` — `alert`, `badge`, `button`, `card`, `empty`,
-`field`, `item`, `label`, `separator`, `spinner`, `switch`. Look in the registry before writing
+`field`, `item`, `label`, `select`, `separator`, `spinner`, `switch`, `toggle`, `toggle-group`.
+Look in the registry before writing
 one: it is larger than it seems, and an element written by hand that already existed is the
 expensive kind of mistake, because it looks finished. Those files are vendored: they arrive by
 `pnpm dlx shadcn@latest add <name>` and are left as the registry wrote them, with a file header
 on top and any deviation named in it. A feature never writes its own `<button>`, `<input>` or
 card, and never nudges an imported element with a `className` that changes how it is drawn
 rather than where it sits. A screen that needs an element to look different is asking for a
-change to that element, and the change has to be nameable as a meaning — which is why only four
+change to that element, and the change has to be nameable as a meaning — which is why only a few
 of the variants the registry ships are drawn here, and the list of them is in the rule.
 
 What shadcn/ui has no answer for is composed from what it does, in `src/components/`: `Logo`,
-`Figure`, `StateBadge`, `Setting`, `CardGrid`, `NotBuilt`. Nothing in there invents a second way
+`Figure`, `StateBadge`, `Setting`, `CardGrid`, `EmptyState`. Nothing in there invents a second way
 of drawing a surface or a control, and a component the registry turns out to have an element for
 is deleted in favour of it.
 

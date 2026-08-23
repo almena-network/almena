@@ -16,7 +16,7 @@
 
 use log::{info, warn};
 use tauri::{
-    AppHandle,
+    AppHandle, Manager, Wry,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -28,6 +28,14 @@ const TRAY: &str = "main";
 
 /// Identifier of the menu entry that ends the application.
 const QUIT: &str = "quit";
+
+/// The one entry of the menu, kept so that it can be given its name again.
+///
+/// The name is text a person reads and therefore comes from a catalog, and the language a
+/// catalog is read in can change while the application runs — [`install_tray`] is called again
+/// when it does. Holding the entry rather than replacing the menu is what keeps the tray's
+/// event wiring untouched: the same item, renamed, and nothing to re-hang the quit behaviour on.
+struct QuitEntry(MenuItem<Wry>);
 
 /// The glyph a tray draws, and it is not the same file on every platform.
 ///
@@ -54,8 +62,11 @@ pub fn installed(app: &AppHandle) -> bool {
 /// `quit` is the name of the one entry, already translated by the caller — this side has no
 /// catalogs to translate it from.
 ///
-/// Called again — by a webview that reloaded, which in development happens on every save — it
-/// does nothing and says so in the log. One tray, not one per reload.
+/// **Called again, it renames rather than builds.** Two things call it a second time and both
+/// mean the same request: a webview that reloaded, which in development happens on every save,
+/// and a person changing the language on the Settings screen. One tray either way, wearing
+/// whatever the interface last called it — a tray left saying *Quit* to somebody reading a
+/// Spanish application would be the one piece of English left on screen.
 ///
 /// A failure is written to the log and goes no further. There is nothing the interface could
 /// do about it and nothing it could usefully say, and [`installed`] is what keeps the failure
@@ -63,7 +74,7 @@ pub fn installed(app: &AppHandle) -> bool {
 #[tauri::command]
 pub fn install_tray(app: AppHandle, quit: String) {
     if installed(&app) {
-        info!("tray_already_installed");
+        rename(&app, &quit);
         return;
     }
 
@@ -73,6 +84,24 @@ pub fn install_tray(app: AppHandle, quit: String) {
     }
 
     info!("tray_installed");
+}
+
+/// Gives the one entry its name again, in whatever language the interface is now showing.
+///
+/// A rename that fails leaves the entry saying what it said before, which is a word in the
+/// wrong language and not a menu anybody has lost.
+fn rename(app: &AppHandle, quit: &str) {
+    let Some(entry) = app.try_state::<QuitEntry>() else {
+        warn!("tray_not_renamed reason=no_entry");
+        return;
+    };
+
+    if let Err(error) = entry.0.set_text(quit) {
+        warn!("tray_not_renamed reason={error}");
+        return;
+    }
+
+    info!("tray_renamed");
 }
 
 /// Builds the icon and the menu, and hangs both behaviours off it.
@@ -110,6 +139,8 @@ fn build(app: &AppHandle, quit: &str) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+
+    app.manage(QuitEntry(quit_item));
 
     Ok(())
 }

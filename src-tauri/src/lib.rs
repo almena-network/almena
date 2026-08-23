@@ -11,6 +11,8 @@
 // the mobile binary at all.
 #[cfg(desktop)]
 mod cli;
+#[cfg(desktop)]
+mod geometry;
 mod logging;
 // The one public module of this crate, and public on purpose. Every other module here is
 // wiring that only `run` below has any business calling; `notification` is what this crate
@@ -19,6 +21,9 @@ mod logging;
 pub mod notification;
 #[cfg(desktop)]
 mod open_at_login;
+// What a person chose about how the interface looks and which language it speaks. On every
+// platform: a phone has a palette and a language like anything else.
+mod preferences;
 #[cfg(desktop)]
 mod tray;
 #[cfg(desktop)]
@@ -44,6 +49,21 @@ use tauri_plugin_window_state::StateFlags;
 #[cfg(desktop)]
 fn window_state_flags() -> StateFlags {
     StateFlags::all().difference(StateFlags::VISIBLE)
+}
+
+/// Whether this is a development build rather than one somebody was given.
+///
+/// `debug_assertions` and not `tauri::is_dev`: the second is true only while the interface is
+/// being served by a dev server, which would leave `task build:debug` — a bundle with the
+/// assertions still in it — indistinguishable from a release. What the interface says with
+/// this is *this is not the application anybody is meant to be running*, and the debug profile
+/// is exactly that question.
+///
+/// On every platform, unlike the two below it. `task dev:ios` is a development run like any
+/// other, and a phone showing no marker would be the one place the marker could be missed.
+#[tauri::command]
+fn is_development() -> bool {
+    cfg!(debug_assertions)
 }
 
 /// Whether this build is the one that runs on a computer.
@@ -95,20 +115,21 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
         Some(vec!["--hidden"]),
     ));
 
-    // The close button stops ending the application and starts putting it away — but only
-    // where there is a tray to find it in again. If the tray failed to build, a close is a
-    // close and the application ends the way it always did, rather than vanishing to somewhere
-    // this screen has no route back to.
-    let builder = builder.on_window_event(|window, event| {
-        let tauri::WindowEvent::CloseRequested { api, .. } = event else {
-            return;
-        };
+    // Two plugins that nothing calls yet, and both are here on purpose rather than by
+    // accident. `dialog` is what a native question, warning or file picker will come from the
+    // day something has one to ask. `updater` is what lets an application that is a file
+    // somebody downloaded replace itself — and it is registered **inert**: nothing in this
+    // application asks it anything, and what it may and may not do when something does is
+    // `.agents/rules/updating.md`, not a builder argument.
+    let builder = builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
-        if tray::installed(window.app_handle()) {
-            api.prevent_close();
-            window::hide_main(window.app_handle());
-        }
-    });
+    let builder = builder.on_window_event(on_window_event);
+
+    // Where the size a person gave the window is held between the resize that produced it and
+    // the exit that writes it down.
+    let builder = builder.manage(geometry::Seen::default());
 
     // A launch the system started at login puts nothing on the screen. The window is still
     // built and the interface still loads — the tray has to be named from there — it is simply
@@ -118,6 +139,13 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
     // found by running it: the window declared in `tauri.conf.json` does not exist yet when
     // `build` returns. Asking for it there finds nothing to hide and says so in the log.
     builder.setup(|app| {
+        // After the plugin has restored the geometry and before anybody has looked at it: by
+        // now the window is on the display it will open on, which is what makes the comparison
+        // inside this call a comparison between two sizes on the same screen.
+        if let Some(window) = window::main(app.handle()) {
+            geometry::restore(&window);
+        }
+
         if cli::starts_hidden(app) {
             info!("started_hidden");
             window::hide_main(app.handle());
@@ -125,6 +153,27 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
 
         Ok(())
     })
+}
+
+/// What happens to the window when the platform says something about it.
+///
+/// Two things do, and they are unrelated except in arriving here. The close button stops ending
+/// the application and starts putting it away — but only where there is a tray to find it in
+/// again; if the tray failed to build, a close is a close and the application ends the way it
+/// always did, rather than vanishing to somewhere this screen has no route back to. And every
+/// resize is the size a person is choosing, which is what `geometry` is there to give back.
+#[cfg(desktop)]
+fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    match event {
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+            if tray::installed(window.app_handle()) {
+                api.prevent_close();
+                window::hide_main(window.app_handle());
+            }
+        }
+        tauri::WindowEvent::Resized(size) => geometry::note(window, *size),
+        _ => {}
+    }
 }
 
 /// Registers everything this application is made of, in the order it has to happen.
@@ -168,12 +217,20 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
     #[cfg(desktop)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         is_desktop,
+        is_development,
         tray::install_tray,
         open_at_login::opens_at_login,
-        open_at_login::set_opens_at_login
+        open_at_login::set_opens_at_login,
+        preferences::preferences,
+        preferences::set_preferences
     ]);
     #[cfg(mobile)]
-    let builder = builder.invoke_handler(tauri::generate_handler![is_desktop]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        is_desktop,
+        is_development,
+        preferences::preferences,
+        preferences::set_preferences
+    ]);
 
     builder
 }
@@ -203,19 +260,23 @@ pub fn run() {
 
             info!("application_started");
             app.run(|handle, event| {
-                // macOS, and only macOS: clicking the Dock icon of a running application with
-                // no window on screen is a request for it back. The other two desktops have no
-                // Dock and come back through the launcher instead, which the single-instance
-                // plugin turns into the very same call.
-                #[cfg(target_os = "macos")]
-                if let tauri::RunEvent::Reopen { .. } = event {
-                    window::show_main(handle);
+                // The size the window ended up at is written down here and nowhere else: it is
+                // the one moment at which nothing more can change it.
+                //
+                // macOS, and only macOS, has a second thing to answer: clicking the Dock icon
+                // of a running application with no window on screen is a request for it back.
+                // The other two desktops have no Dock and come back through the launcher
+                // instead, which the single-instance plugin turns into the very same call.
+                #[cfg(desktop)]
+                match event {
+                    tauri::RunEvent::Exit => geometry::save(handle),
+                    #[cfg(target_os = "macos")]
+                    tauri::RunEvent::Reopen { .. } => window::show_main(handle),
+                    _ => {}
                 }
 
-                #[cfg(not(target_os = "macos"))]
-                {
-                    let _ = (handle, event);
-                }
+                #[cfg(not(desktop))]
+                let _ = (handle, event);
             });
         }
         Err(error) => panic!("the application could not be built: {error}"),

@@ -12,6 +12,7 @@ settingGroups:
     base:
       PRODUCT_NAME: Almena
       PRODUCT_BUNDLE_IDENTIFIER: network.almena.desktop
+      DEVELOPMENT_TEAM: XDUFSW425R
 targetTemplates:
   app:
     type: application

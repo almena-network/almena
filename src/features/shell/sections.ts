@@ -30,9 +30,9 @@ interface Section {
  * past the 44 a finger is entitled to and leaves no room for a sixth. Three sit wider than
  * that and are the better for it.
  *
- * Two of the three have no screen yet and show `NotBuilt`. They are listed anyway, because the
- * shape of the application is what a navigation is for — and because an entry that appears
- * later moves everything beside it, which is worse than an entry that was always there.
+ * Every one of them has a screen behind it, and that is not a coincidence to be maintained by
+ * hand: `SCREENS` in `App.tsx` is typed against this list, so a section added here with nothing
+ * behind it fails to compile.
  */
 export const SECTIONS = [
   { id: "home", icon: House },

@@ -37,6 +37,10 @@
     ]
   },
   "plugins": {
+    "updater": {
+      "endpoints": [],
+      "pubkey": ""
+    },
     "cli": {
       "description": "Almena, the application people use to reach the Almena network",
       "args": [

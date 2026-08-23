@@ -15,11 +15,20 @@
  * The mark is drawn in the strip's own faint colour rather than in the identity one. It is
  * here to say which application this is at a glance, not to be the thing anybody is looking
  * at — and the strip is the one place the mark is visible in both shapes.
+ *
+ * **A development build says so here, and this is the one place it could say it.** The marker
+ * has to be on screen whatever section is open and whichever shape the window is in, and this
+ * strip is the only thing in the application that is. It is brighter than everything else on
+ * the strip because it is the one thing there that should be noticed; it is not a state colour,
+ * because being a development build is not one of the four states and borrowing one of those
+ * would cost them their meaning (`.agents/rules/visual-identity.md`).
  */
 
 import { useTranslation } from "react-i18next";
 
 import Logo from "@/components/Logo";
+import { Badge } from "@/components/ui/badge";
+import { isDevelopmentBuild } from "@/lib/build";
 
 /** What this build is. Vite replaces it at build time from `package.json`. */
 const VERSION = __APP_VERSION__;
@@ -36,6 +45,8 @@ function StatusBar() {
       </div>
 
       <div className="ml-auto flex min-w-0 items-center gap-3">
+        {isDevelopmentBuild() && <Badge variant="outline">{t("status.development")}</Badge>}
+
         <span className="truncate font-mono">
           {t("app.version", { version: VERSION })}
         </span>
