@@ -1,0 +1,17 @@
+[package]
+name = "almena-paths"
+description = "Where an Almena program keeps things, for the programs that have no Tauri to ask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The same crate Tauri's own desktop resolver calls, at the same major version. That is what
+# makes this crate agree with it by construction rather than by resemblance, and it is the
+# reason to be careful about ever bumping past it.
+dirs = { workspace = true }

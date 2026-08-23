@@ -104,5 +104,11 @@
       "label": "Open Almena at login",
       "refused": "The system did not accept the change, so the setting stays as it was. Its own settings are where a refusal like this is undone."
     }
+  },
+  "cli": {
+    "running": "The node is running.",
+    "records": "Records",
+    "recordsNone": "Not being written to a file. This node has nowhere it may keep one.",
+    "quit": "Press q to quit."
   }
 }

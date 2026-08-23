@@ -6,13 +6,15 @@
 //! is where the desktop and the mobile shapes of this application differ.
 
 // `almena` is one codebase in two shapes. On a computer the application remembers its
-// geometry, refuses to run twice and answers a command line; on a phone the operating system
-// owns all three, so the modules that serve them are marked `#[cfg(desktop)]` and are not in
-// the mobile binary at all.
-#[cfg(desktop)]
-mod cli;
+// geometry, refuses to run twice and can be told at launch to stay out of the way; on a phone
+// the operating system owns all three, so the modules that serve them are marked
+// `#[cfg(desktop)]` and are not in the mobile binary at all.
 #[cfg(desktop)]
 mod geometry;
+// Public so that its one question can be asked in a doctest. Nothing outside this crate calls
+// it.
+#[cfg(desktop)]
+pub mod launch;
 mod logging;
 // The one public module of this crate, and public on purpose. Every other module here is
 // wiring that only `run` below has any business calling; `notification` is what this crate
@@ -45,7 +47,7 @@ use tauri_plugin_window_state::StateFlags;
 /// nobody can tell from a broken one.
 ///
 /// Withholding `VISIBLE` is what keeps a launch a launch. Whether a window appears is decided
-/// by `cli::starts_hidden` and by nothing that was written to disk last time.
+/// by `launch::starts_hidden` and by nothing that was written to disk last time.
 #[cfg(desktop)]
 fn window_state_flags() -> StateFlags {
     StateFlags::all().difference(StateFlags::VISIBLE)
@@ -80,8 +82,8 @@ fn is_desktop() -> bool {
 /// Registers everything only a computer has, and returns the builder with it on.
 ///
 /// Apart from [`assemble`] because it is the half that does not exist on a phone, not because
-/// it is a different kind of work: the window it remembers between runs, the command line it
-/// answers, who may open it at login, and the close button that no longer ends it.
+/// it is a different kind of work: the window it remembers between runs, who may open it at
+/// login, and the close button that no longer ends it.
 ///
 /// Single instance is not here, and cannot be: its own documentation requires it to be the
 /// first plugin registered of all, which is before this function is reached.
@@ -93,14 +95,9 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
             .build(),
     );
 
-    // The command line last of the plugins that answer one, and after logging: what it answers
-    // is decided with the application already built, because the plugin reads the matches
-    // through the handle.
-    let builder = builder.plugin(tauri_plugin_cli::init());
-
     // Whether the operating system opens this application when somebody logs in. The argument
     // is not decoration: it is written into the entry, so the launch that comes out of it is one
-    // `cli::starts_hidden` recognises and nobody gets a window in their face at login.
+    // `launch::starts_hidden` recognises and nobody gets a window in their face at login.
     //
     // **Windows and Linux only.** Each keeps one register for this and the plugin writes to it.
     // macOS keeps two — one for opening at login and one for running in the background — and
@@ -146,7 +143,7 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
             geometry::restore(&window);
         }
 
-        if cli::starts_hidden(app) {
+        if launch::starts_hidden() {
             info!("started_hidden");
             window::hide_main(app.handle());
         }
@@ -251,13 +248,6 @@ pub fn run() {
 
     match app {
         Ok(app) => {
-            // `--help` and `--version` are a question, not a launch. Answered before the
-            // window exists, so that a person who asked one never sees one open.
-            #[cfg(desktop)]
-            if cli::answered(&app) {
-                return;
-            }
-
             info!("application_started");
             app.run(|handle, event| {
                 // The size the window ended up at is written down here and nowhere else: it is

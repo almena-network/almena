@@ -3,9 +3,10 @@ version: "3"
 vars:
   # Override to pick a specific device, e.g. task deploy:android DEVICE=emulator-5554
   DEVICE: ""
-  # A command line for the application itself, e.g. task dev ARGS="--hidden". What it answers
-  # is declared in src-tauri/tauri.conf.json under plugins.cli and read in src-tauri/src/cli.rs.
-  # Desktop only: a phone launches nothing from a command line.
+  # A command line for whichever program is being run, e.g. task dev ARGS="--hidden" or
+  # task dev:cli ARGS="--quiet". The windowed application answers one flag and reads it in
+  # src-tauri/src/launch.rs; the node's surface is in cli/src/arguments.rs. Computers only: a
+  # phone launches nothing from a command line.
   ARGS: ""
 
 tasks:
@@ -150,7 +151,7 @@ tasks:
         fi
 
   isolation:
-    desc: Check that the crate holding the log format knows about no framework
+    desc: Check that the two programs stay out of each other's dependency graph
     cmds:
       - task: banner
         vars: { OPERATION: isolation }
@@ -158,16 +159,30 @@ tasks:
       # fails when the package is not in that graph at all — so here success is the failure,
       # and silence is the pass.
       #
-      # This was four assertions when two programs were built here and had to stay out of each
-      # other's dependency graph. One program later, three of them could not fail and were
-      # deleted with the terminal interface; this one still can. `almena-log` holds the shape
-      # of a record — the reason it is a crate rather than a call on the log plugin's builder —
-      # and a `tauri` in its graph would mean the format had quietly become the framework's.
+      # Each binary links what its own graph holds and nothing else, which is only true while
+      # the graphs are kept apart. A windowed application that linked `ratatui`, or a node that
+      # linked `tauri`, would carry a renderer it never calls: minutes of build time and tens of
+      # megabytes, for nothing. The two crates that are neither program must reach neither
+      # framework, which is what makes them decisions rather than parts of one of them.
       - |
-        if cargo tree -q -p almena-log -i tauri >/dev/null 2>&1; then
-          echo "almena-log can reach tauri: the log format must know about no framework" >&2
-          exit 1
-        fi
+        failed=0
+        assert_cannot_reach() {
+          if cargo tree -q -p "$1" -i "$2" >/dev/null 2>&1; then
+            echo "$1 can reach $2: $3" >&2
+            failed=1
+          fi
+        }
+
+        assert_cannot_reach almena-log tauri \
+          "the log format must know about no framework"
+        assert_cannot_reach almena-paths tauri \
+          "the resolver exists for the programs Tauri does not serve"
+        assert_cannot_reach almena-cli tauri \
+          "the node must not link a webview it never draws in"
+        assert_cannot_reach almena-app ratatui \
+          "the windowed application must not link a terminal renderer"
+
+        exit "$failed"
 
   test:
     desc: Run the test suites
@@ -283,6 +298,17 @@ tasks:
       # without building a binary first.
       - pnpm tauri dev {{if .ARGS}}-- -- {{.ARGS}}{{end}}
 
+  dev:cli:
+    desc: Run the node in this terminal
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: "dev:cli" }
+      # No hot reload and nothing to serve: this program has no frontend. `ARGS` reaches it the
+      # ordinary way, because there is no Tauri CLI in between to get past — `task dev:cli
+      # ARGS="--quiet"` is the one to try when what you want to see is the records.
+      - cargo run -q -p almena-cli -- {{.ARGS}}
+
   dev:android:
     desc: Run on a connected Android device or emulator, with hot reload
     deps: [install]
@@ -333,6 +359,19 @@ tasks:
       # it is gets made, and it takes a fraction of the time the release build does. Everything
       # lands under target/debug/ instead of target/release/.
       - pnpm tauri build --debug
+
+  build:cli:
+    desc: Build the node for this computer
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: "build:cli" }
+      # One binary and no bundle. A node on a server is a file somebody copies there, and which
+      # packages that becomes — the Debian and RPM families the desktop already builds for — is
+      # not decided (`.agents/rules/desktop-client-cli.md`).
+      - cargo build -q --release -p almena-cli
+      - cmd: echo "Built target/release/almena"
+        silent: true
 
   build:android:
     desc: Build the Android release package

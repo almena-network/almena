@@ -10,7 +10,7 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/almena-log", "src-tauri"]
+members = ["cli", "crates/almena-log", "crates/almena-paths", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -42,6 +42,7 @@ todo = "deny"
 [workspace.dependencies]
 # This repository's own crates. Paths, because they are published with it or not at all.
 almena-log = { path = "crates/almena-log" }
+almena-paths = { path = "crates/almena-paths" }
 
 # The application. `tray-icon` is what lets it live on a bar with no window on screen, and
 # `image-png` is what lets the glyph it wears be one of the files `task icons` generates rather
@@ -60,9 +61,6 @@ tauri-plugin-notification = "2"
 # application already, so neither of these is compiled into the mobile binary.
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
-# What this application answers on a command line. Desktop only, and for the same reason: a
-# phone has no command line to be launched from.
-tauri-plugin-cli = "2"
 # The native dialogs — a question, a warning, a file to pick. Registered on computers alone,
 # which is a decision rather than the plugin's limit: it serves phones too. Nothing draws one
 # yet, and the day something does, a phone reaching a decision through a screen instead of a
@@ -88,6 +86,21 @@ objc2-service-management = { version = "0.3", default-features = false, features
   "objc2",
   "objc2-foundation",
 ] }
+
+# The CLI: the node for a computer with no graphical system. `clap` reads its four arguments,
+# and `ratatui` over `crossterm` draws it for whoever is watching. None of the three is in the
+# windowed application's graph and `task isolation` is what says so.
+clap = { version = "4.6.6", features = ["derive"] }
+ratatui = "0.30.2"
+crossterm = "0.29.0"
+# What turns Ctrl-C, and the SIGTERM a service manager sends, into a stop this program can
+# write a record about. `termination` is what adds the second one.
+ctrlc = { version = "3.5.2", features = ["termination"] }
+
+# The one crate that knows where a platform keeps things, and the reason `almena-paths` can
+# promise to agree with Tauri's resolver: this is the crate that resolver calls, at the major
+# version it calls it at. Bumping past Tauri's is what would break that promise.
+dirs = "6"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -5,7 +5,7 @@ issue or a pull request.
 
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-> **This repository is under construction.** `almena` is the application of the Almena
+> **This repository is under construction.** `almena` is the application and the node of the Almena
 > network, and today it is its starting point: no release has been published. What that means
 > for a contributor is the next section — interfaces and configuration move underneath you,
 > and a change is not finished until everything that described what it moved is true again.
@@ -153,10 +153,17 @@ are cleared in that file so that `bg-red-500` and `md:` do not exist here at all
 colour is `primary`; shadcn/ui's `accent` is a hover grey and means nothing about identity.
 Icons come from `lucide-react` and from nowhere else.
 
-`crates/almena-log` is the one crate beside the application today, and it is one because the
-shape of a record is a decision rather than a helper — see
+`crates/` holds two crates beside the two programs, and each is one because it owns a
+**decision** rather than because two programs happened to need it. `almena-log` holds the shape
+of a record — see
 [logging.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/logging.md).
-A second crate needs an argument of that kind, not a pile of things that had nowhere else to go.
+`almena-paths` holds where a program keeps things, for the programs Tauri's own resolver does
+not serve; `almena-app` does not even link it, because it keeps Tauri's, and what the two share
+is the answer rather than the code — held to by `src-tauri/tests/paths_agree_with_tauri.rs`.
+A third crate needs an argument of that kind, not a pile of things that had nowhere else to go.
+
+**A directory at the root is a program.** `cli/` and `src-tauri/` are the two; anything under
+`crates/` is a library one of them is built from.
 
 **`unsafe` is denied, and lifted in exactly one place.** The workspace denies `unsafe_code`.
 One module lifts it — `src-tauri/src/open_at_login.rs`, whose macOS half calls into
@@ -178,15 +185,28 @@ Rust alone and `task format` formats Rust alone — and the two agreements above
 would catch, the size limits and the ban on arbitrary Tailwind values, are a reviewer's until
 it arrives.
 
-**The log format knows about no framework.** `task isolation` fails a build in which
-`almena-log` can reach `tauri`. That crate holds the shape of a record and the sizes a log is
-bounded by, which is why it is a crate at all; a dependency added to it is the whole of how
-that gets lost, and nothing else would notice.
+**The two programs stay out of each other's graph.** This repository builds a windowed
+application and a CLI, and each binary links what its own dependency graph holds. `task
+isolation` fails a build in which any of these becomes false:
 
-**One framework.** Everything here is Tauri 2, and that is a decision rather than an accident
-of what was reached for first: a second framework beside it is a second set of documentation, a
-second upgrade path and a second way to do everything. A dependency that brings one is a change
-that argues for it in a spec of its own. The README's
+| | Must not reach |
+| --- | --- |
+| `almena-log` | `tauri` |
+| `almena-paths` | `tauri` |
+| `almena-cli` | `tauri` |
+| `almena-app` | `ratatui` |
+
+The two crates hold decisions — the shape of a record, and where a program keeps things — which
+is why they are crates at all, and a framework in either one is how that gets lost. The two
+programs are the other half: a node that linked a webview it never draws in would take minutes
+longer to build and tens of megabytes more to ship, and nothing but this check would say so.
+
+**Two frameworks, and no third.** Tauri 2 for the windowed application, `ratatui` for the
+terminal, and that is the whole list. The second one is not an accident of what was reached for
+first — a terminal interface was built here, deleted so that everything would be Tauri 2, and
+brought back when a computer with no graphical system had no other way to be a node (spec
+`0001`). A dependency that brings a third framework is a change that argues for it in a spec of
+its own. The README's
 [What is not here yet](README.md#what-is-not-here-yet) lists what the checks do not cover yet. A
 limit that is wrong is changed in the configuration, in its own commit, with the reason — not
 silenced in passing.

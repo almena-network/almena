@@ -39,15 +39,13 @@ tauri-plugin-log = { workspace = true }
 tauri-plugin-notification = { workspace = true }
 
 # Desktop only, and compiled out of the mobile binary entirely. A phone's operating system
-# owns the window's geometry, already guarantees one running instance of an application,
-# launches nothing from a command line, and decides for itself when an application may run —
-# so none of the four has anything to do there. This is the shape
+# owns the window's geometry, already guarantees one running instance of an application, and
+# decides for itself when an application may run — so none of these has anything to do there. This is the shape
 # `.agents/rules/supported-platforms.md` asks for: not a feature one platform lacks, but a
 # platform that does not have the thing the feature is about.
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
-tauri-plugin-cli = { workspace = true }
 # Two more that are here for what a computer is rather than for what it can do. An application
 # on a computer is a file somebody downloaded, so it is the one that has to be able to replace
 # itself; a phone's store does that and offers nothing to call. Dialogs are the other way
@@ -65,3 +63,13 @@ tauri-plugin-autostart = { workspace = true }
 # one. See `src/open_at_login.rs` for what the difference is and why it matters.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-service-management = { workspace = true }
+
+# Not a dependency: nothing in this application links it. It is here so that a test can ask
+# Tauri's path resolver and `almena-paths` the same question and fail if they disagree, which
+# is what lets the CLI promise to put things where this application puts them.
+[dev-dependencies]
+almena-paths = { workspace = true }
+# `test` brings Tauri's own mock application, which is the only way to hold a real path
+# resolver in a test. A feature of a dependency this crate already has, enabled for tests
+# alone.
+tauri = { workspace = true, features = ["test"] }

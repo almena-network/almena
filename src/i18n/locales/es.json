@@ -104,5 +104,11 @@
       "label": "Abrir Almena al iniciar sesión",
       "refused": "El sistema no aceptó el cambio, así que el ajuste queda como estaba. Una negativa así se deshace en los ajustes del propio sistema."
     }
+  },
+  "cli": {
+    "running": "El nodo está en marcha.",
+    "records": "Registros",
+    "recordsNone": "No se están escribiendo en un fichero. Este nodo no tiene dónde guardarlo.",
+    "quit": "Pulsa q para salir."
   }
 }

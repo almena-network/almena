@@ -1,15 +1,26 @@
 # Almena
 
 `almena` is the application people use to reach the Almena network, and — on a computer — the
-node itself: there is no daemon beside it, and the network is composed of the desktop
-installations taking part in it. On a phone or a tablet it is a client of that network rather
-than a node of it, reaching the network through an API that is not decided yet. One codebase
-for iOS, Android, Windows, Linux and macOS.
+node itself: there is no daemon beside it, and the network is composed of the computers taking
+part in it. On a phone or a tablet it is a client of that network rather than a node of it,
+reaching the network through an API that is not decided yet. One codebase for iOS, Android,
+Windows, Linux and macOS.
 
-It builds **one program** on **one framework**. It briefly built two — a terminal interface
-beside the windowed application — and that one was deleted: everything here is Tauri 2,
-reachable from one set of documentation and one upgrade path. What that gave up, deliberately,
-is the machine with no desktop on it.
+It builds **two programs**:
+
+| Program | Binary | What it is |
+| --- | --- | --- |
+| The windowed application | `almena-app` | Almena with a screen: the desktop on a computer, the client on a phone or a tablet. Tauri 2. |
+| The CLI | `almena` | A node for a computer with no graphical system. One job: bring a node up. `ratatui` in a terminal. |
+
+The second one is a returning decision rather than a new one. A terminal interface was built
+here, deleted so that everything would be Tauri 2 on one upgrade path, and what that gave up
+was named at the time: the machine with no desktop on it. It came back because the machine did
+— the separate node daemon that used to serve it no longer exists, so a server with no window
+had no way to take part at all. Spec `0001` carries the whole of that argument.
+
+They are two applications, not two faces of one. Separate directories, separate keys: a machine
+running both is **two nodes**.
 
 > **Status: under construction.** This is the starting point of the application, not a
 > release: interfaces, data formats, commands and configuration change without notice, and no
@@ -34,11 +45,24 @@ closed by making everything it left describing the old arrangement true again.
 
 ## Requirements
 
-Common to every platform:
+Four tools, on every platform, and the last of them is how everything in this repository is
+run:
 
-- A stable Rust toolchain, plus the system dependencies Tauri 2 needs — see
-  [Tauri prerequisites](https://tauri.app/start/prerequisites/).
-- Node.js 20 or newer, pnpm, and Task 3.
+| What | Version | What it is for |
+| --- | --- | --- |
+| [Rust](https://rustup.rs), stable | 1.85 or newer | Both programs. The workspace is edition 2024, which is what sets that number. `rustup` is also what adds a mobile target later. |
+| [Node.js](https://nodejs.org) | 20 or newer | The frontend's toolchain — Vite, TypeScript, and the Tauri CLI, which is a JavaScript package here rather than a global install. |
+| [pnpm](https://pnpm.io/installation) | 9 or newer | JavaScript dependencies. Not npm and not yarn: the lockfile is `pnpm-lock.yaml` and the workspace is `pnpm-workspace.yaml`, and both are pnpm's. |
+| [Task](https://taskfile.dev/installation/) | 3 | The command runner, and the whole of this repository's interface. Every command below is a `task`, `Taskfile.yml` is where each one is written down, and `task` on its own lists them. |
+
+Beside them, the system dependencies Tauri 2 needs — a webview and a compiler toolchain,
+different on each of the three desktop operating systems and listed in
+[Tauri prerequisites](https://tauri.app/start/prerequisites/). Nothing else is installed by
+hand: `task` installs the JavaScript dependencies itself, and cargo fetches the Rust ones.
+
+There is no task that installs the four. A command runner cannot install the runner that runs
+it, and each of the four is a different act on each operating system; every one of the pages
+above carries its own, for macOS, Windows and Linux alike.
 
 To reach the network, rather than only to build this application, the device also needs
 **IPv6 connectivity**. Almena is an IPv6 network and there is no second address family.
@@ -65,15 +89,16 @@ task init          # generates the native projects this host can build
 task dev:android   # or task dev:ios
 ```
 
-`task` on its own lists every available command. The full set:
+The full set, which `task` on its own prints too:
 
 | Command | What it does |
 | --- | --- |
+| `task` | Lists every available command. `task --list` says the same thing. |
 | `task install` | Installs JavaScript dependencies. Skipped when already up to date. |
 | `task catalogs` | Checks that every translation catalog holds the same keys. |
 | `task check` | Checks the Rust formatting, runs clippy over the workspace, type-checks the frontend, and runs `task catalogs` and `task isolation`. |
 | `task check:mobile` | Type-checks the application for the mobile targets. `task check` does not — it only ever compiles for this machine. |
-| `task isolation` | Asserts that `almena-log`, which holds the log format, reaches no framework. |
+| `task isolation` | Asserts that the two programs stay out of each other's dependency graph, and that the two crates beside them reach no framework. Four assertions — see below. |
 | `task test` | Runs the test suites across the workspace. Rust only today — see below. |
 | `task format` | Formats the Rust source with `cargo fmt`. |
 | `task icons` | Regenerates every icon from `assets/branding`. |
@@ -81,9 +106,11 @@ task dev:android   # or task dev:ios
 | `task init` | Generates the native mobile projects for every platform this host can build. |
 | `task init:android`, `task init:ios` | The same, one platform at a time. |
 | `task dev` | Runs the windowed application on this computer, with hot reload. Also available as `task dev:desktop`. `ARGS` gives it a command line — `task dev ARGS="--hidden"`. |
+| `task dev:cli` | Runs the node in this terminal. No hot reload: this program has no frontend. `ARGS` reaches it directly — `task dev:cli ARGS="--quiet"`. |
 | `task dev:android`, `task dev:ios` | Runs the app on a connected device or emulator, with hot reload. |
 | `task build` | Builds the desktop installer for this host's operating system. Also available as `task build:desktop`. The binary itself lands at `target/release/almena-app`. |
 | `task build:debug` | The same bundle, unoptimized, at `target/debug/`. It keeps `debug_assertions`, so it is the one bundle that still says *Development* on its status strip. |
+| `task build:cli` | Builds the node for this computer. One binary, at `target/release/almena`, and no bundle. |
 | `task build:android`, `task build:ios` | Builds the mobile packages. |
 | `task deploy:android`, `task deploy:ios` | Chooses a destination, builds for it, and installs it there. |
 | `task clean` | Removes build artifacts. The generated native projects are kept. |
@@ -99,73 +126,115 @@ depends on where it is going: the destination is chosen, and started if it is an
 was not running, before anything is compiled. Set `DEVICE` to skip the prompt —
 `task deploy:android DEVICE=emulator-5554`.
 
-`ARGS` is the other variable, and it exists because the application answers a command line and
-there was otherwise no way to try one without building first:
+`ARGS` is the other variable, and it gives whichever program is being run a command line:
 
 ```bash
-task dev ARGS="--hidden"     # starts into the tray, the way a login launch does
-task dev ARGS="--version"    # answers and exits, without opening a window
+task dev ARGS="--hidden"        # the application starts into the tray, as a login launch does
+task dev:cli ARGS="--quiet"     # the node writes records instead of drawing
 ```
 
-It reaches the application through two `--`, which is the Tauri CLI's own convention: the
-first ends what is meant for the CLI, the second what is meant for cargo. Desktop only — a
-phone launches nothing from a command line.
+For `task dev` it reaches the application through two `--`, which is the Tauri CLI's own
+convention: the first ends what is meant for that CLI, the second what is meant for cargo. For
+`task dev:cli` there is nothing in between and it is passed straight through. Computers only —
+a phone launches nothing from a command line.
 
-## One program, and the crates it is built from
+## Two programs, and the crates they are built from
 
-The repository is a Cargo workspace. One program comes out of it today, and the workspace is
-still where every crate is held to the same standard:
+The repository is a Cargo workspace, and it is where every crate is held to the same standard:
 
 ```
 Cargo.toml            the workspace, its lint tables, and every third-party version
 clippy.toml           the size thresholds those lints check
-crates/
-  almena-log/         the record format every program here writes
-src-tauri/            the application, package `almena-app`
+cli/                  the CLI, package `almena-cli`, binary `almena`
+src-tauri/            the windowed application, package `almena-app`
 src/                  its frontend
+crates/
+  almena-log/         the record format both programs write
+  almena-paths/       where a program with no Tauri keeps things
 ```
 
-`src-tauri/` stays at the root rather than moving under `crates/`. That is Tauri's own layout —
-its documentation puts the Rust project there and allows it to be "a member of your Rust
-workspace", `tauri.conf.json` is the marker its CLI uses to find the project, and the generated
-`gen/android` and `gen/apple` hang off it.
+**A directory at the root is a program; `crates/` holds the libraries they are built from.**
+`src-tauri/` is at the root because that is Tauri's own layout — its documentation puts the Rust
+project there and allows it to be "a member of your Rust workspace", `tauri.conf.json` is the
+marker its CLI uses to find the project, and the generated `gen/android` and `gen/apple` hang
+off it. `cli/` sits beside it for the same reason a program is not a library.
 
 A dependency is named in one place. Members carry `{ workspace = true }` and no version number,
 so two of them cannot end up on two versions of the same crate.
 
-`almena-log` is a crate rather than a call because it is a decision — the line shape, the sizes
-a log is bounded by, the names its files take — and a decision is easier to hold to in one
-place than in a builder call halfway down a plugin registration.
+**Each crate is a decision, not a drawer.** `almena-log` owns the shape of a record — the line,
+the sizes a log is bounded by, the names its files take. `almena-paths` owns where a program
+keeps things, for the programs Tauri's resolver does not serve. Neither exists to share code:
+`almena-app` does not even link `almena-paths`, because it keeps Tauri's resolver, which also
+serves iOS and Android. What the two programs share is the **answer** — held to by
+`src-tauri/tests/paths_agree_with_tauri.rs`, which asks both resolvers for every purpose and
+fails if any pair differs.
 
-`task isolation` is down to one assertion from four. Three of them kept two dependency graphs
-apart and cannot fail with one program, so they went with the terminal interface; an assertion
-that cannot fail reads as a check on every run and checks nothing. The one that survives is
-**`almena-log` cannot reach `tauri`** — which is exactly what makes it a crate rather than a
-call on the log plugin's builder, and which a single careless `[dependencies]` line would undo.
+`task isolation` makes four assertions, and each is a way one binary could quietly grow the
+other's weight:
 
-## What it answers on a command line
+| | Must not reach |
+| --- | --- |
+| `almena-log` | `tauri` |
+| `almena-paths` | `tauri` |
+| `almena-cli` | `tauri` |
+| `almena-app` | `ratatui` |
 
-`tauri-plugin-cli` is registered on the desktop builds, configured in `tauri.conf.json` under
-`plugins.cli`. Three things, and only the first two print anything:
+`cargo tree -p <crate> -i <package>` fails when the package is not in that crate's graph, so
+success is the failure and silence is the pass. A single careless `[dependencies]` line is all
+it takes to put a webview in a program that draws in a terminal.
+
+## The node in a terminal
+
+`almena` brings a node up on a computer with no graphical system, and that is its whole job.
 
 ```bash
-almena-app --help
-almena-app --version
-almena-app --hidden
+almena              # brings the node up, and draws it
+almena --quiet      # brings the node up, and writes records instead
+almena --help
+almena --version
 ```
 
-Both print and exit without opening a window. **On Windows they print nothing**, because a
-release build there is a windowed binary with no console attached to write back to — the
-plugin's own documented limitation, and the reason it is named here rather than found.
+`--quiet` is what a service manager runs, and **a missing terminal implies it**: a unit file
+that forgot the flag gets the behaviour it meant rather than a program fighting for a terminal
+that is not there. The flag exists on top of that detection because somebody at a real terminal
+is entitled to say they would rather read records.
 
-`--hidden` starts the application into the tray with no window, and exists for one caller:
-the operating system, which passes it because the login item was registered with it. Nobody
-needs to type it, and typing it does exactly what the login launch does.
+The drawn view reports which network this node belongs to, who it is, and how many peers it is
+talking to. All three are a dash today and that is the point: there is no peer-to-peer layer,
+so nothing has been measured, and a dash is what *not measured* looks like where a `0` would be
+a count somebody took. `q` leaves.
+
+It speaks English and Spanish, from the same two catalogs the screens use — the words for
+*network*, *this node* and *peers* are the same keys. Which one is chosen comes from `LC_ALL`,
+`LC_MESSAGES` or `LANG`. `--help` is the exception and is English wherever it is read, because
+`clap` builds it before a catalog can be.
+
+It keeps its records in its own directory, named `network.almena.cli` — not the windowed
+application's. Two applications, two directories, and one day two keys.
 
 There is deliberately no argument naming a peer or a network. This build joins no network, so
 an address would be accepted, used for nothing, and refused by nothing — and refusing an IPv4
 address in any of its disguises is not optional in this project. It arrives with the code that
 can honour it.
+
+## What the windowed application answers on a command line
+
+One flag, and it is not for a person to type:
+
+```bash
+almena-app --hidden
+```
+
+`--hidden` starts the application into the tray with no window, and exists for one caller: the
+operating system, which passes it because the login item was registered with it. Typing it
+does exactly what the login launch does.
+
+That is the whole surface. `--help` and `--version` were here, answered by
+`tauri-plugin-cli`, and left with it: a person who wants a command-line program has one now,
+above. It took a documented limitation with it — on Windows a release build has no console to
+write back to, so those two printed nothing there — and a flag that prints nothing has no such
+problem. What is left is `std::env::args` in `src-tauri/src/launch.rs`, which needs no parser.
 
 ## Running in the background
 
@@ -521,13 +590,16 @@ Stated rather than discovered by running something and being surprised.
 
 | | Today |
 | --- | --- |
-| The peer-to-peer layer | Not written yet. On a computer this application is the node, but nothing here joins a network, reads the configuration a network is described by, or speaks to a peer; the first screen says it is on no network because that is the whole truth available to it. |
+| The peer-to-peer layer | Not written yet. On a computer Almena is the node, but neither program joins a network, reads the configuration a network is described by, or speaks to a peer; the first screen and the node's view both say so, because that is the whole truth available to them. |
 | How the client reaches the network | Undecided. A phone or a tablet is a client and not a node, so it does not speak the peer-to-peer layer above; which API it speaks instead, over which protocol, and who serves it are open questions, and nothing here answers any of them. |
 | `task check` | Rust and `tsc` only. ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and there is no `task format` for TypeScript. Until ESLint arrives, the limits on file and function size and the ban on arbitrary Tailwind values are a reviewer's rather than a tool's. |
-| `--help` on Windows | The plugin cannot write back to the console that launched a release build, so `--help` and `--version` print nothing there. Everything else about them is the same, and no other platform is affected. |
-| `identifier` | Still the scaffold's `network.almena.desktop`. It names every directory this application writes to, so the log directory is under a name nobody chose, and the two deploy scripts carry a copy of it that changes with it. `productName` is settled: `Almena`, which is what the bundle, the login entry and the mobile applications are called. |
+| `identifier` | The windowed application's is still the scaffold's `network.almena.desktop`. It names every directory that application writes to, and the two deploy scripts carry a copy of it that changes with it. It is accurate for the desktop and inaccurate for the client, which is a phone keeping its data under a name that says *desktop*. The CLI is unaffected: it has an identifier of its own, `network.almena.cli`. `productName` is settled: `Almena`. |
 | Where updates come from | The updater plugin is registered and inert. Which host serves the releases and which key signs them are both undecided, so `endpoints` and `pubkey` are empty and nothing calls the plugin. See [Registered, and not yet called](#registered-and-not-yet-called). |
-| `--help` in one language | The only text a person reads that does not come from a catalog. `clap` builds it from `tauri.conf.json` before anything has loaded a catalog, so it is English wherever it is read. |
+| `--help` in one language | The one thing a person reads that does not come from a catalog. `clap` builds it from the CLI's argument declarations before a catalog can be loaded, so it is English wherever it is read. The drawn view is not affected and is in both languages. |
+| The node's identity | The CLI has somewhere to keep one and nothing to put there. A node is identified by a key generated on its own device, and which kind of key that is belongs to the peer-to-peer layer above. Until then a node is a different participant on every run, which costs nothing while there is no network to be a participant in. |
+| A stored language for the CLI | It reads `LC_ALL`, `LC_MESSAGES` and `LANG` and there is no way to overrule them, because overruling would mean storing a choice. The Settings screen does exactly that for the windowed application; the CLI has no settings and is not getting any. |
+| Packages for the CLI | `task build:cli` produces a binary. The CLI is named for Fedora and Ubuntu, and which packages that becomes — the `.deb` and `.rpm` families the desktop already bundles for — is undecided. |
+| Running the node as a service | `--quiet` is what a service manager runs, and nothing here writes a unit file, a plist or a service entry. Whether shipping those is Almena's job or the operator's is undecided. |
 
 ## Contributing
 

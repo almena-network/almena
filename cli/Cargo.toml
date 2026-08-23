@@ -1,0 +1,32 @@
+[package]
+name = "almena-cli"
+description = "Almena, the node for the computers that have no graphical system to run one from"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+# The binary a person types, which is not the package's name. `almena-app` is the windowed
+# application's, set in `tauri.conf.json`, and the two must not collide.
+name = "almena"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+# The record format, shared with the windowed application because it is one decision and not
+# two. This crate reaching `tauri` is what `task isolation` refuses.
+almena-log = { workspace = true }
+almena-paths = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }
+ctrlc = { workspace = true }
+# Rotation names a file after the moment it happened, and that moment is UTC like every other
+# one this project writes down.
+time = { workspace = true }
