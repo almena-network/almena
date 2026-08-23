@@ -12,7 +12,7 @@
  * (`.agents/rules/visual-identity.md`).
  */
 
-import { House, Network, Settings, type LucideIcon } from "lucide-react";
+import { House, Network, Settings, Sparkles, type LucideIcon } from "lucide-react";
 
 /** A section: an entry in the navigation and the screen behind it. */
 interface Section {
@@ -20,15 +20,24 @@ interface Section {
   id: string;
   /** The icon drawn with its name. */
   icon: LucideIcon;
+  /**
+   * Present on a section a phone does not have at all.
+   *
+   * Not a layout question and not a screen size: the interface has two shapes and both of them
+   * draw every section they are given (`.agents/rules/screen-sizes.md`). This is about the
+   * platform *not having the thing the section is about* — which is a high bar, and today
+   * exactly one section clears it.
+   */
+  desktop?: true;
 }
 
 /**
  * Every section, in order.
  *
- * Three, and five is the limit. Below 600 the navigation is a menu the width of a phone, whose
+ * Four, and five is the limit. Below 600 the navigation is a menu the width of a phone, whose
  * narrowest window is 400 points across; that leaves each entry around 70 at five, which is
- * past the 44 a finger is entitled to and leaves no room for a sixth. Three sit wider than
- * that and are the better for it.
+ * past the 44 a finger is entitled to and leaves no room for a sixth. At four there is room
+ * to spare, and a phone draws three of them.
  *
  * Every one of them has a screen behind it, and that is not a coincidence to be maintained by
  * hand: `SCREENS` in `App.tsx` is typed against this list, so a section added here with nothing
@@ -37,6 +46,12 @@ interface Section {
 export const SECTIONS = [
   { id: "home", icon: House },
   { id: "network", icon: Network },
+  // The agent is a second program this application runs as a child process, and a phone's
+  // operating system offers no way to run one — iOS gives a sandboxed application no way to
+  // start a second program, and Android will not execute a binary out of an application's own
+  // directory. So this is a platform without the thing rather than a person unable to do
+  // something, which is the test `.agents/rules/supported-platforms.md` sets.
+  { id: "ai", icon: Sparkles, desktop: true },
   { id: "settings", icon: Settings },
 ] as const satisfies readonly Section[];
 

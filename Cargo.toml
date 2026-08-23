@@ -10,7 +10,13 @@
 
 [workspace]
 resolver = "3"
-members = ["cli", "crates/almena-log", "crates/almena-paths", "src-tauri"]
+members = [
+  "cli",
+  "crates/almena-agent-protocol",
+  "crates/almena-log",
+  "crates/almena-paths",
+  "src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -41,6 +47,7 @@ todo = "deny"
 # nobody has to grep to find out which version is in use.
 [workspace.dependencies]
 # This repository's own crates. Paths, because they are published with it or not at all.
+almena-agent-protocol = { path = "crates/almena-agent-protocol" }
 almena-log = { path = "crates/almena-log" }
 almena-paths = { path = "crates/almena-paths" }
 
@@ -101,6 +108,10 @@ ctrlc = { version = "3.5.2", features = ["termination"] }
 # promise to agree with Tauri's resolver: this is the crate that resolver calls, at the major
 # version it calls it at. Bumping past Tauri's is what would break that promise.
 dirs = "6"
+
+# The Agent Protocol's encoding. Binary, so that a frame is a frame rather than a line
+# somebody could have written by hand — and small, which matters on a pipe carrying tokens.
+rmp-serde = "1"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

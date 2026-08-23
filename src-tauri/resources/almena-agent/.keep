@@ -1,0 +1,9 @@
+The agent is staged into this directory by `task agent:stage`, and bundled from it.
+
+Nothing here is committed but this file. The agent is built from its own repository — it is
+released on its own schedule and is not a subdirectory of this one — so what lands here
+depends on the machine, and a build with nothing staged is an ordinary state: the application
+builds, runs, and says on its own AI screen that it carries no agent.
+
+That state has to exist and be drawn anyway, so this is not a workaround. What it does leave
+open is a *release* built with nothing staged and nobody noticing, which `TODO.md` carries.

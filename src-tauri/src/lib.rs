@@ -9,6 +9,11 @@
 // geometry, refuses to run twice and can be told at launch to stay out of the way; on a phone
 // the operating system owns all three, so the modules that serve them are marked
 // `#[cfg(desktop)]` and are not in the mobile binary at all.
+//
+// The agent is the same kind of decision for a different reason: it is a second program this
+// application runs as a child, and a phone's operating system offers no way to run one at all.
+#[cfg(desktop)]
+mod agent;
 #[cfg(desktop)]
 mod geometry;
 // Public so that its one question can be asked in a doctest. Nothing outside this crate calls
@@ -128,6 +133,12 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
     // the exit that writes it down.
     let builder = builder.manage(geometry::Seen::default());
 
+    // Everything this application holds about the agent beside it. Nothing is started here:
+    // `setup` below asks only whether this build carries one at all, so that the screen can
+    // say which nothing it is showing without fifty megabytes of Python resident for
+    // everybody who never opens it.
+    let builder = builder.manage(agent::process::Supervisor::new());
+
     // A launch the system started at login puts nothing on the screen. The window is still
     // built and the interface still loads — the tray has to be named from there — it is simply
     // never shown.
@@ -142,6 +153,11 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
         if let Some(window) = window::main(app.handle()) {
             geometry::restore(&window);
         }
+
+        // Whether this build carries an agent at all, asked once and nothing started. It is
+        // what lets the screen say which nothing it is showing.
+        app.state::<agent::process::Supervisor>()
+            .look_for_one(app.handle());
 
         if launch::starts_hidden() {
             info!("started_hidden");
@@ -219,7 +235,11 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
         open_at_login::opens_at_login,
         open_at_login::set_opens_at_login,
         preferences::preferences,
-        preferences::set_preferences
+        preferences::set_preferences,
+        agent::commands::agent_status,
+        agent::commands::agent_ask,
+        agent::commands::agent_cancel,
+        agent::commands::agent_stop
     ]);
     #[cfg(mobile)]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -259,7 +279,13 @@ pub fn run() {
                 // instead, which the single-instance plugin turns into the very same call.
                 #[cfg(desktop)]
                 match event {
-                    tauri::RunEvent::Exit => geometry::save(handle),
+                    tauri::RunEvent::Exit => {
+                        // Before the geometry, because ending the agent means closing its
+                        // input and waiting a moment for it to go — and a child left running
+                        // past this point is one nothing will ever ask to stop again.
+                        agent::process::end(handle);
+                        geometry::save(handle);
+                    }
                     #[cfg(target_os = "macos")]
                     tauri::RunEvent::Reopen { .. } => window::show_main(handle),
                     _ => {}

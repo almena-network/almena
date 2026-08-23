@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import Ai from "@/features/ai/Ai";
 import Home from "@/features/home/Home";
 import Network from "@/features/network/Network";
 import Settings from "@/features/settings/Settings";
@@ -36,6 +37,7 @@ import "@/styles/index.css";
 const SCREENS: Record<SectionId, () => React.ReactElement> = {
   home: Home,
   network: Network,
+  ai: Ai,
   settings: Settings,
 };
 

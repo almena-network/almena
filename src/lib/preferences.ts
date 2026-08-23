@@ -1,11 +1,12 @@
 /**
  * What a person chose, and what it takes to keep it.
  *
- * Three choices — the palette, the identity colour and the language — held in one file by the
- * Rust side, which is where a file this application writes belongs
- * (`.agents/rules/data-storage-locations.md`). Nothing here knows what any of them *mean*: this
- * file is the store, and the vocabularies live where they are already written down —
- * `@/lib/appearance` for the two the interface is drawn from, `@/i18n` for the language.
+ * Four choices — the palette, the identity colour, the language, and which model the agent is
+ * asked for — held in one file by the Rust side, which is where a file this application writes
+ * belongs (`.agents/rules/data-storage-locations.md`). Nothing here knows what any of them
+ * *mean*: this file is the store, and the vocabularies live where they are already written
+ * down — `@/lib/appearance` for the two the interface is drawn from, `@/i18n` for the
+ * language, `@/lib/models` for the model.
  *
  * The choices are read **once**, before anything is drawn, and held here afterwards. That is
  * what lets a screen ask what the palette is without waiting: a settings screen whose controls
@@ -15,7 +16,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /**
- * The three choices, as they are stored.
+ * The four choices, as they are stored.
  *
  * Every one of them may be `null`, and `null` is not a default written down: it is nobody
  * having chosen. What the absence means is the reader's — the operating system's palette, the
@@ -29,10 +30,23 @@ export interface Preferences {
   accent: string | null;
   /** The language a person asked for, or `null` while they have asked for none. */
   language: string | null;
+  /**
+   * The model the agent is asked for, or `null` while nobody has chosen one.
+   *
+   * `null` is not a default written down here either: it means the agent is told nothing and
+   * uses its own, which is a value this side deliberately does not know — see
+   * `@/lib/models`, which holds the list this side *can* name.
+   */
+  model: string | null;
 }
 
 /** Nobody has chosen anything. What a first launch has, and what a failed read falls back to. */
-const NOTHING_CHOSEN: Preferences = { theme: null, accent: null, language: null };
+const NOTHING_CHOSEN: Preferences = {
+  theme: null,
+  accent: null,
+  language: null,
+  model: null,
+};
 
 /** What was read the last time anybody asked the Rust side. */
 let held: Preferences = NOTHING_CHOSEN;

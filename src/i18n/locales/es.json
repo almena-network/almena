@@ -16,6 +16,7 @@
   "section": {
     "home": "Inicio",
     "network": "Red",
+    "ai": "IA",
     "settings": "Ajustes"
   },
   "shell": {
@@ -74,6 +75,55 @@
       "idle": "En reposo"
     }
   },
+  "ai": {
+    "body": "Un agente se ejecuta junto a esta aplicación, en este ordenador. Lo que escribes le llega por una tubería y por nada más: es un programa aparte, no se le entrega nada sobre ti, y el único host con el que habla es el servidor de modelo al que se le apuntó.",
+    "heading": "Pregunta al agente.",
+    "state": {
+      "label": "Agente",
+      "notBundled": "No está en esta compilación",
+      "notStarted": "Sin arrancar",
+      "willNotStart": "No arranca",
+      "running": "En marcha",
+      "stopped": "Detenido"
+    },
+    "empty": {
+      "notBundledTitle": "Esta compilación no lleva agente.",
+      "notBundled": "El agente se construye desde su propio repositorio y se incorpora al paquete, y esta compilación se hizo sin ninguno. Aquí no hay nada roto: sencillamente no hay programa al que preguntar.",
+      "notStartedTitle": "Todavía no has preguntado nada.",
+      "notStarted": "El agente no se ha arrancado. Arranca cuando le preguntas algo, lo que tarda un momento la primera vez y nada las siguientes.",
+      "willNotStartTitle": "El agente no arranca.",
+      "willNotStart": "Está en esta compilación y no ha querido ejecutarse. Lo que dijo al caerse está en los registros, que es el único sitio donde podía decir algo.",
+      "stoppedTitle": "El agente se detuvo.",
+      "stopped": "Estaba en marcha y ya no lo está. Preguntar otra cosa arranca uno nuevo."
+    },
+    "conversation": {
+      "person": "Tú",
+      "agent": "Agente",
+      "working": "Trabajando"
+    },
+    "stage": {
+      "gathering": "Leyendo lo que se le entregó",
+      "thinking": "Preguntando al modelo",
+      "shaping": "Dando forma a la respuesta",
+      "calling": "Esperando a esta aplicación"
+    },
+    "composer": {
+      "label": "Qué preguntar",
+      "placeholder": "Pregunta algo al agente",
+      "send": "Preguntar",
+      "stop": "Parar"
+    },
+    "error": {
+      "heading": "Eso no ha funcionado.",
+      "agent_will_not_start": "El agente no arrancó, así que no había a quién preguntar.",
+      "agent_stopped": "El agente se detuvo a mitad, así que la respuesta nunca terminó.",
+      "run_already_in_flight": "El agente ya está respondiendo algo. Hace una cosa cada vez.",
+      "model_unreachable": "Nada respondió en la dirección del modelo. Almena no ejecuta ningún modelo: tiene que haber uno sirviendo en este ordenador para que el agente lo alcance.",
+      "model_unknown": "Esa dirección responde, y no sirve el modelo elegido en Ajustes.",
+      "resource_unknown": "Se le pidió al agente algo que no tiene.",
+      "unknown": "El agente se negó, y esta compilación no tiene palabras para el motivo que dio. Queda escrito en los registros tal y como llegó."
+    }
+  },
   "settings": {
     "appearance": {
       "heading": "Apariencia.",
@@ -103,6 +153,16 @@
       "body": "El sistema abre Almena al iniciar sesión, sin ventana: espera en la bandeja hasta que la pidas. Esto solo decide quién la abre — Almena vive en la bandeja siempre que está en marcha, la haya abierto el sistema o tú.",
       "label": "Abrir Almena al iniciar sesión",
       "refused": "El sistema no aceptó el cambio, así que el ajuste queda como estaba. Una negativa así se deshace en los ajustes del propio sistema."
+    },
+    "model": {
+      "heading": "Modelo.",
+      "body": "Qué modelo se le pide al agente. Almena no ejecuta ningún modelo ni sale a buscar uno: le pregunta a lo que esté sirviendo en este ordenador, en la dirección con la que se construyó el agente. Nada de aquí le ha preguntado a ese servidor qué tiene de verdad: esta es la lista que Almena sabe pedir, no la que este ordenador puede responder.",
+      "label": "Modelo que pide el agente",
+      "notChosen": "El valor por defecto del agente",
+      "inForce": "En marcha ahora: {{model}}",
+      "inForceNone": "En marcha ahora: nada. El agente arranca cuando le preguntas algo por primera vez.",
+      "restartHeading": "Esto se aplica la próxima vez que arranque el agente.",
+      "restart": "Reiniciar el agente"
     }
   },
   "cli": {

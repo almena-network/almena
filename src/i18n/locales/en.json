@@ -16,6 +16,7 @@
   "section": {
     "home": "Home",
     "network": "Network",
+    "ai": "AI",
     "settings": "Settings"
   },
   "shell": {
@@ -74,6 +75,55 @@
       "idle": "Idle"
     }
   },
+  "ai": {
+    "body": "An agent runs beside this application, on this computer. What you type reaches it over a pipe and nothing else: it is a separate program, it is handed nothing about you, and the only host it talks to is the model server it was pointed at.",
+    "heading": "Ask the agent.",
+    "state": {
+      "label": "Agent",
+      "notBundled": "Not in this build",
+      "notStarted": "Not started",
+      "willNotStart": "Will not start",
+      "running": "Running",
+      "stopped": "Stopped"
+    },
+    "empty": {
+      "notBundledTitle": "No agent in this build.",
+      "notBundled": "The agent is built from its own repository and staged into the bundle, and this build was made without one. Nothing here is broken — there is simply no program to ask.",
+      "notStartedTitle": "Nothing asked yet.",
+      "notStarted": "The agent has not been started. It starts when you ask it something, which takes a moment the first time and nothing after that.",
+      "willNotStartTitle": "The agent will not start.",
+      "willNotStart": "It is in this build and it would not run. What it said on the way down is in the records, which is the only place it could say anything at all.",
+      "stoppedTitle": "The agent stopped.",
+      "stopped": "It was running and it is not now. Asking something else starts a fresh one."
+    },
+    "conversation": {
+      "person": "You",
+      "agent": "Agent",
+      "working": "Working"
+    },
+    "stage": {
+      "gathering": "Reading what it was handed",
+      "thinking": "Asking the model",
+      "shaping": "Shaping the answer",
+      "calling": "Waiting on this application"
+    },
+    "composer": {
+      "label": "What to ask",
+      "placeholder": "Ask the agent something",
+      "send": "Ask",
+      "stop": "Stop"
+    },
+    "error": {
+      "heading": "That did not work.",
+      "agent_will_not_start": "The agent would not start, so there was nothing to ask.",
+      "agent_stopped": "The agent stopped part-way, so the answer never finished.",
+      "run_already_in_flight": "The agent is already answering something. It does one thing at a time.",
+      "model_unreachable": "Nothing answered at the model's address. Almena does not run a model — one has to be serving on this computer for the agent to reach.",
+      "model_unknown": "That address is serving, and it does not serve the model chosen in Settings.",
+      "resource_unknown": "The agent was asked for something it does not hold.",
+      "unknown": "The agent refused, and this build has no words for the reason it gave. It is written down in the records exactly as it arrived."
+    }
+  },
   "settings": {
     "appearance": {
       "heading": "Appearance.",
@@ -103,6 +153,16 @@
       "body": "The system opens Almena when you log in, with no window: it waits in the tray until you ask for it. This is only about who starts it — Almena runs in the tray whenever it is running, whether it was opened at login or by you.",
       "label": "Open Almena at login",
       "refused": "The system did not accept the change, so the setting stays as it was. Its own settings are where a refusal like this is undone."
+    },
+    "model": {
+      "heading": "Model.",
+      "body": "Which model the agent is asked for. Almena runs no model itself and does not go looking for one: it asks whatever is serving on this computer, at the address the agent was built with. Nothing here has asked that server what it actually holds — this is the list Almena knows how to ask for, not the list this computer can answer.",
+      "label": "Model the agent asks for",
+      "notChosen": "The agent's own default",
+      "inForce": "Running now: {{model}}",
+      "inForceNone": "Running now: nothing. The agent starts when you first ask it something.",
+      "restartHeading": "This applies the next time the agent starts.",
+      "restart": "Restart the agent"
     }
   },
   "cli": {

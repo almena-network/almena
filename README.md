@@ -67,7 +67,13 @@ above carries its own, for macOS, Windows and Linux alike.
 To reach the network, rather than only to build this application, the device also needs
 **IPv6 connectivity**. Almena is an IPv6 network and there is no second address family.
 
-That is all the desktop build needs. The mobile builds add:
+That is all the desktop build needs **to build itself**. To build it with an agent inside it,
+the agent's own requirements apply too — Python 3.14 and `uv`, listed in
+[its repository](https://github.com/almena-network/agent). Nothing here needs them: a build with
+no agent staged carries none and says so on its own screen, and `task agent:build` is the only
+thing that asks for them.
+
+The mobile builds add:
 
 - **Android**, on any host: JDK 17, Android Studio with the SDK and the NDK. `ANDROID_HOME`
   and `NDK_HOME` have to be set — `task init:android` refuses to run without them and says so.
@@ -98,8 +104,9 @@ The full set, which `task` on its own prints too:
 | `task catalogs` | Checks that every translation catalog holds the same keys. |
 | `task check` | Checks the Rust formatting, runs clippy over the workspace, type-checks the frontend, and runs `task catalogs` and `task isolation`. |
 | `task check:mobile` | Type-checks the application for the mobile targets. `task check` does not — it only ever compiles for this machine. |
-| `task isolation` | Asserts that the two programs stay out of each other's dependency graph, and that the two crates beside them reach no framework. Four assertions — see below. |
+| `task isolation` | Asserts that the two programs stay out of each other's dependency graph, and that the three crates beside them reach no framework. Six assertions — see below. |
 | `task test` | Runs the test suites across the workspace. Rust only today — see below. |
+| `task test:agent` | Drives the staged agent over real pipes, checking that the two halves of the Agent Protocol actually meet. Not part of `task test`: it needs an artifact from another repository, and a test that passed quietly without one would be green on every machine that had nothing to test with. |
 | `task format` | Formats the Rust source with `cargo fmt`. |
 | `task icons` | Regenerates every icon from `assets/branding`. |
 | `task devices` | Lists connected Android and iOS devices. |
@@ -113,9 +120,14 @@ The full set, which `task` on its own prints too:
 | `task build:cli` | Builds the node for this computer. One binary, at `target/release/almena`, and no bundle. |
 | `task build:android`, `task build:ios` | Builds the mobile packages. |
 | `task deploy:android`, `task deploy:ios` | Chooses a destination, builds for it, and installs it there. |
+| `task agent:build` | Builds the agent from its own repository, so that there is something to stage. `AGENT_REPO` says where it is; `../agent` by default. |
+| `task agent:stage` | Copies a built agent into the bundle's resources. Says which of the two things happened — staged, or nothing found — and a build with nothing staged is an ordinary state. |
+| `task agent:clean` | Takes the staged agent back out. |
 | `task clean` | Removes build artifacts. The generated native projects are kept. |
 
-Every task installs dependencies first, so a fresh checkout needs only `task dev`.
+Every task installs dependencies first, so a fresh checkout needs only `task dev`. That includes
+staging the agent: `task dev` and `task build` both run `task agent:stage`, which copies one in
+if there is one built and says so if there is not.
 
 With no suffix, `dev` and `build` target the computer you are sitting at. Mobile is always
 named explicitly — `dev:android`, `build:ios`, and so on — because building for a phone needs
@@ -149,8 +161,9 @@ cli/                  the CLI, package `almena-cli`, binary `almena`
 src-tauri/            the windowed application, package `almena-app`
 src/                  its frontend
 crates/
-  almena-log/         the record format both programs write
-  almena-paths/       where a program with no Tauri keeps things
+  almena-log/            the record format both programs write
+  almena-paths/          where a program with no Tauri keeps things
+  almena-agent-protocol/ what the application and an agent say to each other
 ```
 
 **A directory at the root is a program; `crates/` holds the libraries they are built from.**
@@ -164,21 +177,29 @@ so two of them cannot end up on two versions of the same crate.
 
 **Each crate is a decision, not a drawer.** `almena-log` owns the shape of a record — the line,
 the sizes a log is bounded by, the names its files take. `almena-paths` owns where a program
-keeps things, for the programs Tauri's resolver does not serve. Neither exists to share code:
+keeps things, for the programs Tauri's resolver does not serve. `almena-agent-protocol` owns
+what this application and an agent may say to each other — a message set with a version number,
+framed in MessagePack, naming no graph, no model and no library. Its other half is in another
+repository, in another language, which is the argument for it being a crate at all: held inside
+the application it would become a private detail of the one program that speaks it today, and
+the point of the protocol is that the program at the other end can be replaced without a word
+here changing. None of the three exists to share code:
 `almena-app` does not even link `almena-paths`, because it keeps Tauri's resolver, which also
 serves iOS and Android. What the two programs share is the **answer** — held to by
 `src-tauri/tests/paths_agree_with_tauri.rs`, which asks both resolvers for every purpose and
 fails if any pair differs.
 
-`task isolation` makes four assertions, and each is a way one binary could quietly grow the
-other's weight:
+`task isolation` makes six assertions, and each is a way one binary could quietly grow the
+other's weight, or one contract quietly stop being one:
 
-| | Must not reach |
-| --- | --- |
-| `almena-log` | `tauri` |
-| `almena-paths` | `tauri` |
-| `almena-cli` | `tauri` |
-| `almena-app` | `ratatui` |
+| | Must not reach | Because |
+| --- | --- | --- |
+| `almena-log` | `tauri` | The record format must know about no framework |
+| `almena-paths` | `tauri` | The resolver exists for the programs Tauri does not serve |
+| `almena-cli` | `tauri` | The node must not link a webview it never draws in |
+| `almena-app` | `ratatui` | The windowed application must not link a terminal renderer |
+| `almena-agent-protocol` | `tauri` | A wire contract must reach no framework, or no other runtime could speak it |
+| `almena-cli` | `almena-agent-protocol` | A node in a rack has no agent beside it to speak to |
 
 `cargo tree -p <crate> -i <package>` fails when the package is not in that crate's graph, so
 success is the failure and silence is the pass. A single careless `[dependencies]` line is all
@@ -361,6 +382,117 @@ that arrives before anybody has asked for anything is worse than one that arrive
 platform's rule rather than this project's: a build started from `task dev` there shows
 nothing, and the same binary installed shows what the other four platforms show.
 
+## The agent it runs beside itself
+
+On a computer, Almena starts a second program: **`almena-agent`**, an AI agent written in
+Python, built from [its own repository](https://github.com/almena-network/agent) and bundled
+inside this application. The AI section is where you talk to it.
+
+**One application, one process a person deals with.** The agent is spawned with
+`std::process::Command`, given three pipes, and ended when Almena ends. Nothing is installed
+separately, no port is opened, no local server is involved, and there is no daemon left behind:
+if Almena is killed outright, the agent reads the end of its input and stops on its own. The
+pipe *is* the liveness signal, which is why there is no PID file anywhere.
+
+**Desktop only.** A phone's operating system offers an application no way to run a second
+program at all — iOS gives a sandboxed application no `fork`/`exec`, Android will not execute a
+binary out of an application's own directory — so the section is not listed there rather than
+listed and empty. That is a platform without the thing, not a person unable to do something;
+the argument is in
+[supported-platforms.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/supported-platforms.md).
+
+### The Agent Protocol
+
+What crosses the pipe is `almena-agent-protocol`, and it is the whole of what either side knows
+about the other. **Nothing in it names a graph, a model or a library**, so the program at the
+far end could be rewritten in Rust or compiled to WASM without a word of this application
+changing.
+
+One message is one frame:
+
+```
+┌──────────────────────────┬────────────────────────────────┐
+│ u32, big-endian, 4 bytes │ one MessagePack map, N bytes   │
+└──────────────────────────┴────────────────────────────────┘
+```
+
+The prefix counts the payload and not itself. Newlines cannot frame a binary encoding, and the
+prefix buys three things besides: a decoder is handed a complete slice and needs no stream, an
+allocation is bounded before anything is parsed, and a stream that has lost its place can be
+diagnosed without a MessagePack parser in hand. A frame over 8 MiB is refused, and there is no
+recovery from one — skipping N bytes would mean trusting the number just refused.
+
+Every frame carries `contract_version`, on **every** frame rather than on a handshake, and a
+frame from a version this build does not speak is refused as exactly that.
+
+| The application says | Carrying |
+| --- | --- |
+| `run` | `id`, `intent` (`chat` or `propose`), and what the run is given to work with |
+| `cancel` | `id` |
+| `tool_result` | `id`, `call_id`, and what came of a call — or that the application declined |
+
+| The agent says | When |
+| --- | --- |
+| `ready` | Once, unprompted, at startup. Carries what it calls itself and the model it was started with |
+| `started` | The run was admitted. Always first |
+| `progress` | A stage began or moved. Counts are `null` where nothing counted them, never `0` |
+| `token` | One piece of a streamed answer |
+| `tool_call` | The run is asking the application to act. Nothing can produce one yet — see below |
+| `proposal` | The one answer to a `propose` |
+| `completed` / `cancelled` / `failed` | Terminal, and exactly one of them per run |
+
+**Exactly one terminal event per run, and nothing follows it.** That is what lets this side
+release everything it holds for a run the moment one arrives, with no timer and no bookkeeping.
+
+`cancelled` means *no further event is coming*. It does **not** withdraw the tokens that already
+arrived, and the screen keeps them: an answer somebody has already read is not something to take
+off the screen.
+
+**One run at a time.** The wire could carry two — every message is addressed — and this build
+refuses a second, here, before anything is written to the pipe. There is one model connection
+and one conversation in front of one person. It is a policy of the two programs and not a
+property of the contract, which is what would let a runtime that can serve two arrive later
+without the wire changing.
+
+### Who executes, and who only asks
+
+`tool_call` is in the contract and **nothing can produce one**: the set of capabilities is a
+closed enum with no members, so every name is refused before it can be encoded. That is the
+design rather than an omission. What is being written down is the decision — **the agent asks
+and the application executes** — because that is the expensive thing to change later, and the
+first real capability is a change on both sides in one go.
+
+It is kept firmly apart from a `proposal`, which is prose a model wrote and nothing acts on.
+Merging the two is the attack the agent's own `SECURITY.md` names first, and a test asserts the
+two shapes have nothing in common.
+
+### The model
+
+**Almena runs no model and downloads none.** The agent asks whatever is serving on this computer
+at an OpenAI-compatible address — LM Studio, Ollama, llama.cpp's server, vLLM all serve one —
+and Settings chooses which model it asks for. That list is what Almena knows how to **ask for**;
+nothing has asked the server what it actually holds, and the card says so. A name that is not
+served comes back as `model_unknown`, which is the agent telling *that model is not here* apart
+from *the agent is broken*.
+
+The model a run uses is fixed when the agent starts, so changing it applies the next time one
+starts — and Settings offers the restart rather than leaving that as a sentence to obey.
+
+### Building with one
+
+The agent is a separate repository, so a checkout of this one alone has nothing to stage — and
+that is an ordinary state: the application builds, runs, and says on its own screen that it
+carries no agent.
+
+```bash
+task agent:build     # builds it in ../agent, or point AGENT_REPO somewhere else
+task agent:stage     # copies it to src-tauri/resources/almena-agent/
+task test:agent      # drives the staged agent over real pipes, both halves of the contract
+```
+
+`task dev` and `task build` stage it themselves. What it adds to every desktop artifact is about
+50 MB.
+
 ## Registered, and not yet called
 
 Two plugins are compiled into the desktop binary that nothing in this application reaches yet.
@@ -395,14 +527,25 @@ The frontend bindings for the two — `@tauri-apps/plugin-dialog` and
 caller, which is one `pnpm add` in the change that has one; a package nothing imports is a
 dependency nobody is reading.
 
+**The agent added no third entry to this list, and that is worth saying rather than leaving to
+be noticed.** Running a second program is exactly the kind of thing that usually arrives as a
+plugin — `tauri-plugin-shell` has a sidecar mechanism — and it was not used. Its mechanism
+copies one file renamed for the target triple, and the agent is a directory whose executable is
+inert without the tree beside it; taking that route would have meant a single-file build, which
+its own repository measured at twelve seconds of startup every run. So the agent is spawned with
+`std::process::Command` and two threads. **No plugin is registered for it, no capability is
+granted, and there is no path from the webview to "run a program" anywhere in this
+application.**
+
 ## Files kept on your computer
 
 | File | What it is | Where |
 | --- | --- | --- |
-| `almena-app.log` | This program's records. Rotated at 10 MiB, ten kept. Deleting the directory while the application is closed costs nothing but the history. | macOS: `~/Library/Logs/<id>/`<br>Windows: `%LOCALAPPDATA%\<id>\logs\`<br>Linux: `~/.local/share/<id>/logs/` |
+| `almena-app.log` | This program's records, **and the agent's**: the agent writes to a pipe and this application writes the record, under a target beginning `almena_agent::` so one file reads as two programs. Nothing that crossed the wire is written down — no token, no turn, no argument. Rotated at 10 MiB, ten kept. Deleting the directory while the application is closed costs nothing but the history. | macOS: `~/Library/Logs/<id>/`<br>Windows: `%LOCALAPPDATA%\<id>\logs\`<br>Linux: `~/.local/share/<id>/logs/` |
 | `window-state.json` | Where the window was and how big, in pixels. Written by the window-state plugin, which fixes its own location. | The configuration directory for `<id>` |
-| `preferences.json` | The palette, the identity colour and the language, whenever one of them has been chosen. Absent until then, and deleting it puts every one of them back to what the device asks for. | The configuration directory for `<id>` |
+| `preferences.json` | The palette, the identity colour, the language and the model the agent is asked for, whenever one of them has been chosen. Absent until then, and deleting it puts every one of them back to its default — which for the model means the agent's own, since this side deliberately does not know what that is. | The configuration directory for `<id>` |
 | `window.json` | The same window's size, in points rather than in pixels, which is what makes it right on a second display. State rather than configuration, so it sits with the log; deleting it costs the remembered size and nothing else. | Beside `almena-app.log` |
+| `agent/` (a directory) | Empty, and it stays empty. The agent is started with it as its working directory and as the place it may read from, because the agent's own default for that is a *relative* path that would resolve somewhere absurd from an installed application. This application hands the agent nothing and names no resource, so nothing is ever written into it. | The cache directory for `<id>` |
 | The login entry | Written only while [*open at login*](#open-at-login-which-is-not-the-same-as-running-in-the-background) is on, and removed when it is turned off. Its location is the system's rather than ours, as it must be: an entry is only a login entry where the system looks for one. | macOS: no file — `SMAppService` keeps its own register<br>Linux: `~/.config/autostart/Almena.desktop`<br>Windows: a value under `HKCU\…\CurrentVersion\Run`, not a file |
 
 `<id>` is the bundle identifier, and it is still the scaffold's `network.almena.desktop` — see
@@ -449,12 +592,13 @@ Those are the same buttons in the same order and the same place in the document.
 cleared so that `sm:` and `md:` do not exist here. There is no hook, no `matchMedia` and no
 component that asks how wide it is.
 
-Three sections, and all three have a screen now.
+Four sections, and all four have a screen — three of them on a phone, because a phone cannot run
+the agent the fourth is about.
 
 **Every element on those screens comes from [shadcn/ui](https://ui.shadcn.com)**, vendored into
 `src/components/ui/` by `pnpm dlx shadcn@latest add <name>` and left as the registry wrote it:
 `alert`, `badge`, `button`, `card`, `empty`, `field`, `item`, `label`, `select`, `separator`,
-`spinner`, `switch`, `toggle` and `toggle-group`. A screen imports what it needs and never
+`spinner`, `switch`, `textarea`, `toggle` and `toggle-group`. A screen imports what it needs and never
 writes a control of its own, which is the only arrangement in which changing how a button looks
 changes how every button looks. One of the fourteen is drawn by nothing: `toggle` is where
 `toggle-group` gets its class list, and the registry ships the two together.
@@ -600,6 +744,12 @@ Stated rather than discovered by running something and being surprised.
 | A stored language for the CLI | It reads `LC_ALL`, `LC_MESSAGES` and `LANG` and there is no way to overrule them, because overruling would mean storing a choice. The Settings screen does exactly that for the windowed application; the CLI has no settings and is not getting any. |
 | Packages for the CLI | `task build:cli` produces a binary. The CLI is named for Fedora and Ubuntu, and which packages that becomes — the `.deb` and `.rpm` families the desktop already bundles for — is undecided. |
 | Running the node as a service | `--quiet` is what a service manager runs, and nothing here writes a unit file, a plist or a service entry. Whether shipping those is Almena's job or the operator's is undecided. |
+| Signing an agent on macOS | A PyInstaller tree is hundreds of Mach-O objects under `Contents/Resources/`, and notarization wants every one signed with a Developer ID and a secure timestamp, inside-out, before Tauri bundles — plus `disable-library-validation` for a hardened runtime loading a tree of `.so` files. No Apple Developer identity is decided anywhere in this project. Unsigned local builds work; a downloaded, notarized one carrying an agent is unresolved. |
+| Where an agent build comes from | `task agent:stage` copies from a directory somebody points it at, because the agent is a separate repository. Fetching a published one would need a host that serves releases and a key that signs them — the same undecided pair as the updater's. A build with nothing staged says so on its own screen; what is still open is a *release* built that way and nobody noticing. |
+| Which models are offered | A fixed list of names Almena knows how to ask for, with no discovery behind it: nothing has asked the model server what it serves. The Settings card says so, and `model_unknown` is what comes back for a name that is not there. |
+| Handing the agent anything to read | The application hands it **nothing** and names no resource — it is pointed at an empty directory and asked questions with no sources. What should be handed over, and how somebody would choose, is not decided. |
+| A capability the agent could ask for | `tool_call` is in the contract and nothing can produce one: the set of capabilities is empty, so every name is refused. The decision recorded is who executes and who asks; the first real capability is a change on both sides at once. |
+| Reaching a hosted model | The agent's provider abstraction is the base URL, so a hosted provider is already reachable in principle — what is missing is a credential, and no way to hand it one exists. Where an application governed by Anonymity and No personal data would keep a secret is a question of its own, unanswered. |
 
 ## Contributing
 

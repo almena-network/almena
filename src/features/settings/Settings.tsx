@@ -1,11 +1,12 @@
 /**
  * The Settings screen: what a person can change about this application.
  *
- * Three cards, and one of them is not on every device. How the interface is drawn and which
- * language it speaks are questions any device can answer; whether the system opens Almena at
- * login belongs to a computer, and a phone's operating system decides for itself when an
- * application may run (`.agents/rules/supported-platforms.md`). A phone without that card is
- * not a person unable to do something — it is a platform with no such thing to do.
+ * Four cards, and two of them are not on every device. How the interface is drawn and which
+ * language it speaks are questions any device can answer. The other two belong to a computer:
+ * whether the system opens Almena at login is a computer's to decide, and which model the
+ * agent is asked for is a setting for a program a phone cannot run at all
+ * (`.agents/rules/supported-platforms.md`). A phone without either card is not a person unable
+ * to do something — it is a platform with no such thing to do.
  *
  * Which of the two this device is has to be asked of the Rust side, and until the answer is
  * back the card is not drawn. That is a card arriving rather than a screen claiming there is
@@ -20,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import CardGrid from "@/components/CardGrid";
 import Appearance from "@/features/settings/Appearance";
 import Language from "@/features/settings/Language";
+import Model from "@/features/settings/Model";
 import OpenAtLogin from "@/features/settings/OpenAtLogin";
 import { isDesktop } from "@/lib/platform";
 
@@ -39,6 +41,7 @@ function Settings() {
       <CardGrid>
         <Appearance />
         <Language />
+        {desktop === true && <Model />}
         {desktop === true && <OpenAtLogin />}
       </CardGrid>
     </div>

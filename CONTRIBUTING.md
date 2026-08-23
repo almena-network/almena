@@ -195,11 +195,26 @@ isolation` fails a build in which any of these becomes false:
 | `almena-paths` | `tauri` |
 | `almena-cli` | `tauri` |
 | `almena-app` | `ratatui` |
+| `almena-agent-protocol` | `tauri` |
+| `almena-cli` | `almena-agent-protocol` |
 
-The two crates hold decisions — the shape of a record, and where a program keeps things — which
-is why they are crates at all, and a framework in either one is how that gets lost. The two
-programs are the other half: a node that linked a webview it never draws in would take minutes
-longer to build and tens of megabytes more to ship, and nothing but this check would say so.
+The three crates hold decisions — the shape of a record, where a program keeps things, and what
+this application and an agent may say to each other — which is why they are crates at all, and a
+framework in any of them is how that gets lost. It matters most for the third: its other half is
+in another repository and another language, and a contract that had grown a `tauri::ipc::Channel`
+in one of its types is one no other runtime could ever link. The two programs are the other
+half: a node that linked a webview it never draws in would take minutes longer to build and tens
+of megabytes more to ship, and nothing but this check would say so.
+
+**The agent is a second program, not a library.** It is built from
+[its own repository](https://github.com/almena-network/agent), staged with `task agent:stage`
+and bundled; a checkout of this repository alone has none, and a build with nothing staged is an
+ordinary state — the application runs and says on its own AI screen that it carries no agent. If
+your change touches the protocol, run `task test:agent`, which drives the staged agent over real
+pipes: it is not part of `task test`, because a test that passed quietly without an artifact
+from another repository would be green on every machine that had nothing to test with. A change
+to the protocol is a change to **both** repositories, including the golden frames each holds a
+copy of.
 
 **Two frameworks, and no third.** Tauri 2 for the windowed application, `ratatui` for the
 terminal, and that is the whole list. The second one is not an accident of what was reached for

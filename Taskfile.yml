@@ -8,6 +8,12 @@ vars:
   # src-tauri/src/launch.rs; the node's surface is in cli/src/arguments.rs. Computers only: a
   # phone launches nothing from a command line.
   ARGS: ""
+  # Where the agent's own repository is, for `task agent:build`. It is a repository of its own
+  # — released on its own schedule, not a subdirectory of this one — so a checkout of this
+  # repository alone will not have it, and that is an accepted state rather than a failure.
+  AGENT_REPO: "../agent"
+  # The built agent to bundle. What `task build` in that repository leaves behind.
+  AGENT_DIST: "../agent/dist/almena-agent"
 
 tasks:
   # Announce the project and the operation about to run. Every task calls it as
@@ -150,6 +156,45 @@ tasks:
           exit 1
         fi
 
+  agent:build:
+    desc: Build the agent from its own repository, so that there is something to stage
+    preconditions:
+      - sh: test -d {{.AGENT_REPO}}
+        msg: |
+          No agent at {{.AGENT_REPO}}. It is a repository of its own:
+          git clone https://github.com/almena-network/agent
+          Or point this at one: task agent:build AGENT_REPO=/path/to/agent
+    cmds:
+      - task: banner
+        vars: { OPERATION: agent }
+      - task -d {{.AGENT_REPO}} build
+
+  agent:stage:
+    desc: Put the built agent where the bundle will pick it up, if there is one to put
+    cmds:
+      # The directory always exists, with or without an agent in it. A contributor who cloned
+      # this repository alone still gets a bundle that builds, and its AI screen reports
+      # honestly that this build carries no agent — a state that has to exist and be drawn
+      # whatever happens, so nothing is being worked around here.
+      - task: agent:clean
+      - |
+        if [ -d "{{.AGENT_DIST}}" ]; then
+          cp -R "{{.AGENT_DIST}}/." src-tauri/resources/almena-agent/
+          echo "staged the agent from {{.AGENT_DIST}}"
+        else
+          echo "no agent at {{.AGENT_DIST}} — this build will carry none, and will say so"
+        fi
+
+  agent:clean:
+    desc: Take the staged agent back out, keeping the directory the bundle expects
+    cmds:
+      # Everything but the note, which is committed: the bundle names this directory, so it
+      # has to exist in a fresh checkout with no agent built anywhere.
+      - |
+        mkdir -p src-tauri/resources/almena-agent
+        find src-tauri/resources/almena-agent -mindepth 1 ! -name .keep -maxdepth 1 \
+          -exec rm -rf {} +
+
   isolation:
     desc: Check that the two programs stay out of each other's dependency graph
     cmds:
@@ -181,8 +226,22 @@ tasks:
           "the node must not link a webview it never draws in"
         assert_cannot_reach almena-app ratatui \
           "the windowed application must not link a terminal renderer"
+        assert_cannot_reach almena-agent-protocol tauri \
+          "a wire contract must reach no framework, or no other runtime could speak it"
+        assert_cannot_reach almena-cli almena-agent-protocol \
+          "a node in a rack has no agent beside it to speak to"
 
         exit "$failed"
+
+  test:agent:
+    desc: Drive the staged agent over real pipes, to check the two halves of the contract meet
+    cmds:
+      - task: banner
+        vars: { OPERATION: agent }
+      # Ignored by `task test`, and run on purpose here: it needs an artifact from another
+      # repository, and a test that passed quietly when it could not find one would be green
+      # on every machine that had nothing to test with.
+      - cargo test -p almena-app --test speaks_to_the_agent -- --ignored --test-threads=1
 
   test:
     desc: Run the test suites
@@ -287,7 +346,7 @@ tasks:
   dev:
     aliases: [dev:desktop]
     desc: 'Run on this computer, with hot reload. ARGS="--hidden" gives it a command line'
-    deps: [install]
+    deps: [install, agent:stage]
     cmds:
       - task: banner
         vars: { OPERATION: dev }
@@ -339,18 +398,18 @@ tasks:
   build:
     aliases: [build:desktop]
     desc: Build the desktop installer for this host's operating system
-    deps: [install, catalogs]
+    deps: [install, catalogs, agent:stage]
     cmds:
       - task: banner
         vars: { OPERATION: build }
       # Leaves the installers under target/release/bundle/ and the binary itself at
-      # target/release/almena-app, which is what to run to see the command line answer:
-      # `./target/release/almena-app --help`.
+      # target/release/almena-app. Whatever `agent:stage` put in place is bundled with it;
+      # where it put nothing, the application says so on its AI screen rather than pretending.
       - pnpm tauri build
 
   build:debug:
     desc: Build the desktop bundle unoptimized, so that it still says it is a development build
-    deps: [install, catalogs]
+    deps: [install, catalogs, agent:stage]
     cmds:
       - task: banner
         vars: { OPERATION: "build:debug" }
@@ -443,3 +502,4 @@ tasks:
       # One target directory for the whole workspace, at the root, so this is run from here
       # rather than pointed at a member's manifest.
       - cargo clean
+      - task: agent:clean

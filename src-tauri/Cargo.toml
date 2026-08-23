@@ -53,6 +53,11 @@ tauri-plugin-single-instance = { workspace = true }
 # a decision a phone puts on a screen is not a decision a phone puts in a dialog.
 tauri-plugin-dialog = { workspace = true }
 tauri-plugin-updater = { workspace = true }
+# The Agent Protocol, and the encoding it is framed in. Desktop alone, because the agent is a
+# second program this application runs as a child — which a phone's operating system offers no
+# way to do. Neither reaches Tauri, and `task isolation` is what says so.
+almena-agent-protocol = { workspace = true }
+rmp-serde = { workspace = true }
 
 # Windows and Linux, and deliberately not macOS. Each of these two keeps one register for
 # "open this when somebody logs in" and this plugin writes to it.
@@ -69,6 +74,9 @@ objc2-service-management = { workspace = true }
 # is what lets the CLI promise to put things where this application puts them.
 [dev-dependencies]
 almena-paths = { workspace = true }
+# For the one test that drives the staged agent over real pipes. Already a dependency of this
+# crate on a desktop target; named here so that the test compiles on any of them.
+almena-agent-protocol = { workspace = true }
 # `test` brings Tauri's own mock application, which is the only way to hold a real path
 # resolver in a test. A feature of a dependency this crate already has, enabled for tests
 # alone.

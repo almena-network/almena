@@ -1,20 +1,22 @@
-//! What a person chose about the interface: its palette, its identity colour, its language.
+//! What a person chose: the interface's palette, its identity colour, its language, and which
+//! model the agent is asked for.
 //!
-//! Three small facts, kept in one file so that they survive a restart, and kept **here** rather
+//! Four small facts, kept in one file so that they survive a restart, and kept **here** rather
 //! than in the webview's own storage because the rule about where a file goes is a rule about
 //! files this application writes — `.agents/rules/data-storage-locations.md`. They are what the
 //! user chose, so they are configuration, so they live in the configuration directory, and the
 //! path comes from the resolver rather than from a literal.
 //!
-//! **The vocabularies are not here.** This side knows that there are three choices and what
-//! they are called; it does not know that a palette is `light` or `dark`, or that a language is
-//! `en` or `es`. Those lists live where they are already written down — `src/styles/tokens.css`
-//! for the two the interface is drawn from, `src/i18n/` for the language — and adding a fourth
-//! accent or a third language must not mean editing Rust as well. Anything this file does not
-//! recognise is a string it stores and hands back, and the interface is what narrows it.
+//! **The vocabularies are not here.** This side knows that there are four choices and what
+//! they are called; it does not know that a palette is `light` or `dark`, that a language is
+//! `en` or `es`, or what any model is called. Those lists live where they are already written
+//! down — `src/styles/tokens.css` for the two the interface is drawn from, `src/i18n/` for the
+//! language, `src/lib/models.ts` for the model — and adding a fourth accent, a third language
+//! or another model must not mean editing Rust as well. Anything this file does not recognise
+//! is a string it stores and hands back, and the interface is what narrows it.
 //!
-//! Nothing in here is personal data and nothing ever will be: a palette, a colour and a
-//! language are choices about a screen, not facts about a person.
+//! Nothing in here is personal data and nothing ever will be: a palette, a colour, a language
+//! and the name of a model are choices about how a program behaves, not facts about a person.
 
 use std::{fs, path::PathBuf};
 
@@ -39,6 +41,12 @@ pub struct Preferences {
     pub accent: Option<String>,
     /// The language, or `None` for the one the device asks for.
     pub language: Option<String>,
+    /// The model the agent is asked for, or `None` for the agent's own default.
+    ///
+    /// Absent means the variable is not set at all when the agent starts, so the agent decides.
+    /// The alternative — a default written down here — would put the vocabulary back on this
+    /// side through the door the paragraph above closes.
+    pub model: Option<String>,
 }
 
 /// Where the file is, or nothing when the platform will not say.

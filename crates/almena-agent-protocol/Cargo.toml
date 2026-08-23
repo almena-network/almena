@@ -1,0 +1,21 @@
+[package]
+name = "almena-agent-protocol"
+description = "The Agent Protocol: what the application and an agent say to each other, and how it is framed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+# The wire. `to_vec_named` is what makes a message a map with string keys rather than an array
+# whose field order is load-bearing — see `framing`, which is the only module that calls it.
+rmp-serde = { workspace = true }
+
+[dev-dependencies]
+# The golden corpus asserts exact bytes, so it encodes without going through `framing`.
+rmp-serde = { workspace = true }
