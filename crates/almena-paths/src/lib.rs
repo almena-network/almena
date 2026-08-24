@@ -1,9 +1,8 @@
 //! Where an Almena program keeps things, for the programs that have no Tauri to ask.
 //!
-//! `.agents/rules/data-storage-locations.md` forbids assembling a location out of `$HOME`,
+//! `.agents/rules/storage-and-logs.md` forbids assembling a location out of `$HOME`,
 //! `%APPDATA%` or `~/Library` and sends every path through a resolver. The windowed
-//! application has one: Tauri's, which also serves iOS and Android. A program with no Tauri
-//! in it has none, and this is it.
+//! application has one: Tauri's. A program with no Tauri in it has none, and this is it.
 //!
 //! # It is not an approximation of Tauri's resolver
 //!

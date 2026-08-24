@@ -1,7 +1,7 @@
 //! The words this program says, read from the catalogs the whole project shares.
 //!
-//! `.agents/rules/user-facing-text.md` says a string a person reads comes from a catalog and
-//! never from the source, and `.agents/rules/catalog-parity.md` says the catalogs hold the
+//! `.agents/rules/language.md` says a string a person reads comes from a catalog and
+//! never from the source, and `.agents/rules/language.md` says the catalogs hold the
 //! same keys. Both are about one set of files, so this program reads **those** files rather
 //! than growing a second set that would agree with the first for about a month.
 //!
@@ -9,7 +9,7 @@
 //! read them from, and a catalog that could go missing at run time is a program that could
 //! start speechless.
 //!
-//! A record is not user-facing text and never comes from here — `.agents/rules/logging.md`.
+//! A record is not user-facing text and never comes from here — `.agents/rules/storage-and-logs.md`.
 
 use std::sync::OnceLock;
 
@@ -44,7 +44,7 @@ impl Catalog {
     ///
     /// `key` is dotted, exactly as it is written in the catalogs — `network.peers.noNetwork`.
     /// A missing key falls back to English before it falls back to itself, which is what
-    /// `.agents/rules/supported-languages.md` asks for. Returning the key rather than an empty
+    /// `.agents/rules/language.md` asks for. Returning the key rather than an empty
     /// string is deliberate: a screen with a key on it is a bug somebody reports, and a screen
     /// with a gap on it is a bug nobody notices.
     ///

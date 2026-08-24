@@ -1,6 +1,6 @@
 /**
  * The badge: a short word about the thing beside it. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add badge --overwrite` produces a diff a reviewer

@@ -1,7 +1,7 @@
 //! The agent's own records, forwarded into this program's log.
 //!
 //! The agent writes to its stderr in the same line shape every Almena program writes — that is
-//! `.agents/rules/logging.md` applied to a program in another language, and `almena-log` is
+//! `.agents/rules/storage-and-logs.md` applied to a program in another language, and `almena-log` is
 //! the crate that defines it. What it does **not** do is open a file: it writes to a pipe, and
 //! this side writes the record. So one file holds two programs' records and nothing competes
 //! for a file handle, which is the thing that rule's *two processes never share a file* exists
@@ -24,7 +24,7 @@
 //! # What is never forwarded
 //!
 //! Nothing that crosses the wire. Tokens, the text of a turn and a tool's arguments are the
-//! content of a person's conversation, and `.agents/rules/logging.md` rules out logging that in
+//! content of a person's conversation, and `.agents/rules/storage-and-logs.md` rules out logging that in
 //! as many words. This module only ever sees the agent's stderr, which by the agent's own
 //! design carries none of it — but the supervisor is held to the same line, and says so where
 //! it writes its own records.
@@ -59,7 +59,7 @@ pub fn forward(line: &str) {
 
 /// The level, the target and the message of one record, or nothing when it is not one.
 ///
-/// The shape is `<timestamp> <LEVEL> <name> <message>`, which is `.agents/rules/logging.md`'s
+/// The shape is `<timestamp> <LEVEL> <name> <message>`, which is `.agents/rules/storage-and-logs.md`'s
 /// and is what the agent's `records.py` writes. The timestamp is read only far enough to know
 /// it was there; its value is deliberately discarded.
 fn read(line: &str) -> Option<(Level, String, String)> {

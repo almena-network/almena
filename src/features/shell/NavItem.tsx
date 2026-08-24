@@ -1,15 +1,15 @@
 /**
  * One entry of the navigation, whichever shape the navigation is in.
  *
- * There is one of these and not two. What changes between a phone and a window is how an entry
- * is laid out, and that is the `expanded:` half of the classes below — the same button, at the
+ * There is one of these and not two. What changes between the two shapes is how an entry is
+ * laid out, and that is the `expanded:` half of the classes below — the same button, at the
  * same place in the document, told to stack its icon over its name until there is room for
  * them side by side. A component that asked how wide the window was would be a second answer
  * to a question CSS has already given.
  *
  * It is shadcn/ui's button rather than markup of its own: an entry of a navigation is a thing
  * a person operates, and there is one button in this application
- * (`.agents/rules/interface-elements.md`). `ghost` is the tone for an entry that is not the
+ * (`.agents/rules/interface.md`). `ghost` is the tone for an entry that is not the
  * current one; the current one is the same button wearing the identity colour, which is one of
  * exactly two things that colour is allowed to mean.
  */

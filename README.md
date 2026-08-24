@@ -1,23 +1,26 @@
 # Almena
 
-`almena` is the application people use to reach the Almena network, and — on a computer — the
-node itself: there is no daemon beside it, and the network is composed of the computers taking
-part in it. On a phone or a tablet it is a client of that network rather than a node of it,
-reaching the network through an API that is not decided yet. One codebase for iOS, Android,
-Windows, Linux and macOS.
+`almena` is the application people use to reach the Almena network, and the node itself: there
+is no daemon beside it, and the network is composed of the computers taking part in it. One
+codebase for Windows, Linux and macOS.
+
+Almena on a phone or a tablet is a **client** of that network rather than a node of it, and it
+is built in [a repository of its own](https://github.com/almena-network/client). This one built
+it too, once, out of this codebase; it does not any more, and nothing here is compiled for a
+phone.
 
 It builds **two programs**:
 
 | Program | Binary | What it is |
 | --- | --- | --- |
-| The windowed application | `almena-app` | Almena with a screen: the desktop on a computer, the client on a phone or a tablet. Tauri 2. |
+| The windowed application | `almena-app` | Almena with a screen. Tauri 2. |
 | The CLI | `almena` | A node for a computer with no graphical system. One job: bring a node up. `ratatui` in a terminal. |
 
 The second one is a returning decision rather than a new one. A terminal interface was built
 here, deleted so that everything would be Tauri 2 on one upgrade path, and what that gave up
 was named at the time: the machine with no desktop on it. It came back because the machine did
 — the separate node daemon that used to serve it no longer exists, so a server with no window
-had no way to take part at all. Spec `0001` carries the whole of that argument.
+had no way to take part at all.
 
 They are two applications, not two faces of one. Separate directories, separate keys: a machine
 running both is **two nodes**.
@@ -29,9 +32,9 @@ running both is **two nodes**.
 
 The project's working agreements are kept in the
 [almena-network](https://github.com/almena-network/almena-network) repository — the rules this
-code is held to, and the specs of work that was agreed in writing before it was built. A spec
-is written when one is asked for, so most changes have none; every change, spec or not, is
-closed by making everything it left describing the old arrangement true again.
+code is held to. A request to build something is a request to build it: there is no document to
+write first. What every change owes is its closing, which is making everything it left
+describing the old arrangement true again.
 
 ## Stack
 
@@ -50,13 +53,13 @@ run:
 
 | What | Version | What it is for |
 | --- | --- | --- |
-| [Rust](https://rustup.rs), stable | 1.85 or newer | Both programs. The workspace is edition 2024, which is what sets that number. `rustup` is also what adds a mobile target later. |
+| [Rust](https://rustup.rs), stable | 1.85 or newer | Both programs. The workspace is edition 2024, which is what sets that number. |
 | [Node.js](https://nodejs.org) | 20 or newer | The frontend's toolchain — Vite, TypeScript, and the Tauri CLI, which is a JavaScript package here rather than a global install. |
 | [pnpm](https://pnpm.io/installation) | 9 or newer | JavaScript dependencies. Not npm and not yarn: the lockfile is `pnpm-lock.yaml` and the workspace is `pnpm-workspace.yaml`, and both are pnpm's. |
 | [Task](https://taskfile.dev/installation/) | 3 | The command runner, and the whole of this repository's interface. Every command below is a `task`, `Taskfile.yml` is where each one is written down, and `task` on its own lists them. |
 
 Beside them, the system dependencies Tauri 2 needs — a webview and a compiler toolchain,
-different on each of the three desktop operating systems and listed in
+different on each of the three operating systems and listed in
 [Tauri prerequisites](https://tauri.app/start/prerequisites/). Nothing else is installed by
 hand: `task` installs the JavaScript dependencies itself, and cargo fetches the Rust ones.
 
@@ -67,32 +70,18 @@ above carries its own, for macOS, Windows and Linux alike.
 To reach the network, rather than only to build this application, the device also needs
 **IPv6 connectivity**. Almena is an IPv6 network and there is no second address family.
 
-That is all the desktop build needs **to build itself**. To build it with an agent inside it,
+That is all the application needs **to build itself**. To build it with an agent inside it,
 the agent's own requirements apply too — Python 3.14 and `uv`, listed in
 [its repository](https://github.com/almena-network/agent). Nothing here needs them: a build with
 no agent staged carries none and says so on its own screen, and `task agent:build` is the only
 thing that asks for them.
 
-The mobile builds add:
-
-- **Android**, on any host: JDK 17, Android Studio with the SDK and the NDK. `ANDROID_HOME`
-  and `NDK_HOME` have to be set — `task init:android` refuses to run without them and says so.
-- **iOS**, on macOS only: Xcode with its command line tools, and CocoaPods.
-
 ## Getting started
 
-On a computer, nothing to set up beyond the requirements:
+Nothing to set up beyond the requirements:
 
 ```bash
 task dev
-```
-
-For a phone, generate the native project once, then run:
-
-```bash
-task devices       # what is plugged in right now
-task init          # generates the native projects this host can build
-task dev:android   # or task dev:ios
 ```
 
 The full set, which `task` on its own prints too:
@@ -103,42 +92,31 @@ The full set, which `task` on its own prints too:
 | `task install` | Installs JavaScript dependencies. Skipped when already up to date. |
 | `task catalogs` | Checks that every translation catalog holds the same keys. |
 | `task check` | Checks the Rust formatting, runs clippy over the workspace, type-checks the frontend, and runs `task catalogs` and `task isolation`. |
-| `task check:mobile` | Type-checks the application for the mobile targets. `task check` does not — it only ever compiles for this machine. |
 | `task isolation` | Asserts that the two programs stay out of each other's dependency graph, and that the three crates beside them reach no framework. Six assertions — see below. |
 | `task test` | Runs the test suites across the workspace. Rust only today — see below. |
 | `task test:agent` | Drives the staged agent over real pipes, checking that the two halves of the Agent Protocol actually meet. Not part of `task test`: it needs an artifact from another repository, and a test that passed quietly without one would be green on every machine that had nothing to test with. |
 | `task format` | Formats the Rust source with `cargo fmt`. |
 | `task icons` | Regenerates every icon from `assets/branding`. |
-| `task devices` | Lists connected Android and iOS devices. |
-| `task init` | Generates the native mobile projects for every platform this host can build. |
-| `task init:android`, `task init:ios` | The same, one platform at a time. |
 | `task dev` | Runs the windowed application on this computer, with hot reload. Also available as `task dev:desktop`. `ARGS` gives it a command line — `task dev ARGS="--hidden"`. |
 | `task dev:cli` | Runs the node in this terminal. No hot reload: this program has no frontend. `ARGS` reaches it directly — `task dev:cli ARGS="--quiet"`. |
-| `task dev:android`, `task dev:ios` | Runs the app on a connected device or emulator, with hot reload. |
 | `task build` | Builds the desktop installer for this host's operating system. Also available as `task build:desktop`. The binary itself lands at `target/release/almena-app`. |
 | `task build:debug` | The same bundle, unoptimized, at `target/debug/`. It keeps `debug_assertions`, so it is the one bundle that still says *Development* on its status strip. |
 | `task build:cli` | Builds the node for this computer. One binary, at `target/release/almena`, and no bundle. |
-| `task build:android`, `task build:ios` | Builds the mobile packages. |
-| `task deploy:android`, `task deploy:ios` | Chooses a destination, builds for it, and installs it there. |
+| `task build:all` | Builds the agent in its own repository first, then both of this computer's programs — the desktop bundle with that agent inside it, and the node beside them. The one build that insists on an agent: it fails when there is no agent repository to build one from, where `task build` carries none and says so. |
 | `task agent:build` | Builds the agent from its own repository, so that there is something to stage. `AGENT_REPO` says where it is; `../agent` by default. |
 | `task agent:stage` | Copies a built agent into the bundle's resources. Says which of the two things happened — staged, or nothing found — and a build with nothing staged is an ordinary state. |
 | `task agent:clean` | Takes the staged agent back out. |
-| `task clean` | Removes build artifacts. The generated native projects are kept. |
+| `task clean` | Removes build artifacts. |
 
 Every task installs dependencies first, so a fresh checkout needs only `task dev`. That includes
 staging the agent: `task dev` and `task build` both run `task agent:stage`, which copies one in
 if there is one built and says so if there is not.
 
-With no suffix, `dev` and `build` target the computer you are sitting at. Mobile is always
-named explicitly — `dev:android`, `build:ios`, and so on — because building for a phone needs
-an SDK the desktop build does not, and because `task init` has to have run first.
+With no suffix, `dev` and `build` mean the windowed application; the node is always named —
+`dev:cli`, `build:cli`. Both target the computer you are sitting at, which is the only kind of
+machine anything here is built for.
 
-The two deploy tasks are a script each rather than a line each, because what gets built
-depends on where it is going: the destination is chosen, and started if it is an emulator that
-was not running, before anything is compiled. Set `DEVICE` to skip the prompt —
-`task deploy:android DEVICE=emulator-5554`.
-
-`ARGS` is the other variable, and it gives whichever program is being run a command line:
+`ARGS` is the one variable, and it gives whichever program is being run a command line:
 
 ```bash
 task dev ARGS="--hidden"        # the application starts into the tray, as a login launch does
@@ -147,8 +125,7 @@ task dev:cli ARGS="--quiet"     # the node writes records instead of drawing
 
 For `task dev` it reaches the application through two `--`, which is the Tauri CLI's own
 convention: the first ends what is meant for that CLI, the second what is meant for cargo. For
-`task dev:cli` there is nothing in between and it is passed straight through. Computers only —
-a phone launches nothing from a command line.
+`task dev:cli` there is nothing in between and it is passed straight through.
 
 ## Two programs, and the crates they are built from
 
@@ -168,9 +145,9 @@ crates/
 
 **A directory at the root is a program; `crates/` holds the libraries they are built from.**
 `src-tauri/` is at the root because that is Tauri's own layout — its documentation puts the Rust
-project there and allows it to be "a member of your Rust workspace", `tauri.conf.json` is the
-marker its CLI uses to find the project, and the generated `gen/android` and `gen/apple` hang
-off it. `cli/` sits beside it for the same reason a program is not a library.
+project there and allows it to be "a member of your Rust workspace", and `tauri.conf.json` is
+the marker its CLI uses to find the project. `cli/` sits beside it for the same reason a
+program is not a library.
 
 A dependency is named in one place. Members carry `{ workspace = true }` and no version number,
 so two of them cannot end up on two versions of the same crate.
@@ -184,8 +161,8 @@ repository, in another language, which is the argument for it being a crate at a
 the application it would become a private detail of the one program that speaks it today, and
 the point of the protocol is that the program at the other end can be replaced without a word
 here changing. None of the three exists to share code:
-`almena-app` does not even link `almena-paths`, because it keeps Tauri's resolver, which also
-serves iOS and Android. What the two programs share is the **answer** — held to by
+`almena-app` does not even link `almena-paths`, because it has Tauri's resolver to ask. What
+the two programs share is the **answer** — held to by
 `src-tauri/tests/paths_agree_with_tauri.rs`, which asks both resolvers for every purpose and
 fails if any pair differs.
 
@@ -316,18 +293,14 @@ switch cannot move. Installed, it does.
 
 ## Where it runs
 
-| | Runs on |
-| --- | --- |
-| On a phone or tablet | iOS, Android |
-| On a computer | Windows, macOS, Linux |
+Windows, macOS and Linux, all three equally. Linux means both packaging families a bundle
+produces: `.deb` for Debian, Ubuntu and their derivatives, `.rpm` for Red Hat, Fedora and
+theirs, and `.AppImage` for neither in particular.
 
-Linux means both packaging families a bundle produces: `.deb` for Debian, Ubuntu and their
-derivatives, `.rpm` for Red Hat, Fedora and theirs, and `.AppImage` for neither in particular.
-
-The application opens at 1100 × 760 and never goes below 400 × 700, and its layout has
-two shapes chosen by the width of the window and by nothing else — a phone in landscape, a
-tablet and a window somebody dragged wider are the same case. The numbers live in
-`src-tauri/tauri.conf.json` and nowhere else.
+The application opens at 1100 × 760 and never goes below 400 × 700, and its layout has two
+shapes chosen by the width of the window and by nothing else — a window somebody dragged narrow
+and one they dragged wide are the same case. The numbers live in `src-tauri/tauri.conf.json`
+and nowhere else.
 
 ## What a second launch does
 
@@ -354,11 +327,9 @@ display it arrived at, which is the operating system's business and not an appli
 undo: the same window looks physically larger on a display with fewer pixels to the inch, in
 Almena as in everything else.
 
-Both are compiled out of the mobile binary, where the operating system owns them already.
-
 ## Notifications
 
-Registered on all five platforms, which is the reason the dependency was adopted at all: one
+Registered on all three platforms, which is the reason the dependency was adopted at all: one
 that served some of them is one this project does not take.
 
 There are two ways to a notification, and they exist for different sides of the application:
@@ -380,11 +351,11 @@ that arrives before anybody has asked for anything is worse than one that arrive
 
 **On Windows a notification is only drawn for an installed application.** That is the
 platform's rule rather than this project's: a build started from `task dev` there shows
-nothing, and the same binary installed shows what the other four platforms show.
+nothing, and the same binary installed shows what the other two platforms show.
 
 ## The agent it runs beside itself
 
-On a computer, Almena starts a second program: **`almena-agent`**, an AI agent written in
+Almena starts a second program beside itself: **`almena-agent`**, an AI agent written in
 Python, built from [its own repository](https://github.com/almena-network/agent) and bundled
 inside this application. The AI section is where you talk to it.
 
@@ -394,12 +365,10 @@ separately, no port is opened, no local server is involved, and there is no daem
 if Almena is killed outright, the agent reads the end of its input and stops on its own. The
 pipe *is* the liveness signal, which is why there is no PID file anywhere.
 
-**Desktop only.** A phone's operating system offers an application no way to run a second
-program at all — iOS gives a sandboxed application no `fork`/`exec`, Android will not execute a
-binary out of an application's own directory — so the section is not listed there rather than
-listed and empty. That is a platform without the thing, not a person unable to do something;
-the argument is in
-[supported-platforms.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/supported-platforms.md).
+**The windowed application alone**, of the two programs built here. The CLI brings a node up on
+a machine in a rack and gets no agent, because an agent is something a person sits in front of
+— [deployments.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/deployments.md).
+`task isolation` holds it to that: `almena-cli` may not reach `almena-agent-protocol` at all.
 
 ### The Agent Protocol
 
@@ -488,34 +457,37 @@ carries no agent.
 task agent:build     # builds it in ../agent, or point AGENT_REPO somewhere else
 task agent:stage     # copies it to src-tauri/resources/almena-agent/
 task test:agent      # drives the staged agent over real pipes, both halves of the contract
+task build:all       # the two above, then both programs, in that order
 ```
 
 `task dev` and `task build` stage it themselves. What it adds to every desktop artifact is about
 50 MB.
 
+`task build:all` is the one that builds the agent rather than staging whatever was already
+there. That is why it is a task and not a longer `deps` list on `task build`: dependencies run
+at the same time as each other, so an agent built as a dependency of a build would be staged in
+whatever state the previous one left it. Here the agent is built first and on its own, and only
+then is there a bundle to put it in. It is also the only build that **refuses** when there is no
+agent repository to build from — `task build` on its own is the one that carries none and says
+so on its AI screen.
+
 ## Registered, and not yet called
 
-Two plugins are compiled into the desktop binary that nothing in this application reaches yet.
-They are here so that the first screen needing one is a screen and not a dependency
-negotiation.
+Two plugins are compiled into the binary that nothing in this application reaches yet. They are
+here so that the first screen needing one is a screen and not a dependency negotiation.
 
-**Dialogs** — `tauri-plugin-dialog` — are the native question, warning and file picker. The
-plugin serves phones as well, and registering it on computers alone is this project's decision
-rather than the plugin's limit: the day a screen puts a decision in a dialog, either a phone
-gets an equivalent path in the same change or the plugin moves. That is
-[supported-platforms.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/supported-platforms.md),
-and it is written here rather than found later.
+**Dialogs** — `tauri-plugin-dialog` — are the native question, warning and file picker. Nothing
+draws one today.
 
 **Updating** — `tauri-plugin-updater` — is how an application that is a file somebody
-downloaded replaces itself. On a phone the store does that and there is nothing to call, which
-is a platform without the thing rather than a person unable to do something.
+downloaded replaces itself.
 
 It is registered **inert**. `plugins.updater` in `src-tauri/tauri.conf.json` carries an empty
 `endpoints` and an empty `pubkey`, `bundle.createUpdaterArtifacts` is off, and no code here asks
 the plugin anything at all. That is not an oversight waiting for somebody to fill the two fields
 in. The Transparency principle is explicit — *no telemetry, no analytics, no crash reporting, no
 update ping, in any build* — and what the project has settled about where that line falls is
-[updating.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/updating.md):
+[updating.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/deployments.md):
 nothing checks unless a person asks, finding is not installing, and a request carries the
 target, the architecture and the current version and nothing that could say who this is. What is
 **not** settled is which host serves the releases and which key signs them. Until both are, an
@@ -554,16 +526,13 @@ application.**
 ## The mark
 
 The application's icon is generated, not hand-placed. `assets/branding/` holds the artwork and
-`task icons` turns it into every size and format the platforms ask for — `src-tauri/icons/` for
-the desktop and the Windows Store, and, where a native project has been generated, straight
-into `src-tauri/gen/`.
+`task icons` turns it into every size and format the three platforms ask for, all of them under
+`src-tauri/icons/`.
 
 | Source | What it is for |
 | --- | --- |
 | `app-icon.png` | The icon everywhere except macOS. Also the source of `icon.png` and `icon.ico`. |
 | `app-icon-macos.png` | The same mark with the padding macOS expects inside its rounded square. Without it the icon sits visibly larger in the Dock than its neighbours. |
-| `app-icon-bg.png`, `app-icon-fg.png` | Android's adaptive icon, which is two layers the system moves against each other. |
-| `app-icon-mono.png` | Android's themed icon, drawn in the system's own colour. |
 | `app-icon-negative.png` | The mark reversed, for a dark ground. |
 | `tray/tray-icon.png` | The bare glyph. Scaled to 32 × 32 it becomes `src-tauri/icons/tray.png`, which is a template image: the system tints it, so it carries no square of its own. |
 | `tray/tray-icon-negative.png` | The tray glyph reversed. Becomes `src-tauri/icons/trayNegative.png`, for the platforms that do not tint a template image themselves. |
@@ -578,8 +547,8 @@ were committed.
 ## The interface
 
 One frame in two shapes, and the shape follows **the width of the viewport and nothing else** —
-not the platform, not the user agent, not whether there is a touch screen. A phone in landscape,
-a tablet and a window somebody dragged wider are the same case and get the same layout.
+not the platform, not the user agent, not whether there is a touch screen. A window somebody
+dragged narrow and one they dragged wide are the same case and get the same layout.
 
 | Width | The navigation is |
 | --- | --- |
@@ -592,8 +561,11 @@ Those are the same buttons in the same order and the same place in the document.
 cleared so that `sm:` and `md:` do not exist here. There is no hook, no `matchMedia` and no
 component that asks how wide it is.
 
-Four sections, and all four have a screen — three of them on a phone, because a phone cannot run
-the agent the fourth is about.
+Four sections, every one of them with a screen behind it, and every one of them drawn every
+time — there is one shape of this application now, so nothing is listed for some devices and
+not others. Four is also close to what the compact shape has room for: at 400 points across, a
+fifth entry leaves each one around 70 points, and 44 of that is what a finger is entitled to. So
+a fifth section is a line added to a list and a sixth is a change to the navigation.
 
 **Every element on those screens comes from [shadcn/ui](https://ui.shadcn.com)**, vendored into
 `src/components/ui/` by `pnpm dlx shadcn@latest add <name>` and left as the registry wrote it:
@@ -618,14 +590,14 @@ turns out to have an element for is deleted in favour of it.
 
 Two of the registry's own answers are deliberately **not** taken. `sidebar` would bring five
 elements no screen draws — `sheet`, `tooltip`, `input`, `skeleton` and a `use-mobile` hook with
-a second breakpoint at 768 — and its phone shape is a hamburger opening a drawer, which is worse
-than a bar a thumb can reach. `tabs` would fit the navigation but decides its orientation in
+a second breakpoint at 768 — and below that breakpoint it is a hamburger opening a drawer,
+which is worse than a bar that is simply there. `tabs` would fit the navigation but decides its orientation in
 JavaScript, and here the shape follows the width of the viewport and nothing else. The
 navigation is therefore a `<nav>` of shadcn buttons carrying `aria-current="page"`.
 
 The set holds what the interface actually draws today and grows with the screen that needs the
 next thing —
-[interface-elements.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/interface-elements.md)
+[interface.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/interface.md)
 is the whole of the agreement, including which of each element's variants a screen may draw.
 
 **Every value comes from `src/styles/tokens.css`** — the palette, the shape, the spacing and the
@@ -662,7 +634,7 @@ of nought is a measurement, and there has been none.
 **A status strip runs along the bottom of the window**, 28 points tall, spanning the full
 width — under the sidebar as well as beside it. It belongs to the frame rather than to a
 screen: it is pinned rather than scrolled to, it is the same strip whichever section is open,
-and on a phone the floating menu sits above it instead of over it.
+and in the compact shape the floating menu sits above it instead of over it.
 
 It has two groups. The right one holds what does not change while the application runs: whether
 this is a development build, the version, and the licence. **The left one is where what the
@@ -671,7 +643,7 @@ is empty today rather than filled with something plausible, because a status str
 place in an interface to invent a value.
 
 **A development build says so, on that strip, always.** The word *Development* is there whenever
-the binary was built with `debug_assertions` — `task dev`, `task dev:ios`, `task build:debug` —
+the binary was built with `debug_assertions` — `task dev`, `task dev:cli`, `task build:debug` —
 and absent from anything anybody was given. The strip is the only thing in the application that
 is on screen whatever section is open and whichever shape the window is in, which is what makes
 it the one place a marker like that can live. It is brighter than everything else there because
@@ -700,15 +672,13 @@ reader the wrong one most of the time —
 [honest-emptiness.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/honest-emptiness.md)
 is the agreement, and it is why `readNetwork` returns `null` rather than an empty array.
 
-Settings holds three cards, and one of them is not on every device. **Appearance** is the
-palette — dark, light, or whatever the operating system is asking for — and the identity
-colour, one of five, which is the one screen in the application with five of them on it at
-once because they are the thing being chosen. **Language** is English or Spanish, and it is
-empty of consequence until somebody uses it: Almena opens in the language the device asks for
-and stores nothing until asked to. **Open at login** is the third, and it belongs to a
-computer: a phone's operating system decides for itself when an application may run, so the
-card is simply not there — a platform with no such thing to do rather than a person unable to
-do something.
+Settings holds four cards. **Appearance** is the palette — dark, light, or whatever the
+operating system is asking for — and the identity colour, one of five, which is the one screen
+in the application with five of them on it at once because they are the thing being chosen.
+**Language** is English or Spanish, and it is empty of consequence until somebody uses it:
+Almena opens in the language the device asks for and stores nothing until asked to. **Model**
+is which model the agent is asked for. **Open at login** is whether the operating system starts
+Almena when somebody logs in.
 
 Both appearance choices are attributes on the document element, written by
 `src/lib/appearance.ts` and read by `src/styles/tokens.css` alone. No screen knows which
@@ -734,10 +704,9 @@ Stated rather than discovered by running something and being surprised.
 
 | | Today |
 | --- | --- |
-| The peer-to-peer layer | Not written yet. On a computer Almena is the node, but neither program joins a network, reads the configuration a network is described by, or speaks to a peer; the first screen and the node's view both say so, because that is the whole truth available to them. |
-| How the client reaches the network | Undecided. A phone or a tablet is a client and not a node, so it does not speak the peer-to-peer layer above; which API it speaks instead, over which protocol, and who serves it are open questions, and nothing here answers any of them. |
+| The peer-to-peer layer | Not written yet. Almena is the node, but neither program joins a network, reads the configuration a network is described by, or speaks to a peer; the first screen and the node's view both say so, because that is the whole truth available to them. |
+| Anything a client can reach | Nothing. A phone or a tablet is a client and not a node, and it is built in [its own repository](https://github.com/almena-network/client); which API it speaks, over which protocol, and who serves it are open questions, and this side of the answer is not written. No node here offers a client anything, and nothing here shows a code for one to read. |
 | `task check` | Rust and `tsc` only. ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and there is no `task format` for TypeScript. Until ESLint arrives, the limits on file and function size and the ban on arbitrary Tailwind values are a reviewer's rather than a tool's. |
-| `identifier` | The windowed application's is still the scaffold's `network.almena.desktop`. It names every directory that application writes to, and the two deploy scripts carry a copy of it that changes with it. It is accurate for the desktop and inaccurate for the client, which is a phone keeping its data under a name that says *desktop*. The CLI is unaffected: it has an identifier of its own, `network.almena.cli`. `productName` is settled: `Almena`. |
 | Where updates come from | The updater plugin is registered and inert. Which host serves the releases and which key signs them are both undecided, so `endpoints` and `pubkey` are empty and nothing calls the plugin. See [Registered, and not yet called](#registered-and-not-yet-called). |
 | `--help` in one language | The one thing a person reads that does not come from a catalog. `clap` builds it from the CLI's argument declarations before a catalog can be loaded, so it is English wherever it is read. The drawn view is not affected and is in both languages. |
 | The node's identity | The CLI has somewhere to keep one and nothing to put there. A node is identified by a key generated on its own device, and which kind of key that is belongs to the peer-to-peer layer above. Until then a node is a different participant on every run, which costs nothing while there is no network to be a participant in. |
@@ -753,9 +722,8 @@ Stated rather than discovered by running something and being surprised.
 
 ## Contributing
 
-Development advances one specified step at a time, and a step is agreed before it is
-implemented — [CONTRIBUTING.md](CONTRIBUTING.md) says how that works, what a change is expected
-to follow, and what `task check` does and does not cover today. By taking part you agree to the
+[CONTRIBUTING.md](CONTRIBUTING.md) says what a change is expected to follow, how it is closed,
+and what `task check` does and does not cover today. By taking part you agree to the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Security

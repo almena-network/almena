@@ -1,6 +1,6 @@
 /**
  * One entry of a list: a name, what else is known about it, and what can be done to it.
- * Vendored from shadcn/ui — `.agents/rules/interface-elements.md`.
+ * Vendored from shadcn/ui — `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add item --overwrite` produces a diff a reviewer

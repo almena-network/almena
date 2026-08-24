@@ -1,8 +1,5 @@
 //! The size a person gave the window, remembered in **points** rather than in pixels.
 //!
-//! Desktop only: a phone's operating system owns the window, and this module is not in the
-//! mobile binary.
-//!
 //! The window-state plugin already remembers a geometry between runs, and it remembers it in
 //! pixels — what it writes down is `inner_size()`, which is physical. On a computer with one
 //! display that is the same number as the size a person chose and there is nothing here to say.
@@ -35,7 +32,7 @@ use tauri::{AppHandle, LogicalSize, Manager, PhysicalSize, Window};
 ///
 /// Beside the log rather than beside the configuration, because a window's geometry is state:
 /// worth keeping between runs, not worth backing up, and never required to start —
-/// `.agents/rules/data-storage-locations.md`. Deleting it costs the remembered size and nothing
+/// `.agents/rules/storage-and-logs.md`. Deleting it costs the remembered size and nothing
 /// else, and the window then opens at the size `tauri.conf.json` declares.
 const FILE: &str = "window.json";
 

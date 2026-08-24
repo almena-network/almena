@@ -1,6 +1,6 @@
 [package]
 name = "almena-app"
-description = "Almena, the windowed application, on phones and on computers"
+description = "Almena, the windowed application"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,11 +10,12 @@ repository.workspace = true
 [lib]
 # Everything but the launch lives in the library, so that a test can link against it.
 #
-# All three crate types, unlike the desktop-only siblings: `staticlib` and `cdylib` are what
-# iOS and Android link against, and this application ships on both. The `_lib` suffix is what
-# keeps the library's artifact name from colliding with the binary's on Windows.
+# One crate type, like every other member of this workspace. There were three while this
+# application was also built for phones — `staticlib` and `cdylib` are what iOS and Android
+# link against — and neither is produced for anything this repository builds now. The `_lib`
+# suffix is what keeps the library's artifact name from colliding with the binary's on Windows.
 name = "almena_app_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [lints]
 workspace = true
@@ -29,33 +30,23 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # The facade this program writes records through, and the format they take. The format is a
 # crate of its own because it is a decision — the line shape, the rotation, the retention that
-# `.agents/rules/logging.md` sets — and a decision is easier to hold to in one place than in a
+# `.agents/rules/storage-and-logs.md` sets — and a decision is easier to hold to in one place than in a
 # builder call halfway down a plugin registration.
 almena-log = { workspace = true }
 log = { workspace = true }
 tauri-plugin-log = { workspace = true }
-# On every platform, unlike the three below. A phone has no window to own and no command line,
-# but it has a screen to put a notification on, so this one is not a desktop concern.
 tauri-plugin-notification = { workspace = true }
-
-# Desktop only, and compiled out of the mobile binary entirely. A phone's operating system
-# owns the window's geometry, already guarantees one running instance of an application, and
-# decides for itself when an application may run — so none of these has anything to do there. This is the shape
-# `.agents/rules/supported-platforms.md` asks for: not a feature one platform lacks, but a
-# platform that does not have the thing the feature is about.
-[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+# What the window remembers between runs, and what folds a second launch into the running
+# application instead of starting another.
 tauri-plugin-window-state = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
-# Two more that are here for what a computer is rather than for what it can do. An application
-# on a computer is a file somebody downloaded, so it is the one that has to be able to replace
-# itself; a phone's store does that and offers nothing to call. Dialogs are the other way
-# round — the plugin serves all five platforms and this project registers it on three, because
-# a decision a phone puts on a screen is not a decision a phone puts in a dialog.
+# Two that nothing calls yet. An application here is a file somebody downloaded, so it is the
+# one that has to be able to replace itself; dialogs are what a native question will come from
+# the day a screen has one to ask.
 tauri-plugin-dialog = { workspace = true }
 tauri-plugin-updater = { workspace = true }
-# The Agent Protocol, and the encoding it is framed in. Desktop alone, because the agent is a
-# second program this application runs as a child — which a phone's operating system offers no
-# way to do. Neither reaches Tauri, and `task isolation` is what says so.
+# The Agent Protocol, and the encoding it is framed in. The agent is a second program this
+# application runs as a child. Neither reaches Tauri, and `task isolation` is what says so.
 almena-agent-protocol = { workspace = true }
 rmp-serde = { workspace = true }
 

@@ -1,6 +1,6 @@
 //! Which language this program speaks, decided by the environment and by nothing else.
 //!
-//! `.agents/rules/supported-languages.md` says the device is asked first and a person
+//! `.agents/rules/language.md` says the device is asked first and a person
 //! overrules it. On a command line the device is the environment — `LC_ALL`, `LC_MESSAGES`,
 //! `LANG`, in the order POSIX gives them — and there is no way to overrule it yet, because
 //! that would mean storing a choice and this program stores nothing. `TODO.md` carries that.

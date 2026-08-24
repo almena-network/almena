@@ -4,14 +4,14 @@
  * One button, two jobs, and that is the point rather than a saving: while a run is in flight
  * the thing a person wants is to stop it, and a screen that offered *ask* beside *stop* would
  * be offering one control that does nothing. It wears the identity colour because it is the
- * thing this screen is for (`.agents/rules/visual-identity.md`).
+ * thing this screen is for (`.agents/rules/interface.md`).
  *
  * Enter sends and shift-enter makes a line, which is what everybody expects of a box like
  * this — and both are only ever an accelerator: the button does the same thing and is
- * reachable by touch, which is what `.agents/rules/supported-platforms.md` asks for.
+ * reachable by touch, which is what `.agents/rules/deployments.md` asks for.
  *
  * This is the first field in the application, and therefore the one place text can be selected
- * — the exception in `.agents/rules/no-text-selection.md`, which is already written as an
+ * — the exception in `.agents/rules/interface.md`, which is already written as an
  * element rule and needs nothing here.
  */
 

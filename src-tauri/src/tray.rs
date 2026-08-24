@@ -1,14 +1,12 @@
 //! The tray icon, its menu, and the two ways back to a window that is not on screen.
 //!
-//! Desktop only: a phone has no tray, and this module is not in the mobile binary.
-//!
 //! This is what makes closing the window something other than quitting. With a tray there the
 //! application goes on running with nothing on screen, so this module is also where a person
 //! ends it — and [`installed`] is what the window asks before it dares hide, because an
 //! application that hides with no tray to come back from is one somebody has lost.
 //!
 //! **The menu is named by the frontend.** Its entries are text a person reads, and only that
-//! side holds the catalogs (`.agents/rules/user-facing-text.md`), so [`install`] is a command
+//! side holds the catalogs (`.agents/rules/language.md`), so [`install`] is a command
 //! rather than a call made at startup: the interface loads, looks its labels up, and hands
 //! them here. It is named `install_tray` rather than `install` because a command's name is
 //! flat across the whole application: the module in front of it is this side's, not the

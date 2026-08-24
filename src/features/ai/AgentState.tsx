@@ -4,7 +4,7 @@
  * Five states over four colours, and the pairing is deliberate: *not in this build* and *not
  * started* are two different facts with two different sentences, and both of them are the same
  * thing to look at — nothing is happening and nothing is wrong. The colour says whether to
- * worry; the word says what is true (`.agents/rules/visual-identity.md`).
+ * worry; the word says what is true (`.agents/rules/interface.md`).
  *
  * Nothing is drawn before the first look has come back. That is a badge arriving rather than a
  * screen claiming the agent is idle, which is the difference between a gap and an assertion.

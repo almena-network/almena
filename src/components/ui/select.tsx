@@ -1,6 +1,6 @@
 /**
  * The select: a control that shows one of a short list and opens to offer the rest. Vendored
- * from shadcn/ui — `.agents/rules/interface-elements.md`.
+ * from shadcn/ui — `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add select --overwrite` produces a diff a reviewer

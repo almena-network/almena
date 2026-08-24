@@ -13,12 +13,12 @@
  * second.
  *
  * The second card is the other half of the same honesty. Notifications are something this
- * build can genuinely do, on all five platforms, so the screen says so and lets a person try
+ * build can genuinely do, on all three platforms, so the screen says so and lets a person try
  * it — a capability that works, not a figure standing in for one that does not.
  *
  * The mark at its head is the one place in the compact shape it appears, and it wears the
  * identity colour because that is the first of the two things the colour means: this is
- * Almena (`.agents/rules/visual-identity.md`).
+ * Almena (`.agents/rules/interface.md`).
  */
 
 import { useTranslation } from "react-i18next";

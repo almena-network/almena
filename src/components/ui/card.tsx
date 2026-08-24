@@ -1,6 +1,6 @@
 /**
  * The card, and the seven slots it is built out of. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, with **one** change, so that
  * re-running `pnpm dlx shadcn@latest add card --overwrite` produces a diff a reviewer can

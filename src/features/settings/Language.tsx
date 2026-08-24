@@ -54,7 +54,7 @@ function Language() {
       <CardContent>
         {/* The row is 44 points tall and the label fills it, so that what a finger has to hit
             is the setting's name and not the control beside it
-            (`.agents/rules/supported-platforms.md`). */}
+            (`.agents/rules/deployments.md`). */}
         <Field orientation="horizontal">
           <FieldContent className="min-h-11 justify-center">
             <FieldLabel htmlFor={id}>{t("settings.language.label")}</FieldLabel>

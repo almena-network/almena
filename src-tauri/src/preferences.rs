@@ -3,7 +3,7 @@
 //!
 //! Four small facts, kept in one file so that they survive a restart, and kept **here** rather
 //! than in the webview's own storage because the rule about where a file goes is a rule about
-//! files this application writes — `.agents/rules/data-storage-locations.md`. They are what the
+//! files this application writes — `.agents/rules/storage-and-logs.md`. They are what the
 //! user chose, so they are configuration, so they live in the configuration directory, and the
 //! path comes from the resolver rather than from a literal.
 //!

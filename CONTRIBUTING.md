@@ -10,23 +10,19 @@ By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 > for a contributor is the next section — interfaces and configuration move underneath you,
 > and a change is not finished until everything that described what it moved is true again.
 
-## Agreeing a change, and closing it
+## Making a change, and closing it
 
 The project's working agreements live in the
-[almena-network](https://github.com/almena-network/almena-network) repository: the rules this
-code is held to, and `specs/`, where a piece of work is written down when agreeing it in
-writing is worth the wait. **Most changes are not specified first.** A spec is written when
-somebody asks for one, and it then says what changes, what deliberately does not, how it is
-checked, and what it makes wrong elsewhere.
+[almena-network](https://github.com/almena-network/almena-network) repository, in
+`.agents/rules/`. **A request to build something is a request to build it**: there is no
+document to write first and no plan to agree. That requirement existed once and was deleted.
 
-So, before writing code:
+So:
 
 - **A fix needs no ceremony.** A broken command, a wrong sentence in the README, a dependency
   that will not build: open the pull request.
-- **Agree anything larger first.** Open an issue describing it. For work that will be argued
-  about later — a screen, a data format, a dependency that brings a second way to do
-  something — ask for a spec; a spec marked `accepted` may be implemented, one still marked
-  `proposed` may not.
+- **Open an issue for anything you want argued about first** — a screen, a data format, a
+  dependency that brings a second way to do something. An issue, not a specification.
 - **A finished change leaves nothing describing the old arrangement** — the rules, this
   repository's five documentation files, the translation catalogs. That closing checklist is
   part of the change, not a follow-up.
@@ -43,9 +39,8 @@ problem is a security vulnerability, do **not** open an issue — follow
 See [Requirements](README.md#requirements) in the README, then:
 
 ```bash
-task dev           # on this computer
-task init          # once per checkout, for the mobile targets
-task dev:android   # or task dev:ios
+task dev           # the windowed application, with hot reload
+task dev:cli       # the node in this terminal
 ```
 
 `task` on its own lists every command, and the README documents them one by one.
@@ -69,22 +64,29 @@ hostname or the logged-in user. This application talks to the peers of its netwo
 the origin it read that network's configuration from, and to nothing else: no telemetry, no
 analytics, no crash reporting, no update ping, in any build.
 
-The updater plugin is in the desktop binary and does not change that sentence. It is registered
-and inert — no endpoint, no key, and no code calling it — and the day something does call it,
-what it may do is
-[updating.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/updating.md):
+The updater plugin is in the binary and does not change that sentence. It is registered and
+inert — no endpoint, no key, and no code calling it — and the day something does call it, what
+it may do is
+[deployments.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/deployments.md):
 nothing checks unless a person asks, finding is not installing, and the request says the target,
 the architecture and the current version and nothing that could identify anybody. A check on a
 timer, on startup, or on a window regaining focus is the thing that rule exists to refuse.
 
-**Every platform moves together.** iOS, Android, Windows, Linux and macOS are supported
-equally: none gets a feature first. A change that needs platform-specific code carries the
-equivalent path for the rest in the same pull request, and no dependency is adopted unless it
-builds everywhere.
+**Every platform moves together.** Windows, Linux and macOS are supported equally: none gets a
+feature first. A change that needs platform-specific code carries the equivalent path for the
+rest in the same pull request, and no dependency is adopted unless it builds everywhere. There
+is no such asymmetry in the application today, and the one place it took work to avoid is
+opening at login, where macOS is served by `SMAppService` because the plugin the other two use
+writes the wrong register.
 
-**It runs on a phone and on a computer.** Design for both: every action reachable by touch and
-by mouse and keyboard, and a layout that survives from a phone screen to a resizable window. A
-keyboard shortcut or a context menu is an accelerator, never the only way to do something.
+Almena on a phone or a tablet is a **client**, and it is built in
+[a repository of its own](https://github.com/almena-network/client). Nothing here is compiled
+for one, and a change to this repository is never the place a client's behaviour is decided.
+
+**Assume neither input method.** Every action is reachable by touch and by mouse and keyboard —
+a laptop with a touch screen is one of the three platforms — and the layout survives from a
+window 400 points across to a maximised one. A keyboard shortcut or a context menu is an
+accelerator, never the only way to do something.
 
 **The application fills the window.** No screen, column or card carries a `max-width`. Where a
 screen has several cards they flow — side by side once there is room, stacked when there is
@@ -156,7 +158,7 @@ Icons come from `lucide-react` and from nowhere else.
 `crates/` holds two crates beside the two programs, and each is one because it owns a
 **decision** rather than because two programs happened to need it. `almena-log` holds the shape
 of a record — see
-[logging.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/logging.md).
+[logging.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/storage-and-logs.md).
 `almena-paths` holds where a program keeps things, for the programs Tauri's own resolver does
 not serve; `almena-app` does not even link it, because it keeps Tauri's, and what the two share
 is the answer rather than the code — held to by `src-tauri/tests/paths_agree_with_tauri.rs`.
@@ -171,11 +173,10 @@ Objective-C because no safe API reaches the register it has to write — and eve
 carries a `// SAFETY:` comment saying why it is sound. A second one would take the same shape:
 per module, never crate-wide, and never without the comment.
 
-**`task check` never compiles for a phone.** `--all-targets` means every kind of target — lib,
-bins, tests — and not every platform, so a `#[cfg(mobile)]` path can be wrong for weeks and the
-first thing to say so is a device on somebody's desk. Run `task check:mobile` before pushing
-anything under a `mobile` cfg, and before a release. It names every target it skipped for want
-of a `rustup` toolchain rather than passing quietly.
+**`task check` compiles for this machine and no other.** `--all-targets` means every kind of
+target — lib, bins, tests — and not every operating system, so code behind a `#[cfg]` for one
+of the other two is checked by whoever builds there. There are five such blocks and they are
+all in `open_at_login`, `launch` and the `Reopen` arm of `run`.
 
 **The tools settle style.** `task check` — `cargo fmt --check`, `cargo clippy -D warnings`,
 `tsc --noEmit`, `task catalogs` and `task isolation` — passes before you push, and
@@ -206,22 +207,22 @@ in one of its types is one no other runtime could ever link. The two programs ar
 half: a node that linked a webview it never draws in would take minutes longer to build and tens
 of megabytes more to ship, and nothing but this check would say so.
 
-**The agent is a second program, not a library.** It is built from
-[its own repository](https://github.com/almena-network/agent), staged with `task agent:stage`
-and bundled; a checkout of this repository alone has none, and a build with nothing staged is an
-ordinary state — the application runs and says on its own AI screen that it carries no agent. If
-your change touches the protocol, run `task test:agent`, which drives the staged agent over real
-pipes: it is not part of `task test`, because a test that passed quietly without an artifact
-from another repository would be green on every machine that had nothing to test with. A change
-to the protocol is a change to **both** repositories, including the golden frames each holds a
-copy of.
+**The agent is a second program, not a library.** It is built from [its own
+repository](https://github.com/almena-network/agent), staged with `task agent:stage` and
+bundled — `task build:all` does both halves in order, building the agent there before building
+anything here. A checkout of this repository alone has none, and a build with nothing staged is
+an ordinary state — the application runs and says on its own AI screen that it carries no
+agent. If your change touches the protocol, run `task test:agent`, which drives the staged
+agent over real pipes: it is not part of `task test`, because a test that passed quietly
+without an artifact from another repository would be green on every machine that had nothing to
+test with. A change to the protocol is a change to **both** repositories, including the golden
+frames each holds a copy of.
 
 **Two frameworks, and no third.** Tauri 2 for the windowed application, `ratatui` for the
 terminal, and that is the whole list. The second one is not an accident of what was reached for
 first — a terminal interface was built here, deleted so that everything would be Tauri 2, and
-brought back when a computer with no graphical system had no other way to be a node (spec
-`0001`). A dependency that brings a third framework is a change that argues for it in a spec of
-its own. The README's
+brought back when a computer with no graphical system had no other way to be a node. A
+dependency that brings a third framework is a change that has to argue for it. The README's
 [What is not here yet](README.md#what-is-not-here-yet) lists what the checks do not cover yet. A
 limit that is wrong is changed in the configuration, in its own commit, with the reason — not
 silenced in passing.
@@ -237,10 +238,9 @@ then, not later.
 
 1. Branch off `develop`, which is where the work happens. `main` is what has been released.
 2. Keep the change focused — one concern per pull request, and one step per pull request.
-3. Name the spec your change implements, if there is one.
-4. Make sure `task check` and `task build` succeed before pushing, and `task build:android` or
-   `task build:ios` when your change touches a platform you can build. Say in the pull request
-   which platforms you could not build.
+3. Say what the change is for, in a sentence, where the diff does not say it itself.
+4. Make sure `task check` and `task build` succeed before pushing. Say in the pull request
+   which of the three platforms you could not build.
 5. Write the pull request description in English: what changes, and why.
 
 Commit messages are written in English, in the imperative ("Add locale switcher", not

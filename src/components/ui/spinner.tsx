@@ -1,10 +1,10 @@
 /**
  * What is drawn while something is in flight. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * It ships with an English `aria-label`, which is the one thing about it this project cannot
  * accept: a string a person hears is user-facing text and comes from a catalog
- * (`.agents/rules/user-facing-text.md`). The label is therefore passed in at every call site,
+ * (`.agents/rules/language.md`). The label is therefore passed in at every call site,
  * which overrides it — rather than edited here, where an update would silently put the English
  * back.
  *

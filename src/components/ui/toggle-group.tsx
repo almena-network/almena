@@ -1,6 +1,6 @@
 /**
  * A row of entries of which exactly one is chosen. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add toggle-group --overwrite` produces a diff a

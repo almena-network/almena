@@ -1,6 +1,6 @@
 /**
  * One entry that is either pressed or not, and the class list every entry of a group is built
- * from. Vendored from shadcn/ui — `.agents/rules/interface-elements.md`.
+ * from. Vendored from shadcn/ui — `.agents/rules/interface.md`.
  *
  * **No screen draws a `Toggle`.** This file is here because `toggle-group` imports
  * `toggleVariants` from it and the registry ships the two together; taking it out would mean

@@ -18,7 +18,7 @@ use crate::node::Node;
 /// Here so that a test can assert each one exists in both catalogs. `tsc` does that job for
 /// the frontend by typing every catalog against the English one, and nothing would otherwise
 /// do it for a program written in Rust — which is the half of
-/// `.agents/rules/catalog-parity.md` a type checker cannot reach from here.
+/// `.agents/rules/language.md` a type checker cannot reach from here.
 pub const KEYS: &[&str] = &[
     "app.name",
     "app.version",

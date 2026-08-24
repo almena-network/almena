@@ -4,11 +4,11 @@
  * Everything below it is imported rather than linked separately, because Tailwind's layers
  * have to be registered in one place: a file with `@layer base` in it that Tailwind never saw
  * emits a native cascade layer of its own, and it then loses to utilities it should win
- * against. One entry, four imports, no rules of its own.
+ * against. One entry, five imports, no rules of its own.
  *
  * The order is the order they have to load in: the framework, then the values every utility
- * resolves against, then the document, then the classes a screen is laid out with, then the
- * frame those screens are drawn inside.
+ * resolves against, then the document, then the classes a screen is laid out with, and last
+ * the frame those screens are drawn inside.
  */
 
 /* `source(none)` turns off Tailwind's own guessing about where classes are written, and the

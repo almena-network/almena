@@ -61,8 +61,15 @@ export interface AgentStatus {
   model: string | null;
   /** What the running agent calls itself, or `null` while none is running. */
   agentVersion: string | null;
-  /** Whether a run is in flight. */
-  busy: boolean;
+  /**
+   * The identifier of the run in flight, or `null` when none is.
+   *
+   * An identifier rather than a boolean, and the difference is a webview that reloaded. A page
+   * that has just mounted holds no memory of the run it started, so a boolean would tell it
+   * only that it cannot ask anything — for as long as a run it can neither name nor cancel goes
+   * on. Naming the run is what lets the new page adopt it.
+   */
+  inFlight: string | null;
 }
 
 /** Everything a screen is told about a run, as it happens. */
@@ -80,7 +87,7 @@ const NOTHING_KNOWN: AgentStatus = {
   state: "notStarted",
   model: null,
   agentVersion: null,
-  busy: false,
+  inFlight: null,
 };
 
 /**
@@ -159,7 +166,7 @@ export async function stopAgent(): Promise<void> {
  * The Rust side answers with an object carrying one identifier, and a call that could not be
  * reached at all answers with something else entirely. Both end here, and neither is ever
  * drawn as it arrived: what a person reads is looked up from this in the catalogs
- * (`.agents/rules/user-facing-text.md`).
+ * (`.agents/rules/language.md`).
  */
 function codeOf(refusal: unknown): string {
   if (typeof refusal === "object" && refusal !== null && "code" in refusal) {

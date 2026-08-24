@@ -34,9 +34,8 @@ pub const PROGRAM: &str = "almena-app";
 /// accepting one: Almena is a network of machines in different places, and logs from two of
 /// them are only comparable if they share a clock.
 ///
-/// Registered on every platform, unlike the two beside it. A phone writes records too, and
-/// deleting the whole log directory while the application is closed costs nothing but the
-/// history.
+/// Deleting the whole log directory while the application is closed costs nothing but the
+/// history: nothing kept there is needed to start.
 pub fn plugin() -> TauriPlugin<Wry> {
     Builder::new()
         .targets([

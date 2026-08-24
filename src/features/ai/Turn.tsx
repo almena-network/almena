@@ -2,7 +2,7 @@
  * One turn of the conversation: who said it, and what they said.
  *
  * A row of a list, so it is the registry's `Item` and not markup written here
- * (`.agents/rules/interface-elements.md`). What a person typed and what the agent answered are
+ * (`.agents/rules/interface.md`). What a person typed and what the agent answered are
  * the same element in the same tone: two shapes would be two visual languages on one screen,
  * and the name above each turn already says which is which.
  *

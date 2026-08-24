@@ -7,21 +7,21 @@
  * floats out of the flow, and three places a device's own cut-out edges have to be paid for.
  * Tailwind expresses all three worse than CSS does, and what a person operates inside the
  * frame comes from `src/components/` like everywhere else
- * (`.agents/rules/interface-elements.md`).
+ * (`.agents/rules/interface.md`).
  *
  * It lives here rather than beside the shell feature because Tailwind has to see it: a
  * stylesheet a component imports on its own is compiled without the theme, and `@variant` and
  * `--spacing()` are then names nothing has defined. There is one entry — `index.css` — and
  * every stylesheet in the project hangs off it.
  *
- * The shape follows the width of the viewport and nothing else, so a phone in landscape, a
- * tablet and a window somebody dragged wider are one case and get one layout. `@variant
+ * The shape follows the width of the viewport and nothing else, so a window somebody dragged
+ * narrow and one they dragged wide are one case each and get one layout each. `@variant
  * expanded` is that decision, and the number behind it — 600 — is in the token file and in no
  * other place.
  *
- * The compact shape is a menu floating across the bottom, because that is where a thumb is.
- * The expanded one is a sidebar down the left, because a pointer is anywhere and a wide window
- * has room to spare beside a column of text.
+ * The compact shape is a menu floating across the bottom, where the reach is shortest in a
+ * window that narrow. The expanded one is a sidebar down the left, because a pointer is
+ * anywhere and a wide window has room to spare beside a column of text.
  */
 
 @layer components {
@@ -61,9 +61,7 @@
     right: --spacing(4);
     /* Above the status strip rather than over it: the strip is the bottom edge of the window
        and nothing floats across it. */
-    bottom: calc(
-      var(--height-status) + --spacing(3) + env(safe-area-inset-bottom, 0px)
-    );
+    bottom: calc(var(--height-status) + --spacing(3));
     left: --spacing(4);
     display: flex;
     gap: --spacing(1);
@@ -99,19 +97,16 @@
    * least height that still leaves its text legible, and it is drawn in the faintest of the
    * three text colours so that it never competes with the screen above it.
    *
-   * It is the bottom edge of the application, so it carries the safe area under it on a phone —
-   * the text sits above the home indicator and the strip's own background runs beneath it. In
-   * the expanded shape it spans both columns, so it runs under the sidebar as well as under
-   * the screen: the full width of the application, and not the width of what is beside it.
+   * It is the bottom edge of the application. In the expanded shape it spans both columns, so
+   * it runs under the sidebar as well as under the screen: the full width of the application,
+   * and not the width of what is beside it.
    */
   .status {
     display: flex;
     align-items: center;
     gap: --spacing(4);
-    height: calc(var(--height-status) + env(safe-area-inset-bottom, 0px));
-    padding: 0 calc(--spacing(3) + env(safe-area-inset-right, 0px))
-      env(safe-area-inset-bottom, 0px)
-      calc(--spacing(3) + env(safe-area-inset-left, 0px));
+    height: var(--height-status);
+    padding: 0 --spacing(3);
     border-top: 1px solid var(--border-soft);
     background: var(--sunken);
     color: var(--faint);

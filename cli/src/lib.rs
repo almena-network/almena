@@ -35,7 +35,7 @@ use crate::node::Node;
 /// nodes. Spec `0001` records that as a decision rather than leaving it to be discovered.
 pub const IDENTIFIER: &str = "network.almena.cli";
 
-/// The name this program's log files carry — `.agents/rules/logging.md`.
+/// The name this program's log files carry — `.agents/rules/storage-and-logs.md`.
 ///
 /// The binary a person types, and not the package, which is `almena-cli`. Two programs never
 /// share a file, and `almena-app` is the other one's.

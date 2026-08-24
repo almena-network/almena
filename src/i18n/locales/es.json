@@ -99,7 +99,8 @@
     "conversation": {
       "person": "Tú",
       "agent": "Agente",
-      "working": "Trabajando"
+      "working": "Trabajando",
+      "adopted": "Respondiendo a una pregunta hecha antes de que se abriera esta página. Lo que diga no se puede mostrar aquí."
     },
     "stage": {
       "gathering": "Leyendo lo que se le entregó",

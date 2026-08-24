@@ -6,13 +6,9 @@
 //! no model and no framework. That is what lets the program at the other end be replaced
 //! without a word here changing.
 //!
-//! **Desktop only**, and the argument is not the one about the node. A computer's operating
-//! system offers a process a way to start another, hand it two pipes, supervise it and end it;
-//! a phone's does not — iOS gives a sandboxed application no way to run a second program, and
-//! Android will not execute a binary out of an application's own directory. There is also no
-//! model server beside it for the agent to open its one socket to. The platform does not have
-//! the thing this feature is about, which is what
-//! `.agents/rules/supported-platforms.md` asks for.
+//! **The windowed application alone**, of the two programs this repository builds. The other
+//! is the CLI, which brings a node up on a machine in a rack, and an agent is something a
+//! person sits in front of — `.agents/rules/deployments.md`.
 //!
 //! One file per concern, because "locating, starting, framing, routing, ending and forwarding
 //! records" is six modules sharing a name.
@@ -35,7 +31,7 @@ pub mod records;
 /// resolves somewhere absurd — so it is given somewhere real and harmless instead.
 ///
 /// Under the cache directory, which is the right purpose by
-/// `.agents/rules/data-storage-locations.md`: deleting it while the application is closed costs
+/// `.agents/rules/storage-and-logs.md`: deleting it while the application is closed costs
 /// nothing at all, which is the test that rule sets for cache.
 pub fn scratch(app: &AppHandle) -> PathBuf {
     let directory = app

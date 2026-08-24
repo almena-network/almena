@@ -1,6 +1,6 @@
 /**
  * What a region says when it holds nothing. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * It is the element behind one of this project's promises: an empty answer is an answer, and a
  * blank region reads as a broken screen rather than an empty one (`AGENTS.md`, Transparency).

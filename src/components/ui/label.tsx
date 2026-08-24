@@ -1,6 +1,6 @@
 /**
  * The name of a control, tied to it. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add label --overwrite` produces a diff a reviewer

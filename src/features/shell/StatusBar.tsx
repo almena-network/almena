@@ -21,7 +21,7 @@
  * strip is the only thing in the application that is. It is brighter than everything else on
  * the strip because it is the one thing there that should be noticed; it is not a state colour,
  * because being a development build is not one of the four states and borrowing one of those
- * would cost them their meaning (`.agents/rules/visual-identity.md`).
+ * would cost them their meaning (`.agents/rules/interface.md`).
  */
 
 import { useTranslation } from "react-i18next";

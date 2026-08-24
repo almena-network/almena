@@ -9,7 +9,7 @@
  *
  * - The `:root` blocks hold the **values**, under the names shadcn/ui's elements already read
  *   — `--background`, `--card`, `--primary`, `--border`. Vendored elements are left verbatim
- *   (`.agents/rules/interface-elements.md`), so the palette comes to them rather than the
+ *   (`.agents/rules/interface.md`), so the palette comes to them rather than the
  *   other way round, and swapping a palette at runtime is a rewrite of these lines alone.
  * - The `@theme inline` block turns those values into the **utilities** a screen writes:
  *   `bg-card`, `text-muted-foreground`, `rounded-lg`, `text-sm`. It is where Tailwind's own
@@ -172,7 +172,7 @@
   /* The narrowest a column of a screen's grid is still worth having: a card of prose below
      360 points is a column of two-word lines, and a figure below 160 is a label that wraps.
      Both are the minimum of a `repeat(auto-fit, …)`, which is the whole of how this project
-     reflows — see `.agents/rules/screen-sizes.md`. They are values rather than utilities
+     reflows — see `.agents/rules/interface.md`. They are values rather than utilities
      because Tailwind has no auto-fit grid to hang them off. */
   --width-card-min: 360px;
   --width-figure-min: 160px;
@@ -293,7 +293,7 @@
  * The two `initial` lines are the enforceable half of two rules. Tailwind ships a palette of
  * about 250 colours and five breakpoints; both are cleared here, so `bg-red-500` and `md:` do
  * not exist in this project and a screen reaching for one gets nothing rather than getting
- * away with it — `.agents/rules/visual-identity.md` and `.agents/rules/screen-sizes.md`.
+ * away with it — `.agents/rules/interface.md` and `.agents/rules/interface.md`.
  */
 @theme inline {
   --color-*: initial;
@@ -388,12 +388,12 @@
   /* How wide a paragraph of prose is allowed to get, as `max-w-measure`. It is the one width in the project, and
      it is a measure rather than a size: past about sixty characters an eye loses the start of
      the next line. It never applies to a screen, a column or a card — see
-     `.agents/rules/screen-sizes.md`. */
+     `.agents/rules/interface.md`. */
   --container-measure: 60ch;
 
   /* One breakpoint, at 600, and this is the only place the number appears. Above it the
      application is in its expanded shape; below it, its compact one. Nothing else about the
-     device is ever asked — `.agents/rules/screen-sizes.md`. */
+     device is ever asked — `.agents/rules/interface.md`. */
   --breakpoint-*: initial;
   --breakpoint-expanded: 600px;
 }

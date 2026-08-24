@@ -10,11 +10,10 @@
  *
  * They are layout and typography, which is exactly what is **not** an element: nobody operates
  * a paragraph, and a component whose whole body is a `<p>` earns its reader nothing. What a
- * person operates comes from `src/components/` — see `.agents/rules/interface-elements.md`.
+ * person operates comes from `src/components/` — see `.agents/rules/interface.md`.
  *
- * The column takes the whole width it is given, at every size, so that on a computer the
- * application fills the window the person sized rather than sitting in a phone-shaped strip
- * down the middle of it. What stops a card from becoming a line of text too wide to read is
+ * The column takes the whole width it is given, at every size, so that the application fills
+ * the window the person sized rather than sitting in a narrow strip down the middle of it. What stops a card from becoming a line of text too wide to read is
  * the card beside it, which is `CardGrid`'s and never a maximum width written here.
  */
 
@@ -22,12 +21,9 @@
   .screen {
     @apply flex w-full flex-col gap-4;
 
-    /* The inset every screen gets, plus whatever the device cuts out of its own edges. The
-       foot is the frame's: the screen scrolls inside a region that carries the clearance for
-       the floating menu under it. */
-    padding: calc(--spacing(4) + env(safe-area-inset-top, 0px))
-      calc(--spacing(4) + env(safe-area-inset-right, 0px)) 0
-      calc(--spacing(4) + env(safe-area-inset-left, 0px));
+    /* The inset every screen gets. The foot is the frame's: the screen scrolls inside a
+       region that carries the clearance for the floating menu under it. */
+    padding: --spacing(4) --spacing(4) 0;
   }
 
   /* The name of the screen, where a screen has one. The first one does not: it opens with the

@@ -37,7 +37,7 @@ use tauri_plugin_notification::NotificationExt;
 /// # }
 /// ```
 ///
-/// [`user-facing-text`]: https://github.com/almena-network/almena-network/blob/main/.agents/rules/user-facing-text.md
+/// [`user-facing-text`]: https://github.com/almena-network/almena-network/blob/main/.agents/rules/language.md
 pub fn show(app: &AppHandle, title: &str, body: &str) -> bool {
     match app.notification().builder().title(title).body(body).show() {
         Ok(()) => {

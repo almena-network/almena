@@ -2,45 +2,35 @@
 //!
 //! Every module beside this one owns a concern of its own. This one owns none of them — it
 //! exists so that the order they are wired in is written down in a single place, because
-//! several of them only work when registered before or after another, and because that order
-//! is where the desktop and the mobile shapes of this application differ.
+//! several of them only work when registered before or after another.
+//!
+//! There is one shape of this application and there used to be two. It ran on phones as well
+//! as on computers, and the modules a phone had no use for were marked `#[cfg(desktop)]`; the
+//! windowed application is built for Windows, macOS and Linux alone now
+//! (`.agents/rules/deployments.md`), so a condition that can never be false is not written.
+//! What remains conditional below is the genuine difference **between those three** — which
+//! register an operating system keeps for opening an application at login, and the Dock.
 
-// `almena` is one codebase in two shapes. On a computer the application remembers its
-// geometry, refuses to run twice and can be told at launch to stay out of the way; on a phone
-// the operating system owns all three, so the modules that serve them are marked
-// `#[cfg(desktop)]` and are not in the mobile binary at all.
-//
-// The agent is the same kind of decision for a different reason: it is a second program this
-// application runs as a child, and a phone's operating system offers no way to run one at all.
-#[cfg(desktop)]
 mod agent;
-#[cfg(desktop)]
 mod geometry;
 // Public so that its one question can be asked in a doctest. Nothing outside this crate calls
 // it.
-#[cfg(desktop)]
 pub mod launch;
 mod logging;
 // The one public module of this crate, and public on purpose. Every other module here is
 // wiring that only `run` below has any business calling; `notification` is what this crate
 // offers to whatever comes to have something to announce, including code that runs when no
-// window exists (`.agents/rules/modularity-and-reuse.md`).
+// window exists (`.agents/rules/code.md`).
 pub mod notification;
-#[cfg(desktop)]
 mod open_at_login;
-// What a person chose about how the interface looks and which language it speaks. On every
-// platform: a phone has a palette and a language like anything else.
+// What a person chose about how the interface looks and which language it speaks.
 mod preferences;
-#[cfg(desktop)]
 mod tray;
-#[cfg(desktop)]
 mod window;
 
 use log::info;
 
-#[cfg(desktop)]
 use tauri::Manager;
-#[cfg(desktop)]
 use tauri_plugin_window_state::StateFlags;
 
 /// What the window remembers between runs.
@@ -53,7 +43,6 @@ use tauri_plugin_window_state::StateFlags;
 ///
 /// Withholding `VISIBLE` is what keeps a launch a launch. Whether a window appears is decided
 /// by `launch::starts_hidden` and by nothing that was written to disk last time.
-#[cfg(desktop)]
 fn window_state_flags() -> StateFlags {
     StateFlags::all().difference(StateFlags::VISIBLE)
 }
@@ -65,34 +54,19 @@ fn window_state_flags() -> StateFlags {
 /// assertions still in it — indistinguishable from a release. What the interface says with
 /// this is *this is not the application anybody is meant to be running*, and the debug profile
 /// is exactly that question.
-///
-/// On every platform, unlike the two below it. `task dev:ios` is a development run like any
-/// other, and a phone showing no marker would be the one place the marker could be missed.
 #[tauri::command]
 fn is_development() -> bool {
     cfg!(debug_assertions)
 }
 
-/// Whether this build is the one that runs on a computer.
+/// Registers the window, the login entry and the two inert plugins, and returns the builder.
 ///
-/// The interface needs it for one thing: starting with the system and the tray belong to a
-/// computer, and a screen must not offer a control for something the platform does not have.
-/// It is asked of this side rather than worked out from the user agent, because the binary
-/// knows and a user agent is a guess.
-#[tauri::command]
-fn is_desktop() -> bool {
-    cfg!(desktop)
-}
-
-/// Registers everything only a computer has, and returns the builder with it on.
-///
-/// Apart from [`assemble`] because it is the half that does not exist on a phone, not because
-/// it is a different kind of work: the window it remembers between runs, who may open it at
-/// login, and the close button that no longer ends it.
+/// Apart from [`assemble`] to keep that function readable, not because it is a different kind
+/// of work: the window this remembers between runs, who may open it at login, and the close
+/// button that no longer ends it.
 ///
 /// Single instance is not here, and cannot be: its own documentation requires it to be the
 /// first plugin registered of all, which is before this function is reached.
-#[cfg(desktop)]
 fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     let builder = builder.plugin(
         tauri_plugin_window_state::Builder::default()
@@ -108,9 +82,6 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
     // macOS keeps two — one for opening at login and one for running in the background — and
     // this plugin can only write the second, which is the wrong one. `open_at_login` is where
     // that is explained and where macOS is served instead.
-    //
-    // A phone is absent from both: its operating system owns when an application runs and
-    // offers nothing to switch.
     #[cfg(any(windows, target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_autostart::init(
         tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -122,7 +93,7 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
     // day something has one to ask. `updater` is what lets an application that is a file
     // somebody downloaded replace itself — and it is registered **inert**: nothing in this
     // application asks it anything, and what it may and may not do when something does is
-    // `.agents/rules/updating.md`, not a builder argument.
+    // `.agents/rules/deployments.md`, not a builder argument.
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
@@ -175,7 +146,6 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
 /// again; if the tray failed to build, a close is a close and the application ends the way it
 /// always did, rather than vanishing to somewhere this screen has no route back to. And every
 /// resize is the size a person is choosing, which is what `geometry` is there to give back.
-#[cfg(desktop)]
 fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     match event {
         tauri::WindowEvent::CloseRequested { api, .. } => {
@@ -200,36 +170,23 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
     // Single instance goes first: the plugin's own documentation requires it to be the first
     // one registered. A second launch does not start a second application — it brings the
     // running one back to the person who asked for it.
-    //
-    // There is no mobile equivalent to add here, and none is needed: iOS and Android already
-    // guarantee a single running instance.
-    #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         info!("second_launch_folded_into_running_instance");
         window::show_main(app);
     }));
 
-    // Logging comes next so that everything registered below it can write a record. Not a
-    // desktop concern: a phone writes records too, and the plugin supports Android and iOS.
-    //
-    // Notifications are registered here for the same reason and with the same reach — all five
-    // platforms, so the frontend's way to them and `notification`'s are available wherever this
-    // application runs. Order does not matter to this one; it sits with the others that are not
-    // a desktop concern rather than among the three that are.
+    // Logging comes next so that everything registered below it can write a record.
+    // Notifications and the opener sit beside it because order does not matter to either.
     let builder = builder
         .plugin(logging::plugin())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
 
-    #[cfg(desktop)]
     let builder = assemble_desktop(builder);
 
-    // What the interface may call. The desktop build answers one more than the mobile one: the
-    // tray is built from that side because its menu is text a person reads, and the catalogs
-    // are there and not here.
-    #[cfg(desktop)]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        is_desktop,
+    // What the interface may call. The tray is built from this side because its menu is text a
+    // person reads, and the catalogs are on the other one.
+    builder.invoke_handler(tauri::generate_handler![
         is_development,
         tray::install_tray,
         open_at_login::opens_at_login,
@@ -240,16 +197,7 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
         agent::commands::agent_ask,
         agent::commands::agent_cancel,
         agent::commands::agent_stop
-    ]);
-    #[cfg(mobile)]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        is_desktop,
-        is_development,
-        preferences::preferences,
-        preferences::set_preferences
-    ]);
-
-    builder
+    ])
 }
 
 /// Builds the application and runs it until something ends it.
@@ -277,7 +225,6 @@ pub fn run() {
                 // of a running application with no window on screen is a request for it back.
                 // The other two desktops have no Dock and come back through the launcher
                 // instead, which the single-instance plugin turns into the very same call.
-                #[cfg(desktop)]
                 match event {
                     tauri::RunEvent::Exit => {
                         // Before the geometry, because ending the agent means closing its
@@ -290,30 +237,8 @@ pub fn run() {
                     tauri::RunEvent::Reopen { .. } => window::show_main(handle),
                     _ => {}
                 }
-
-                #[cfg(not(desktop))]
-                let _ = (handle, event);
             });
         }
         Err(error) => panic!("the application could not be built: {error}"),
-    }
-}
-
-/// Where a phone starts the application.
-///
-/// `tauri::mobile_entry_point` emits a public function of its own and gives it no doc comment,
-/// which a crate that denies `missing_docs` cannot compile — the failure only appears on a
-/// mobile target, so a desktop build passes and `task deploy:ios` is where it turns up.
-///
-/// The allow is on this module rather than on the function because the macro emits a **new**
-/// item: an attribute on what it consumed does not cover what it produces. A module is the
-/// smallest scope that does cover it, and this one holds one function, so nothing else can
-/// quietly go undocumented under the same allow.
-#[cfg(mobile)]
-#[allow(missing_docs)]
-mod entry {
-    #[tauri::mobile_entry_point]
-    fn start() {
-        super::run();
     }
 }

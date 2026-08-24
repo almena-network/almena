@@ -9,7 +9,7 @@
  *
  * shadcn/ui has no element for this and it is not one of its variants: a figure is Almena's
  * own, built from the same values as everything else — see
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  */
 
 import { useTranslation } from "react-i18next";

@@ -1,6 +1,6 @@
 /**
  * The rule between two things. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add separator --overwrite` produces a diff a reviewer

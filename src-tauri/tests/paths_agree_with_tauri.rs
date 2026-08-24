@@ -1,8 +1,8 @@
 //! Tauri's path resolver and `almena-paths` must answer the same question the same way.
 //!
 //! This repository builds two programs and they put things in the same kinds of place. The
-//! windowed application asks Tauri, which also serves iOS and Android; the CLI has no Tauri in
-//! it and asks `almena-paths`. Both compute `dirs::<purpose>_dir()` joined to a bundle
+//! windowed application asks Tauri; the CLI has no Tauri in it and asks `almena-paths`. Both
+//! compute `dirs::<purpose>_dir()` joined to a bundle
 //! identifier, so they agree **by construction** — and this file is what turns that from a
 //! sentence in a document into something a build can refuse.
 //!
@@ -11,7 +11,8 @@
 //! nothing in the application links it, which is what keeps `task isolation` meaningful.
 //!
 //! The identifiers of the two programs differ on purpose — `network.almena.desktop` and
-//! `network.almena.cli`, spec `0001` — so both sides are handed the same one here. What is
+//! `network.almena.cli`, so that a machine running both is two nodes
+//! (`.agents/rules/storage-and-logs.md`). Both sides are handed the same one here: what is
 //! under test is the computation, not the name.
 
 use almena_paths::Paths;

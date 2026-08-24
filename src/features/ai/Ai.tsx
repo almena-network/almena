@@ -1,14 +1,11 @@
 /**
  * The AI screen: the agent's state, the conversation, and the box to add to it.
  *
- * **Desktop only**, and the argument is not the one about the node — that one has already
- * explained something and `.agents/rules/supported-platforms.md` forbids leaning on it twice.
- * This section is a *second program the application runs*: a computer's operating system lets
- * a process start another, hand it two pipes and end it, and a phone's does not — iOS gives a
- * sandboxed application no way to run a second program at all, and Android will not execute a
- * binary out of an application's own directory. There is also no model server beside it for
- * the agent to reach. The platform does not have the thing this screen is about, so it is not
- * listed there rather than listed and empty.
+ * The agent is a *second program this application runs*: it is started beside the window,
+ * spoken to over a pipe and ended with it. That is why this screen belongs to the windowed
+ * application and to nothing else the project builds — the CLI brings a node up on a machine
+ * in a rack, and an agent is something a person sits in front of
+ * (`.agents/rules/deployments.md`).
  *
  * # Four nothings, and each says which one it is
  *
@@ -30,10 +27,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import AgentState from "@/features/ai/AgentState";
 import Composer from "@/features/ai/Composer";
 import Conversation from "@/features/ai/Conversation";
+import Failure from "@/features/ai/Failure";
 import { useAgent } from "@/hooks/useAgent";
 import type { AgentState as Where } from "@/lib/agent";
 
@@ -69,40 +66,10 @@ function nothingYet(state: Where): keyof typeof NOTHING | null {
   return state === "running" ? null : state;
 }
 
-/**
- * Every failure this interface has words for.
- *
- * Written out rather than derived, because it is exactly the list the catalogs carry — and the
- * agent's own list is longer and is allowed to grow without this build being rebuilt. What
- * arrives from outside it is drawn with the general sentence below.
- */
-const SAYS = [
-  "agent_will_not_start",
-  "agent_stopped",
-  "run_already_in_flight",
-  "model_unreachable",
-  "model_unknown",
-  "resource_unknown",
-] as const;
-
-/**
- * The catalog key for one failure, or the general one where this build has never heard of it.
- *
- * The narrowing is here and it is deliberate: an identifier is not text, and an application
- * that drew one because it had nothing better would be putting a subprocess's vocabulary in
- * front of a person (`.agents/rules/user-facing-text.md`). The code itself is already in the
- * records — the Rust side writes it the moment the failure arrives — so nothing is lost by
- * keeping it off the screen.
- */
-function reasonFor(code: string) {
-  const known = SAYS.find((said) => said === code);
-  return known === undefined ? ("ai.error.unknown" as const) : (`ai.error.${known}` as const);
-}
-
 /** The AI screen. */
 function Ai() {
   const { t } = useTranslation();
-  const { status, turns, saying, stage, running, failure, ask, stop } = useAgent();
+  const { status, turns, saying, stage, running, adopted, failure, ask, stop } = useAgent();
 
   // Before the first look nothing is known, and nothing is claimed: the conversation is drawn
   // empty and the composer waits. `notStarted` is what a person meets on an ordinary opening,
@@ -133,18 +100,16 @@ function Ai() {
             <AgentState state={where} />
           </div>
 
-          {failure !== null && (
-            <Alert variant="destructive">
-              <AlertTitle>{t("ai.error.heading")}</AlertTitle>
-              {/* A code this build has no words for is drawn with the general sentence, and
-                  the identifier itself goes to the records rather than onto the screen —
-                  `.agents/rules/user-facing-text.md`. */}
-              <AlertDescription>{t(reasonFor(failure))}</AlertDescription>
-            </Alert>
-          )}
+          {failure !== null && <Failure code={failure} />}
 
           {nothing === null ? (
-            <Conversation turns={turns} saying={saying} stage={stage} running={running} />
+            <Conversation
+              turns={turns}
+              saying={saying}
+              stage={stage}
+              running={running}
+              adopted={adopted}
+            />
           ) : (
             <EmptyState
               icon={<nothing.Mark aria-hidden="true" />}

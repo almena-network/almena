@@ -5,9 +5,9 @@
  * correcting once. Anything with a class name belongs to the element that owns it, and the
  * reset is Tailwind's Preflight rather than one of ours.
  *
- * This is the same application on a phone and in a window, so the corrections below cover
- * both: a finger gets no grey flash and no double-tap zoom, a pointer gets a visible focus
- * ring, and neither gets a page that bounces away from under the floating menu.
+ * A computer is not only a pointer: the laptops this runs on have touch screens too, so the
+ * corrections below cover both — a finger gets no grey flash and no double-tap zoom, a pointer
+ * gets a visible focus ring, and neither gets a page that bounces away under the menu.
  */
 
 @layer base {

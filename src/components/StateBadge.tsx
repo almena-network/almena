@@ -3,7 +3,7 @@
  *
  * It exists because the pairing is the rule and not the screen's to choose: a state is never
  * carried by colour alone, and the four are the only four
- * (`.agents/rules/visual-identity.md`). Two screens showing the same state in two different
+ * (`.agents/rules/interface.md`). Two screens showing the same state in two different
  * words, or a fifth colour arriving because somebody needed one, are both what this closes.
  *
  * The badge around it is shadcn/ui's, in its outline tone. A badge *filled* with a state colour

@@ -3,7 +3,7 @@
  *
  * Four choices — the palette, the identity colour, the language, and which model the agent is
  * asked for — held in one file by the Rust side, which is where a file this application writes
- * belongs (`.agents/rules/data-storage-locations.md`). Nothing here knows what any of them
+ * belongs (`.agents/rules/storage-and-logs.md`). Nothing here knows what any of them
  * *mean*: this file is the store, and the vocabularies live where they are already written
  * down — `@/lib/appearance` for the two the interface is drawn from, `@/i18n` for the
  * language, `@/lib/models` for the model.

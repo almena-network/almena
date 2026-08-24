@@ -1,5 +1,5 @@
 /**
- * The switch. Vendored from shadcn/ui — `.agents/rules/interface-elements.md`.
+ * The switch. Vendored from shadcn/ui — `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add switch --overwrite` produces a diff a reviewer

@@ -4,7 +4,7 @@
  * The words are not the caller's to choose. Every setting in the application says the same
  * three, out of the catalogs and out of this file, because a screen that invented its own pair
  * would be a screen where "on" means something slightly different —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * `checked` is allowed to be `null`, and that is not an oversight: a setting read from the
  * operating system is not known for the first moment of a screen's life, and a switch that
@@ -55,7 +55,7 @@ function Setting({ label, checked, onToggle }: SettingProps) {
   return (
     // The row is 44 points tall and the label fills it, so that what a finger has to hit is the
     // setting's name and not the 18-point switch beside it
-    // (`.agents/rules/supported-platforms.md`).
+    // (`.agents/rules/deployments.md`).
     <Field orientation="horizontal" data-disabled={checked === null}>
       <FieldContent className="min-h-11 justify-center">
         <FieldLabel htmlFor={id}>{label}</FieldLabel>

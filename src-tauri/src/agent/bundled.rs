@@ -21,7 +21,7 @@ const PROGRAM: &str = "almena-agent";
 /// still builds, runs, and says on its own screen that it has none.
 ///
 /// The suffix comes from [`std::env::consts::EXE_SUFFIX`] rather than from a `cfg`, for the
-/// reason `.agents/rules/data-storage-locations.md` gives about paths: a location decided in
+/// reason `.agents/rules/storage-and-logs.md` gives about paths: a location decided in
 /// platform-specific code is one that drifts per platform, and this one does not have to.
 #[must_use]
 pub fn binary(app: &AppHandle) -> Option<PathBuf> {

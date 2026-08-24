@@ -6,7 +6,7 @@
  * one the element was built with instead of landing beside it and losing to source order.
  *
  * The file is named after the function rather than called `utils`, which is what shadcn's
- * scaffold names it — see `.agents/rules/modularity-and-reuse.md`, and `components.json`,
+ * scaffold names it — see `.agents/rules/code.md`, and `components.json`,
  * whose `aliases.utils` is what points the generated imports here.
  */
 

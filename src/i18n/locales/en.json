@@ -99,7 +99,8 @@
     "conversation": {
       "person": "You",
       "agent": "Agent",
-      "working": "Working"
+      "working": "Working",
+      "adopted": "Answering a question asked before this page opened. What it says cannot be shown here."
     },
     "stage": {
       "gathering": "Reading what it was handed",

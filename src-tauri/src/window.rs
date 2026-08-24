@@ -1,8 +1,5 @@
 //! The main window: bringing it back to the person who asked for it.
 //!
-//! Desktop only — on a phone the operating system owns the window, and this module is not in
-//! the mobile binary.
-//!
 //! Two of the three exist for reasons that are not local to any caller. A second
 //! launch of the application must not become a second process, so the single-instance plugin
 //! turns it into [`show_main`]; and the close button no longer ends the application, so it

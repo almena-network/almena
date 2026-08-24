@@ -57,26 +57,21 @@ almena-paths = { path = "crates/almena-paths" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-# What a person reads back when something went wrong. Registered on every platform: a phone
-# writes records too, and this plugin supports Android and iOS.
+# What a person reads back when something went wrong.
 tauri-plugin-log = "2"
-# What the application says when its own window is not what the person is looking at.
-# Registered on every platform, and adopted because it serves all five of them — a dependency
-# that served only some is one `.agents/rules/supported-platforms.md` refuses.
+# What the application says when its own window is not what the person is looking at. Adopted
+# because it serves every platform this repository builds for — a dependency that served only
+# some is one `.agents/rules/deployments.md` refuses.
 tauri-plugin-notification = "2"
-# Desktop only. A phone's operating system owns the window and guarantees one instance of an
-# application already, so neither of these is compiled into the mobile binary.
+# What the window remembers between runs, and what folds a second launch into the running
+# application instead of starting another.
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
-# The native dialogs — a question, a warning, a file to pick. Registered on computers alone,
-# which is a decision rather than the plugin's limit: it serves phones too. Nothing draws one
-# yet, and the day something does, a phone reaching a decision through a screen instead of a
-# dialog is the shape `.agents/rules/supported-platforms.md` asks for.
+# The native dialogs — a question, a warning, a file to pick. Nothing draws one yet.
 tauri-plugin-dialog = "2"
-# Updating the application in place, on the computers where an application is a file somebody
-# downloaded. A phone updates through its own store and has no equivalent to write. Registered
-# but never asked: `.agents/rules/updating.md` is what it may and may not do, and the endpoint
-# and the key it would need are not decided.
+# Updating the application in place, where an application is a file somebody downloaded.
+# Registered but never asked: `.agents/rules/deployments.md` is what it may and may not do, and
+# the endpoint and the key it would need are not decided.
 tauri-plugin-updater = "2"
 # Whether the operating system opens this application when somebody logs in. Windows and
 # Linux only: each has one register for it and this writes to it. macOS keeps two and means

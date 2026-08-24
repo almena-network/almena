@@ -17,7 +17,7 @@ use crate::agent::process::{self, Refusal, Status, Supervisor};
 ///
 /// A struct rather than four arguments, and the reason is a limit rather than taste: `AppHandle`
 /// counts as a parameter, so the loose form would be six against a threshold of five —
-/// `.agents/rules/code-size.md`. It is the better shape anyway.
+/// `.agents/rules/code.md`. It is the better shape anyway.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Question {

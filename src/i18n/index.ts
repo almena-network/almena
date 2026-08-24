@@ -69,9 +69,6 @@ export function isLanguage(value: string | null | undefined): value is Language 
  * The device's preference arrives as a list of tags like `es-419`, most wanted first. Only
  * the part before the dash is matched, so a Spanish of any region gets Spanish.
  *
- * On iOS and Android this is the language the person chose for Almena alone, when they chose
- * one: both platforms fold a per-application language into the list the webview reports, so
- * there is nothing to ask them for and nothing to store.
  */
 export function deviceLanguage(): Language {
   for (const tag of navigator.languages ?? [navigator.language]) {

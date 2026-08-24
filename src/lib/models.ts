@@ -9,7 +9,7 @@
  *
  * It lives on this side for the reason every other vocabulary does: `preferences.rs` stores a
  * string and hands it back, and adding a model must not mean editing Rust
- * (`.agents/rules/modularity-and-reuse.md`).
+ * (`.agents/rules/code.md`).
  *
  * The names are the ones an OpenAI-compatible server is asked by, so they are identifiers
  * rather than text a person reads — which is why they are not in the catalogs. What *is* in

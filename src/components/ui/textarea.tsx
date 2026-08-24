@@ -1,6 +1,6 @@
 /**
  * A field for more than one line of text. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, with **one** change, so that
  * re-running `pnpm dlx shadcn@latest add textarea --overwrite` produces a diff a reviewer can
@@ -9,13 +9,13 @@
  *
  * The change is `md:text-sm` becoming `expanded:text-sm`. There is one breakpoint in this
  * project and it is `expanded:` at 600 points — Tailwind's own five are cleared from the theme
- * (`.agents/rules/screen-sizes.md`), so `md:` here draws **nothing at all** and the field would
+ * (`.agents/rules/interface.md`), so `md:` here draws **nothing at all** and the field would
  * sit at 15 points everywhere. The registry's intent is kept exactly: the larger size on a
  * narrow viewport, which is what stops a phone zooming the page when somebody taps into a
  * field, and the body size once there is room.
  *
  * It is the one element in this set a person types into, which makes it the one place the
- * exception in `.agents/rules/no-text-selection.md` applies — and that exception is already
+ * exception in `.agents/rules/interface.md` applies — and that exception is already
  * written, as an element rule in `src/styles/base.css`, so there is nothing to do here.
  */
 

@@ -1,12 +1,9 @@
 version: "3"
 
 vars:
-  # Override to pick a specific device, e.g. task deploy:android DEVICE=emulator-5554
-  DEVICE: ""
   # A command line for whichever program is being run, e.g. task dev ARGS="--hidden" or
   # task dev:cli ARGS="--quiet". The windowed application answers one flag and reads it in
-  # src-tauri/src/launch.rs; the node's surface is in cli/src/arguments.rs. Computers only: a
-  # phone launches nothing from a command line.
+  # src-tauri/src/launch.rs; the node's surface is in cli/src/arguments.rs.
   ARGS: ""
   # Where the agent's own repository is, for `task agent:build`. It is a repository of its own
   # — released on its own schedule, not a subdirectory of this one — so a checkout of this
@@ -126,36 +123,6 @@ tasks:
       - task: catalogs
       - task: isolation
 
-  check:mobile:
-    desc: Type-check the application for the mobile targets, which `check` does not
-    deps: [install]
-    cmds:
-      - task: banner
-        vars: { OPERATION: "check:mobile" }
-      # `--all-targets` in `check` means every *kind* of target — lib, bins, tests, examples —
-      # and not every platform. Nothing there ever compiles for a phone, which is how a
-      # `#[cfg(mobile)]` path can be wrong for weeks and only say so at `task deploy:ios`.
-      #
-      # It checks the targets this machine has and names the ones it skipped rather than
-      # passing quietly, because a check that silently covers less than it looks like is worse
-      # than no check. Having none of them is a failure: there would be nothing to report.
-      - |
-        installed="$(rustup target list --installed)"
-        checked=0
-        for target in aarch64-apple-ios aarch64-apple-ios-sim aarch64-linux-android armv7-linux-androideabi x86_64-linux-android; do
-          if echo "$installed" | grep -qx "$target"; then
-            echo "checking $target"
-            cargo check -q -p almena-app --lib --target "$target" || exit 1
-            checked=$((checked + 1))
-          else
-            echo "skipped $target — not installed (rustup target add $target)"
-          fi
-        done
-        if [ "$checked" -eq 0 ]; then
-          echo "no mobile target is installed: nothing was checked" >&2
-          exit 1
-        fi
-
   agent:build:
     desc: Build the agent from its own repository, so that there is something to stage
     preconditions:
@@ -267,10 +234,9 @@ tasks:
     cmds:
       - task: banner
         vars: { OPERATION: icons }
-      # The manifest drives the whole set: the desktop sizes, the Windows Store logos, and
-      # the Android adaptive layers — background, foreground and monochrome — which cannot be
-      # derived from a single square. Where a native project has been generated, the mobile
-      # icons are written straight into it rather than into `src-tauri/icons/`.
+      # The manifest drives the whole set: the desktop sizes and the Windows Store logos. It
+      # also carried the Android adaptive layers — background, foreground and monochrome, which
+      # cannot be derived from a single square — and nothing built here runs on a phone now.
       - pnpm tauri icon assets/branding/icon-manifest.json
       # macOS wants its own padding inside the rounded square, which the manifest has no way
       # to express, so the `.icns` is generated a second time from the artwork that has it.
@@ -289,57 +255,6 @@ tasks:
         platforms: [darwin]
       - cmd: sips -z 32 32 assets/branding/tray/tray-icon-negative.png --out src-tauri/icons/trayNegative.png
         platforms: [darwin]
-
-  devices:
-    desc: List connected Android and iOS devices
-    silent: true
-    cmds:
-      - task: banner
-        vars: { OPERATION: devices }
-      - echo "Android:"
-      - adb devices -l | tail -n +2 | sed '/^$/d;s/^/  /' || true
-      - cmd: echo "iOS:"
-        platforms: [darwin]
-      - cmd: xcrun devicectl list devices 2>/dev/null | sed 's/^/  /' || true
-        platforms: [darwin]
-
-  # ----- Native project generation -------------------------------------------
-
-  init:
-    desc: Generate the native projects for every platform this host can build
-    cmds:
-      - task: banner
-        vars: { OPERATION: init }
-      - task: init:android
-      - cmd: task init:ios
-        platforms: [darwin]
-
-  init:android:
-    desc: Generate the Android project in src-tauri/gen/android
-    deps: [install]
-    preconditions:
-      - sh: test -n "$ANDROID_HOME" && test -n "$NDK_HOME"
-        msg: "ANDROID_HOME and NDK_HOME must be set. See README.md#requirements"
-    status:
-      - test -d src-tauri/gen/android
-    cmds:
-      - task: banner
-        vars: { OPERATION: "init:android" }
-      - pnpm tauri android init
-
-  init:ios:
-    desc: Generate the iOS project in src-tauri/gen/apple
-    deps: [install]
-    platforms: [darwin]
-    preconditions:
-      - sh: xcrun --find xcodebuild >/dev/null 2>&1
-        msg: "Xcode command line tools not found. See README.md#requirements"
-    status:
-      - test -d src-tauri/gen/apple
-    cmds:
-      - task: banner
-        vars: { OPERATION: "init:ios" }
-      - pnpm tauri ios init
 
   # ----- Development ---------------------------------------------------------
 
@@ -367,31 +282,6 @@ tasks:
       # ordinary way, because there is no Tauri CLI in between to get past — `task dev:cli
       # ARGS="--quiet"` is the one to try when what you want to see is the records.
       - cargo run -q -p almena-cli -- {{.ARGS}}
-
-  dev:android:
-    desc: Run on a connected Android device or emulator, with hot reload
-    deps: [install]
-    preconditions:
-      - sh: test -d src-tauri/gen/android
-        msg: "Android project not generated. Run: task init:android"
-      - sh: adb devices | grep -qw device
-        msg: "No Android device connected. Check with: task devices"
-    cmds:
-      - task: banner
-        vars: { OPERATION: "dev:android" }
-      - pnpm tauri android dev {{.DEVICE}}
-
-  dev:ios:
-    desc: Run on a connected iOS device or simulator, with hot reload
-    deps: [install]
-    platforms: [darwin]
-    preconditions:
-      - sh: test -d src-tauri/gen/apple
-        msg: "iOS project not generated. Run: task init:ios"
-    cmds:
-      - task: banner
-        vars: { OPERATION: "dev:ios" }
-      - pnpm tauri ios dev {{.DEVICE}}
 
   # ----- Release builds ------------------------------------------------------
 
@@ -427,74 +317,37 @@ tasks:
         vars: { OPERATION: "build:cli" }
       # One binary and no bundle. A node on a server is a file somebody copies there, and which
       # packages that becomes — the Debian and RPM families the desktop already builds for — is
-      # not decided (`.agents/rules/desktop-client-cli.md`).
+      # not decided (`.agents/rules/deployments.md`).
       - cargo build -q --release -p almena-cli
       - cmd: echo "Built target/release/almena"
         silent: true
 
-  build:android:
-    desc: Build the Android release package
-    deps: [install]
-    preconditions:
-      - sh: test -d src-tauri/gen/android
-        msg: "Android project not generated. Run: task init:android"
+  build:all:
+    desc: Build the agent, then both programs for this computer, with that agent inside the desktop
     cmds:
       - task: banner
-        vars: { OPERATION: "build:android" }
-      - pnpm tauri android build
-
-  build:ios:
-    desc: Build the iOS release package
-    deps: [install]
-    platforms: [darwin]
-    preconditions:
-      - sh: test -d src-tauri/gen/apple
-        msg: "iOS project not generated. Run: task init:ios"
-    cmds:
-      - task: banner
-        vars: { OPERATION: "build:ios" }
-      - pnpm tauri ios build
-
-  # ----- Install on a connected device ---------------------------------------
-
-  deploy:android:
-    desc: Choose an Android device or emulator, build the app for it, and install it there
-    deps: [install]
-    # The script asks which destination to use, so Task has to leave it the terminal.
-    interactive: true
-    preconditions:
-      - sh: test -d src-tauri/gen/android
-        msg: "Android project not generated. Run: task init:android"
-    cmds:
-      - task: banner
-        vars: { OPERATION: "deploy:android" }
-      # Everything is in the script because the steps depend on each other: what is built
-      # depends on where it is going, so the destination is chosen — and started, if it is an
-      # emulator that was not running — before the build begins. Set DEVICE to skip the
-      # prompt; a serial, an AVD name or a model all work.
-      - DEVICE='{{.DEVICE}}' ./scripts/deploy-android.sh
-
-  deploy:ios:
-    desc: Choose an iOS device or simulator, build the app for it, and install it there
-    deps: [install]
-    platforms: [darwin]
-    # The script asks which destination to use, so Task has to leave it the terminal.
-    interactive: true
-    preconditions:
-      - sh: test -d src-tauri/gen/apple
-        msg: "iOS project not generated. Run: task init:ios"
-    cmds:
-      - task: banner
-        vars: { OPERATION: "deploy:ios" }
-      # Everything is in the script because the steps depend on each other: what is built
-      # depends on where it is going, so the destination is chosen before the build starts.
-      # Set DEVICE to skip the prompt — a name or an identifier both work.
-      - DEVICE='{{.DEVICE}}' ./scripts/deploy-ios.sh
+        vars: { OPERATION: "build:all" }
+      # Commands rather than `deps`, and that is the whole of this task: dependencies run at
+      # the same time as each other, and `agent:stage` would then copy whatever
+      # {{.AGENT_DIST}} happened to hold when the build started — the previous agent, or
+      # nothing at all. Here the agent is built first and on its own, so what ends up inside
+      # the bundle is the agent this command just produced.
+      #
+      # `agent:build` needs the agent's own repository and says where to point it when it is
+      # not at {{.AGENT_REPO}}. That is a failure here rather than a shrug, because this task
+      # was asked for an agent; `task build` on its own remains the one that carries none and
+      # says so.
+      - task: agent:build
+      - task: build
+      # The node too. This computer's two programs are the desktop and the CLI, and a task
+      # called `all` that quietly built one of them would be naming itself wrongly. Nothing of
+      # the agent is in this one: a node in a rack has none.
+      - task: build:cli
 
   # ----- Housekeeping --------------------------------------------------------
 
   clean:
-    desc: Remove build artifacts, keeping the generated native projects
+    desc: Remove build artifacts
     cmds:
       - task: banner
         vars: { OPERATION: clean }

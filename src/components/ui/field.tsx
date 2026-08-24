@@ -1,6 +1,6 @@
 /**
  * A control with its name, its explanation and its refusal. Vendored from shadcn/ui —
- * `.agents/rules/interface-elements.md`.
+ * `.agents/rules/interface.md`.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add field --overwrite` produces a diff a reviewer

@@ -1,13 +1,13 @@
 /**
  * Putting a notification on the screen of the device this is running on.
  *
- * Three of the five platforms refuse one until they have been asked, and the asking has to
+ * Two of the three platforms refuse one until they have been asked, and the asking has to
  * happen where a person can answer it, so it lives here rather than at startup: a permission
  * dialog nobody expected, before anybody asked for anything, is a worse thing than a
- * notification that arrives one tap later.
+ * notification that arrives one press later.
  *
  * **No text lives in this file.** What a notification says arrives from the caller, which is
- * the side that took it out of the catalogs — `.agents/rules/user-facing-text.md`. The Rust
+ * the side that took it out of the catalogs — `.agents/rules/language.md`. The Rust
  * side has its own way to the same plugin, in `src-tauri/src/notification.rs`, for the code
  * that runs with no window in front of it.
  */

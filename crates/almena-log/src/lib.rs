@@ -35,7 +35,7 @@
 //! [`line`] reads the clock itself. A caller that passed one in could pass a local one, and
 //! the whole point of the paragraph above is that nobody gets to.
 //!
-//! See `.agents/rules/logging.md`, which this crate is the enforceable half of.
+//! See `.agents/rules/storage-and-logs.md`, which this crate is the enforceable half of.
 
 use std::fmt::Arguments;
 

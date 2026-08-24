@@ -16,7 +16,7 @@ use tauri::ipc::Channel;
 ///
 /// Every variant carries what a screen can draw and nothing else. There is no contract version
 /// here, no identifier and no `detail`: the channel belongs to one run, so nothing has to be
-/// correlated, and prose from a subprocess is never drawn — `.agents/rules/user-facing-text.md`
+/// correlated, and prose from a subprocess is never drawn — `.agents/rules/language.md`
 /// says what a person reads comes from the catalogs, looked up by the identifier below.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "event", rename_all = "camelCase")]
