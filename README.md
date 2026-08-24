@@ -70,6 +70,11 @@ above carries its own, for macOS, Windows and Linux alike.
 To reach the network, rather than only to build this application, the device also needs
 **IPv6 connectivity**. Almena is an IPv6 network and there is no second address family.
 
+Having it is what lets a node take part; being *reachable* at it is a separate fact and not one
+to assume. Most home connections drop what nobody asked for, and nothing here traverses anything
+to get around that. A node that cannot be dialled dials out instead and takes part in full — and
+which of the two it is, the application measures rather than guesses.
+
 That is all the application needs **to build itself**. To build it with an agent inside it,
 the agent's own requirements apply too — Python 3.14 and `uv`, listed in
 [its repository](https://github.com/almena-network/agent). Nothing here needs them: a build with
@@ -567,6 +572,17 @@ not others. Four is also close to what the compact shape has room for: at 400 po
 fifth entry leaves each one around 70 points, and 44 of that is what a finger is entitled to. So
 a fifth section is a line added to a list and a sixth is a change to the navigation.
 
+A section that holds more than one screen draws a **second navigation across the top of
+itself**, and it is the first one turned on its side: the same `<nav>` of buttons carrying
+`aria-current="page"`, wrapping rather than scrolling sideways, one shape at every width. The
+one difference is that it does not wear the identity colour — that says which *section* you are
+in, once — and that the menu **is** the screen's heading: a section with one screen titles
+itself, a section with a menu does not, because the menu has already named the screen showing. Its screens are declared beside the sections in `src/features/shell/sections.ts` as a
+tuple of two or more, so a menu with a single entry in it does not compile, and a section with
+one screen simply has none. Three of the four sections have one: Network is *The network* and
+*Peers*, AI is *Conversation* and *Agent*, Settings is *Appearance* and *General*. The first
+screen has one screen and titles itself, which is the same rule and not an exception to it.
+
 **Every element on those screens comes from [shadcn/ui](https://ui.shadcn.com)**, vendored into
 `src/components/ui/` by `pnpm dlx shadcn@latest add <name>` and left as the registry wrote it:
 `alert`, `badge`, `button`, `card`, `empty`, `field`, `item`, `label`, `select`, `separator`,
@@ -651,15 +667,19 @@ it is the one thing on the strip that should be noticed, and it is not drawn in 
 being a development build is not one of the four states, and borrowing one would cost all four
 their meaning.
 
-The first screen carries two cards. One says what the application is and that it is on no
+The first screen titles itself and carries two cards. It carried the mark and the product's
+name too, until those moved to the head of the navigation where they are bigger and where a
+person meets them before any screen. One card says what the application is and that it is on no
 network, which is the whole of what it can honestly say — the peer-to-peer layer is not here,
 so no figure on it is measured and none is invented. The other is the one thing this build can
 actually do, which is [send a notification](#notifications). They flow rather than stack: side
 by side once there is room for both, one above the other the moment there is not, out of a
 single auto-fitting grid in `src/components/CardGrid.tsx` and with no breakpoint of their own.
 
-Network carries two cards: what is known about the network this node is on, and the peers it
-is talking to. **All of it is a dash and an empty state**, because there is no peer-to-peer
+Network carries those two cards on **two screens**: what is known about the network this node
+is on, and the peers it is talking to. AI carries two as well — the conversation, and the agent
+itself, which is where its version and the model in force are drawn. Both had crossed on
+`agent_status` since it was written and neither was drawn anywhere. **All of it is a dash and an empty state**, because there is no peer-to-peer
 layer and therefore no network, no identity and no peer. What is real is the machinery — a
 reading taken every ten seconds and on demand, a refresh button, and the time of the last look
 beside it so that pressing the button does something a person can see. The list draws a peer
@@ -672,13 +692,14 @@ reader the wrong one most of the time —
 [honest-emptiness.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/honest-emptiness.md)
 is the agreement, and it is why `readNetwork` returns `null` rather than an empty array.
 
-Settings holds four cards. **Appearance** is the palette — dark, light, or whatever the
-operating system is asking for — and the identity colour, one of five, which is the one screen
-in the application with five of them on it at once because they are the thing being chosen.
-**Language** is English or Spanish, and it is empty of consequence until somebody uses it:
-Almena opens in the language the device asks for and stores nothing until asked to. **Model**
-is which model the agent is asked for. **Open at login** is whether the operating system starts
-Almena when somebody logs in.
+Settings holds four cards across **two screens**, and it opens on the first of them every time.
+**Appearance** is a screen of its own: the palette — dark, light, or whatever the operating
+system is asking for — and the identity colour, one of five, which is the one place in the
+application with five of them on it at once because they are the thing being chosen.
+**General** holds the other three. **Language** is English or Spanish, and it is empty of
+consequence until somebody uses it: Almena opens in the language the device asks for and stores
+nothing until asked to. **Model** is which model the agent is asked for. **Open at login** is
+whether the operating system starts Almena when somebody logs in.
 
 Both appearance choices are attributes on the document element, written by
 `src/lib/appearance.ts` and read by `src/styles/tokens.css` alone. No screen knows which

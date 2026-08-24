@@ -7,29 +7,41 @@
  * between none and unmeasured, and a list that will draw a peer the day there is one.
  */
 
-import { useTranslation } from "react-i18next";
+import { useState } from "react";
 
+import ScreenNav from "@/components/ScreenNav";
 import NetworkFacts from "@/features/network/NetworkFacts";
 import Peers from "@/features/network/Peers";
+import { screensOf, type ScreensOf } from "@/features/shell/sections";
 import { useNetwork } from "@/hooks/useNetwork";
 
-/** The Network screen. */
+/** One of this section's screens. */
+type Screen = ScreensOf<"network">;
+
+/** What the section opens on, every time it is opened. */
+const FIRST: Screen = "about";
+
+/** The Network section. */
 function Network() {
-  const { t } = useTranslation();
+  const [screen, setScreen] = useState<Screen>(FIRST);
+  const screens = screensOf("network") ?? [];
+  // Read here, once, and handed down. Both screens are looking at the same network, and two
+  // calls would be two independent looks disagreeing about when the last one came back.
   const { reading, lookedAt, looking, refresh } = useNetwork();
+
+  // Total over `Screen`: naming a screen in `sections.ts` and forgetting it here fails `tsc`.
+  const shown: Record<Screen, React.ReactNode> = {
+    about: <NetworkFacts reading={reading} />,
+    peers: (
+      <Peers reading={reading} lookedAt={lookedAt} looking={looking} onRefresh={refresh} />
+    ),
+  };
 
   return (
     <div className="screen">
-      <h1 className="screen__title">{t("section.network")}</h1>
+      <ScreenNav section="network" screens={screens} current={screen} onSelect={setScreen} />
 
-      <NetworkFacts reading={reading} />
-
-      <Peers
-        reading={reading}
-        lookedAt={lookedAt}
-        looking={looking}
-        onRefresh={refresh}
-      />
+      {shown[screen]}
     </div>
   );
 }

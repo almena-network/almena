@@ -16,15 +16,17 @@
  * build can genuinely do, on all three platforms, so the screen says so and lets a person try
  * it — a capability that works, not a figure standing in for one that does not.
  *
- * The mark at its head is the one place in the compact shape it appears, and it wears the
- * identity colour because that is the first of the two things the colour means: this is
- * Almena (`.agents/rules/interface.md`).
+ * It titles itself the way every section of one screen does. It carried the mark and the
+ * product's name instead, once — the head of the first screen was one of the two places the
+ * mark wore the identity colour — and that moved to the head of the navigation, where it is
+ * bigger and where a person meets it before they meet any screen. What it costs is stated
+ * rather than discovered: the navigation's head is drawn in the expanded shape alone, so below
+ * 600 the mark now appears only in the status strip, in the strip's own faint grey.
  */
 
 import { useTranslation } from "react-i18next";
 
 import CardGrid from "@/components/CardGrid";
-import Logo from "@/components/Logo";
 import {
   Card,
   CardContent,
@@ -34,22 +36,13 @@ import {
 } from "@/components/ui/card";
 import NotifyButton from "@/features/home/NotifyButton";
 
-/** What this build is. Vite replaces it at build time from `package.json`. */
-const VERSION = __APP_VERSION__;
-
 /** The application's first screen. */
 function Home() {
   const { t } = useTranslation();
 
   return (
     <div className="screen">
-      <header className="flex flex-wrap items-center gap-3">
-        <Logo size={28} color="var(--identity)" />
-        <h1 className="text-2xl font-semibold tracking-tight">{t("app.name")}</h1>
-        <p className="font-mono text-xs text-faint">
-          {t("app.version", { version: VERSION })}
-        </p>
-      </header>
+      <h1 className="screen__title">{t("section.home")}</h1>
 
       <CardGrid>
         <Card>

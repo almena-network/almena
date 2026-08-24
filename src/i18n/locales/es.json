@@ -19,6 +19,20 @@
     "ai": "IA",
     "settings": "Ajustes"
   },
+  "screen": {
+    "settings": {
+      "appearance": "Apariencia",
+      "general": "General"
+    },
+    "network": {
+      "about": "La red",
+      "peers": "Pares"
+    },
+    "ai": {
+      "conversation": "Conversación",
+      "agent": "Agente"
+    }
+  },
   "shell": {
     "nav": "Secciones"
   },
@@ -123,6 +137,14 @@
       "model_unknown": "Esa dirección responde, y no sirve el modelo elegido en Ajustes.",
       "resource_unknown": "Se le pidió al agente algo que no tiene.",
       "unknown": "El agente se negó, y esta compilación no tiene palabras para el motivo que dio. Queda escrito en los registros tal y como llegó."
+    },
+    "agent": {
+      "heading": "El agente.",
+      "body": "Qué se está ejecutando junto a esta aplicación, y qué se construyó para preguntar. Cada cifra de aquí está medida del agente que está corriendo de verdad — donde no hay ninguno no hay nada que medir, y un guion lo dice.",
+      "figure": {
+        "version": "Versión",
+        "model": "Modelo en vigor"
+      }
     }
   },
   "settings": {

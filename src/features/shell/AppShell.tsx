@@ -56,14 +56,15 @@ function AppShell({ section, onSelect, children }: AppShellProps) {
       <main className="shell__screen">{children}</main>
 
       <nav className="shell__nav" aria-label={t("shell.nav")}>
-        {/* The head of the sidebar, and one of the two places the mark wears the identity
-            colour. There is no room for it in the compact shape — the menu there is a bar
-            the width of a thumb — so it is drawn only where there is, and the first screen
-            carries the mark in a window too narrow for a sidebar. */}
-        <div className="hidden flex-col gap-3 pt-1 pb-2 expanded:flex">
-          <div className="flex items-center gap-2 px-3">
-            <Logo size={20} color="var(--identity)" />
-            <span className="font-semibold tracking-tight">{t("app.name")}</span>
+        {/* The head of the sidebar, and the only place the mark wears the identity
+            colour now that the first screen has stopped carrying it. There is no room for
+            it in the compact shape — the menu there is a bar the width of a thumb — so it is
+            drawn only where there is, and below 600 the mark is in the status strip and
+            nowhere else. */}
+        <div className="hidden flex-col gap-3 pt-2 pb-3 expanded:flex">
+          <div className="flex items-center gap-2.5 px-3">
+            <Logo size={28} color="var(--identity)" />
+            <span className="text-xl font-semibold tracking-tight">{t("app.name")}</span>
           </div>
           <Separator />
         </div>

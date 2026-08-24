@@ -19,6 +19,20 @@
     "ai": "AI",
     "settings": "Settings"
   },
+  "screen": {
+    "settings": {
+      "appearance": "Appearance",
+      "general": "General"
+    },
+    "network": {
+      "about": "The network",
+      "peers": "Peers"
+    },
+    "ai": {
+      "conversation": "Conversation",
+      "agent": "Agent"
+    }
+  },
   "shell": {
     "nav": "Sections"
   },
@@ -123,6 +137,14 @@
       "model_unknown": "That address is serving, and it does not serve the model chosen in Settings.",
       "resource_unknown": "The agent was asked for something it does not hold.",
       "unknown": "The agent refused, and this build has no words for the reason it gave. It is written down in the records exactly as it arrived."
+    },
+    "agent": {
+      "heading": "The agent.",
+      "body": "What is running beside this application, and what it was built to ask. Every figure here is measured from the agent that is actually running — where none is, there is nothing to measure and a dash says so.",
+      "figure": {
+        "version": "Version",
+        "model": "Model in force"
+      }
     }
   },
   "settings": {
