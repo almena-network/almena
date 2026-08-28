@@ -6,8 +6,7 @@
  * element: it is the geometry of the window itself — a grid that changes shape, a menu that
  * floats out of the flow, and three places a device's own cut-out edges have to be paid for.
  * Tailwind expresses all three worse than CSS does, and what a person operates inside the
- * frame comes from `src/components/` like everywhere else
- * (`.agents/rules/interface.md`).
+ * frame comes from `src/components/` like everywhere else.
  *
  * It lives here rather than beside the shell feature because Tailwind has to see it: a
  * stylesheet a component imports on its own is compiled without the theme, and `@variant` and

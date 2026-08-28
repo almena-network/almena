@@ -18,7 +18,7 @@
  * same buttons in the same order and the same place in the document — `shell.css` moves them.
  * Nothing here asks how wide the window is, which is the rule: the shape follows the width of
  * the viewport and nothing else, so a window somebody dragged narrow and one they dragged wide
- * are one case (`.agents/rules/interface.md`).
+ * are one case.
  *
  * Every section is drawn, and this frame decides nothing about which. It filtered two of them
  * once, while a phone was one of the things this application was drawn on and each deployment

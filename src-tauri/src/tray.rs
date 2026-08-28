@@ -6,11 +6,10 @@
 //! application that hides with no tray to come back from is one somebody has lost.
 //!
 //! **The menu is named by the frontend.** Its entries are text a person reads, and only that
-//! side holds the catalogs (`.agents/rules/language.md`), so [`install`] is a command
-//! rather than a call made at startup: the interface loads, looks its labels up, and hands
-//! them here. It is named `install_tray` rather than `install` because a command's name is
-//! flat across the whole application: the module in front of it is this side's, not the
-//! interface's.
+//! side holds the catalogs, so [`install`] is a command rather than a call made at startup:
+//! the interface loads, looks its labels up, and hands them here. It is named `install_tray`
+//! rather than `install` because a command's name is flat across the whole application: the
+//! module in front of it is this side's, not the interface's.
 
 use log::{info, warn};
 use tauri::{

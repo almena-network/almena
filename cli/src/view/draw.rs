@@ -17,13 +17,16 @@ use crate::node::Node;
 ///
 /// Here so that a test can assert each one exists in both catalogs. `tsc` does that job for
 /// the frontend by typing every catalog against the English one, and nothing would otherwise
-/// do it for a program written in Rust — which is the half of
-/// `.agents/rules/language.md` a type checker cannot reach from here.
+/// do it for a program written in Rust — where a key the catalogs lack would be a dotted key
+/// printed at somebody rather than a test that failed.
 pub const KEYS: &[&str] = &[
     "app.name",
     "app.version",
     "network.about.figure.network",
     "network.about.figure.identity",
+    "network.about.figure.written",
+    "network.about.figure.root",
+    "network.about.figure.peer",
     "network.about.figure.peers",
     "network.peers.noNetworkTitle",
     "network.peers.noNetwork",
@@ -35,8 +38,8 @@ pub const KEYS: &[&str] = &[
 
 /// What a figure shows when nothing has been measured.
 ///
-/// An em dash, and never a `0` or an empty column. `.agents/rules/honest-emptiness.md`: a
-/// count of zero is a measurement, and this is the absence of one.
+/// An em dash, and never a `0` or an empty column: a count of zero is a measurement, and this
+/// is the absence of one.
 const UNMEASURED: &str = "—";
 
 /// Draws the whole view.
@@ -72,17 +75,24 @@ fn draw_heading(frame: &mut Frame<'_>, area: Rect, catalog: &Catalog) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// The three things a node reports about itself, none of them measured yet.
+/// What a node reports about itself, read from the core and not assembled here.
+///
+/// The same five figures the windowed face draws, from the same place — which is what keeps the
+/// two from answering the same question differently.
 fn draw_figures(frame: &mut Frame<'_>, area: Rect, node: &Node, catalog: &Catalog) {
+    let facts = node.facts();
     let rows = [
-        (
-            catalog.text("network.about.figure.network"),
-            node.network().map(ToOwned::to_owned),
-        ),
+        (catalog.text("network.about.figure.network"), facts.network),
         (
             catalog.text("network.about.figure.identity"),
-            node.identity().map(ToOwned::to_owned),
+            facts.identity,
         ),
+        (
+            catalog.text("network.about.figure.written"),
+            facts.written.map(|count| count.to_string()),
+        ),
+        (catalog.text("network.about.figure.root"), facts.root),
+        (catalog.text("network.about.figure.peer"), facts.peer),
         (
             catalog.text("network.about.figure.peers"),
             node.peers().map(|count| count.to_string()),
@@ -183,7 +193,7 @@ mod tests {
 
     #[test]
     fn every_figure_is_a_dash_because_nothing_was_measured() {
-        let screen = drawn(Language::English);
+        let screen = drawn(Language::source());
         let figures = figures(&screen);
 
         // Asserted on the figure rows rather than on the whole screen, because the prose below
@@ -198,7 +208,7 @@ mod tests {
 
     #[test]
     fn the_view_says_which_emptiness_this_is() {
-        let screen = drawn(Language::English).join("\n");
+        let screen = drawn(Language::source()).join("\n");
 
         // "No network" and not "no peers": there being no network to count peers on and there
         // being a network with nobody on it are two different facts, and this view is only
@@ -211,14 +221,14 @@ mod tests {
     fn the_view_says_how_to_leave() {
         // A full-screen program that does not say how to get out of it is one people kill from
         // another window.
-        let screen = drawn(Language::English).join("\n");
+        let screen = drawn(Language::source()).join("\n");
         assert!(screen.to_lowercase().contains('q'), "{screen}");
     }
 
     #[test]
     fn the_same_view_is_drawn_in_spanish() {
-        let english = drawn(Language::English);
-        let spanish = drawn(Language::Spanish);
+        let english = drawn(Language::source());
+        let spanish = drawn(Language::from_tag("es"));
 
         assert_ne!(english, spanish, "the Spanish view is the English one");
         for row in figures(&spanish) {

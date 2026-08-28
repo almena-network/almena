@@ -1,0 +1,164 @@
+//! The act a node exists by, and the one that gives it its name.
+//!
+//! A node is a directory with a key in it, but a key is not a name: everything here is called by
+//! the hash of the act that created it, and until a node performs one it is a machine answering on
+//! a port rather than somebody the record knows.
+//!
+//! **So a node's first announcement is its creation.** Its hash is the node's identifier, the same
+//! way every other object gets one, and the key inside it is what anything the node signs is
+//! checked against.
+//!
+//! Announcing is meant to happen again — what a node offers and what version it runs change over
+//! its life, and none of that may rename it, which is why only the first one names anything.
+//! **Nothing applies a second one yet**, so today a node's chain is its creation and no more.
+//!
+//! # Why the census comes from here and not from the zone
+//!
+//! Whoever can answer for a zone can put anything in it, so a directory of nodes kept there would
+//! be believed on the authority of whoever holds the domain. An announcement is an entry in the
+//! record every node already has, signed by the key it names, and it does not need to be trusted:
+//! it can be checked. The zone says where to call first; this says who anybody turned out to be.
+//!
+//! # Self-signed, and that is not a weakness
+//!
+//! Nothing earlier can vouch for a node — it is new, and the act that introduces it is the first
+//! thing it ever says. What the signature establishes is not that the node is trustworthy but that
+//! *this identifier and this key belong to each other*, which is the whole of what a reader needs
+//! before it can tell one node's word from another's. Being worth listening to is earned
+//! afterwards, by being bound and by being measured.
+
+use std::collections::BTreeMap;
+
+use almena_format::cbor::Value;
+use almena_format::identifier::Did;
+use almena_format::operation::{Operation, Signed, create};
+use almena_suite::ed25519;
+use almena_time::Epoch;
+
+use crate::genesis::Which;
+use crate::kind::Kind;
+
+/// Where an announcement carries the key that is this node.
+///
+/// Odd, and there is nothing to weigh: an announcement a reader could not get the key out of would
+/// introduce a node without saying how to recognise anything it says — which is the one thing the
+/// act is for.
+const KEY: u64 = 1;
+
+/// A node, and the name it will be known by.
+#[derive(Debug, Clone)]
+pub struct Announced {
+    /// The act to be admitted, which is what names the node.
+    pub operation: Operation,
+    /// What the node is called from now on.
+    pub node: Did,
+}
+
+/// Introduce a node to a network, naming it.
+///
+/// What it can do and what version it runs are not here. They change while a node's name does not,
+/// so they belong to the announcements that follow this one rather than to the one act whose bytes
+/// the name is taken from — a node that switched off a capability would otherwise become a
+/// different node. Nothing reads them yet, and standing in for them now would put a guess inside
+/// the bytes a name is taken from, where it could never be corrected.
+#[must_use]
+pub fn announce(which: Which, epoch: Epoch, key: &ed25519::SigningKey) -> Announced {
+    let payload = BTreeMap::from([(KEY, Value::Bytes(key.verifying_key().bytes().to_vec()))]);
+
+    let mut operation = create(
+        which.marking(),
+        Kind::NODE_ANNOUNCE.number(),
+        1,
+        epoch,
+        payload,
+    );
+
+    let signature = key.sign(&operation.signing_bytes());
+    operation.signatures.push(Signed {
+        by: operation.object.clone(),
+        key: key.verifying_key().bytes().to_vec(),
+        signature: signature.bytes(),
+    });
+
+    let node = operation.object.clone();
+    Announced { operation, node }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KEY, announce};
+    use crate::chain::{Answer, Objects, State};
+    use crate::genesis::Which;
+    use almena_format::cbor::Value;
+    use almena_suite::ed25519;
+    use almena_time::Epoch;
+
+    fn key(seed: u8) -> ed25519::SigningKey {
+        ed25519::SigningKey::from_secret([seed; 32])
+    }
+
+    #[test]
+    fn a_node_is_named_by_the_act_that_introduces_it() {
+        let announced = announce(Which::Development, Epoch::GENESIS, &key(1));
+        assert!(announced.operation.names_itself());
+        assert_eq!(&announced.node, &announced.operation.object);
+    }
+
+    #[test]
+    fn two_nodes_are_two_names() {
+        // The reason the whole thing exists: a root that named the same object whoever published
+        // it would make every honest pair of nodes look like it was contradicting the other.
+        let one = announce(Which::Development, Epoch::GENESIS, &key(1));
+        let other = announce(Which::Development, Epoch::GENESIS, &key(2));
+        assert_ne!(one.node, other.node);
+    }
+
+    #[test]
+    fn the_same_key_announcing_twice_is_the_same_node() {
+        let once = announce(Which::Development, Epoch::GENESIS, &key(1));
+        let again = announce(Which::Development, Epoch::GENESIS, &key(1));
+        assert_eq!(once.node, again.node);
+    }
+
+    #[test]
+    fn it_carries_the_key_it_is_checked_against() {
+        let announced = announce(Which::Development, Epoch::GENESIS, &key(7));
+        assert_eq!(
+            announced.operation.payload.get(&KEY),
+            Some(&Value::Bytes(key(7).verifying_key().bytes().to_vec()))
+        );
+    }
+
+    #[test]
+    fn it_is_admitted_and_leaves_the_node_resolvable() {
+        let mut objects = Objects::new();
+        let announced = announce(Which::Development, Epoch::GENESIS, &key(3));
+
+        objects
+            .admit(&announced.operation, Epoch::GENESIS)
+            .expect("a node introducing itself");
+
+        assert_eq!(
+            objects.resolve(announced.node.name()),
+            Answer::Here(State::Node {
+                key: key(3).verifying_key().bytes()
+            }),
+            "and what it resolves to is the key to check its word against"
+        );
+    }
+
+    #[test]
+    fn an_announcement_signed_by_somebody_else_is_refused() {
+        // Otherwise anybody could introduce a node carrying a key they do not hold, and every
+        // signature checked against that key afterwards would be checked against a stranger's.
+        let mut objects = Objects::new();
+        let mut announced = announce(Which::Development, Epoch::GENESIS, &key(3));
+
+        let impostor = key(4);
+        announced.operation.signatures[0].key = impostor.verifying_key().bytes().to_vec();
+        announced.operation.signatures[0].signature =
+            impostor.sign(&announced.operation.signing_bytes()).bytes();
+
+        assert!(objects.admit(&announced.operation, Epoch::GENESIS).is_err());
+    }
+}

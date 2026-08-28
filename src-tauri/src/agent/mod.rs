@@ -8,7 +8,7 @@
 //!
 //! **The windowed application alone**, of the two programs this repository builds. The other
 //! is the CLI, which brings a node up on a machine in a rack, and an agent is something a
-//! person sits in front of — `.agents/rules/deployments.md`.
+//! person sits in front of — a machine in a rack has nobody in front of it.
 //!
 //! One file per concern, because "locating, starting, framing, routing, ending and forwarding
 //! records" is six modules sharing a name.
@@ -30,9 +30,9 @@ pub mod records;
 /// default for that setting is a **relative** path, which from an installed application
 /// resolves somewhere absurd — so it is given somewhere real and harmless instead.
 ///
-/// Under the cache directory, which is the right purpose by
-/// `.agents/rules/storage-and-logs.md`: deleting it while the application is closed costs
-/// nothing at all, which is the test that rule sets for cache.
+/// Under the cache directory, which is the purpose that fits: deleting it while the
+/// application is closed costs nothing at all, and anything that could not be got back again
+/// would not be cache.
 pub fn scratch(app: &AppHandle) -> PathBuf {
     let directory = app
         .path()

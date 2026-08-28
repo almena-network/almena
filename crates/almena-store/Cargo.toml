@@ -1,0 +1,18 @@
+[package]
+name = "almena-store"
+description = "The append-only log, the chain each object advances along, and what a node may say about one"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The bytes as they arrived, and what they mean.
+almena-cbor = { workspace = true }
+almena-format = { workspace = true }
+almena-suite = { workspace = true }
+almena-time = { workspace = true }

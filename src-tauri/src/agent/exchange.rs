@@ -16,15 +16,16 @@ use tauri::ipc::Channel;
 ///
 /// Every variant carries what a screen can draw and nothing else. There is no contract version
 /// here, no identifier and no `detail`: the channel belongs to one run, so nothing has to be
-/// correlated, and prose from a subprocess is never drawn — `.agents/rules/language.md`
-/// says what a person reads comes from the catalogs, looked up by the identifier below.
+/// correlated, and prose from a subprocess is never drawn — what a person reads comes from the
+/// catalogs, looked up by the identifier below.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "event", rename_all = "camelCase")]
 pub enum AgentEvent {
     /// The agent has the run, and has produced nothing yet.
     ///
     /// It exists so that *nobody has looked yet* and *it is working* stay two facts on the
-    /// screen as well as on the wire — `.agents/rules/honest-emptiness.md`.
+    /// screen as well as on the wire — a screen that drew one for the other would be claiming
+    /// a result nobody has produced.
     Started,
     /// A stage of answering began, or moved.
     Progress {

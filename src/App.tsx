@@ -29,7 +29,7 @@ import "@/styles/index.css";
  * The type is what enforces that: a total `Record<SectionId, …>`, so a section added to
  * `sections.ts` with nothing behind it fails `tsc` rather than being discovered by somebody
  * touching a navigation entry that does nothing. The navigation lists no destination that
- * leads nowhere — `.agents/rules/honest-emptiness.md`.
+ * leads nowhere.
  *
  * A screen with no data yet is still a screen. It is built whole and reports that it has
  * nothing, which is the same rule seen from the other side.

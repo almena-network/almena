@@ -2,14 +2,14 @@
  * A figure: something measured, beside what it is a measurement of.
  *
  * It exists to make one of this project's promises hard to break. A screen must never show a
- * value nobody measured (`AGENTS.md`, Transparency), and the tempting way to break that is a
- * zero — a peer count of nought reads as a measurement and is not one when there is no network
- * to have counted. So a figure with nothing behind it is `null`, and what it draws is a dash
- * that says so in words to anything that cannot see it.
+ * value nobody measured, and the tempting way to break that is a zero — a peer count of nought
+ * reads as a measurement and is not one when there is no network to have counted. So a figure
+ * with nothing behind it is `null`, and what it draws is a dash that says so in words to
+ * anything that cannot see it.
  *
  * shadcn/ui has no element for this and it is not one of its variants: a figure is Almena's
- * own, built from the same values as everything else — see
- * `.agents/rules/interface.md`.
+ * own, built from the same values as everything else so that it stays a composition of that
+ * set rather than a second visual language beside it.
  */
 
 import { useTranslation } from "react-i18next";

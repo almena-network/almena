@@ -1,11 +1,12 @@
 /**
- * The name of a control, tied to it. Vendored from shadcn/ui —
- * `.agents/rules/interface.md`.
+ * The name of a control, tied to it. Vendored from shadcn/ui, the registry every element in
+ * this interface comes from.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add label --overwrite` produces a diff a reviewer
  * can read. Nothing this project decides is written in here: the colours it names live in
- * `src/styles/tokens.css`, and which of its variants a screen may draw is in the rule.
+ * `src/styles/tokens.css`, and a screen draws only the few of its variants this project has
+ * given a meaning, never everything the registry ships.
  */
 
 "use client"

@@ -1,8 +1,10 @@
 //! Where an Almena program keeps things, for the programs that have no Tauri to ask.
 //!
-//! `.agents/rules/storage-and-logs.md` forbids assembling a location out of `$HOME`,
-//! `%APPDATA%` or `~/Library` and sends every path through a resolver. The windowed
-//! application has one: Tauri's. A program with no Tauri in it has none, and this is it.
+//! No location is assembled out of `$HOME`, `%APPDATA%` or `~/Library` anywhere in this
+//! repository: a person has to be able to find, back up and delete what an application keeps
+//! using the conventions of their own operating system, so every path comes from a resolver.
+//! The windowed application has one: Tauri's. A program with no Tauri in it has none, and this
+//! is it.
 //!
 //! # It is not an approximation of Tauri's resolver
 //!
@@ -22,8 +24,10 @@
 //!
 //! This repository builds two programs and they are two applications: `network.almena.desktop`
 //! and `network.almena.cli`. Neither is this crate's to know. What that costs — a machine
-//! running both is two nodes — is a decision recorded in spec `0001`, not an accident of this
-//! file.
+//! running both is two nodes — is the decision and not an accident of this file: separate
+//! directories are separate keys and so separate identities, the network has no opinion about
+//! two participants that happen to share hardware, and either program can be uninstalled
+//! without reaching into the other's data.
 
 use std::path::PathBuf;
 

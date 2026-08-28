@@ -11,9 +11,9 @@
 //! nothing in the application links it, which is what keeps `task isolation` meaningful.
 //!
 //! The identifiers of the two programs differ on purpose — `network.almena.desktop` and
-//! `network.almena.cli`, so that a machine running both is two nodes
-//! (`.agents/rules/storage-and-logs.md`). Both sides are handed the same one here: what is
-//! under test is the computation, not the name.
+//! `network.almena.cli`. Separate directories mean separate keys, so a machine running both is
+//! two nodes rather than one. Both sides are handed the same one here: what is under test is
+//! the computation, not the name.
 
 use almena_paths::Paths;
 use tauri::Manager as _;

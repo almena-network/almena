@@ -10,8 +10,7 @@
     "working": "En curso"
   },
   "language": {
-    "en": "English",
-    "es": "Español"
+    "name": "Español"
   },
   "section": {
     "home": "Inicio",
@@ -68,6 +67,9 @@
       "figure": {
         "network": "Red",
         "identity": "Este nodo",
+        "written": "Actos registrados",
+        "root": "Raíz",
+        "peer": "Nombre en la malla",
         "peers": "Pares"
       }
     },
@@ -87,6 +89,42 @@
       "warn": "Degradado",
       "bad": "Caído",
       "idle": "En reposo"
+    },
+    "control": {
+      "heading": "Operar este nodo",
+      "body": "Lo que un operador puede hacerle desde aquí. La terminal ofrece las mismas dos cosas.",
+      "open": "Abrir una red de desarrollo",
+      "zone": "Zona, o vacío para la de esta red",
+      "serve": "Servir el API",
+      "mesh": "Puerto de malla",
+      "joinTheMesh": "Tomar sitio en la malla",
+      "closeEpoch": "Cerrar la época ahora",
+      "certificate": "Certificado (PEM), o nada para responder en claro",
+      "privateKey": "Clave privada (PEM)",
+      "address": "Dirección en la que servir",
+      "reason": {
+        "alreadyOnANetwork": "Este nodo ya está en una red. Una segunda sería una segunda historia para una sola identidad.",
+        "noRandomness": "El sistema no ha dado aleatoriedad, así que no hay clave que ser. Un nodo con clave adivinable es peor que uno que no arrancó.",
+        "noClock": "El sistema no dice qué hora es, y una red tiene que dejar escrito cuándo empezó su primera época.",
+        "noDirectory": "Este ordenador no dice dónde guarda sus cosas el nodo, así que no tiene dónde ser un nodo.",
+        "unreadableIdentity": "Hay una clave en el directorio del nodo y no se puede leer. Se ha dejado intacta: escribir encima sería convertirse en otro nodo sin decirlo.",
+        "recordWouldNotStart": "El registro no admitió los actos que lo inician, así que la red no se abrió. Nada queda a medias: este nodo está como estaba.",
+        "unreadableRecord": "Hay un registro en el directorio del nodo y no se puede leer. Se ha dejado intacto: abrir una red encima pondría a este nodo en una segunda.",
+        "recordDoesNotAddUp": "El registro ya no contiene todo lo que este nodo ha firmado. No ha arrancado, en vez de servir una historia que contradice lo que ya le ha dicho a otros.",
+        "directoryHeld": "Ya hay otro nodo funcionando sobre este directorio. Un nodo es un directorio con su clave dentro, y dos sobre uno serían una sola identidad con dos historias.",
+        "directoryCannotBeHeld": "Este sistema de ficheros no dice si otro nodo está usando el directorio. Arrancar igualmente sería suponer que no hay nadie — las unidades de red a menudo no saben responder a esto.",
+        "noCertificate": "El fichero del certificado no está, no se puede leer, o no contiene un certificado. La interfaz no ha arrancado: servir en claro habiendo pedido lo contrario sería lo peor de ambas.",
+        "noPrivateKey": "La clave privada no está, no se puede leer, o no contiene una clave. Un certificado y su clave son una sola decisión, y uno sin la otra no lo es.",
+        "certificateAndKeyAreNotAPair": "Esa clave no pertenece a ese certificado. Se detecta aquí y no en la primera persona que no consiga conectar.",
+        "zoneSilent": "La zona no ha contestado, así que no se sabe si ya hay alguien. No se ha abierto nada: leer el silencio como una zona vacía es como se acaba levantando una segunda red al lado de la que ya estaba.",
+        "thereIsANetwork": "La zona dice que ya hay una red. Un nodo se une cuando hay alguien y solo abre cuando no hay nadie.",
+        "notThePromisedNetwork": "Alguien listado como parte de esta red resultó estar en otra, o hacer pasar por red una que se inventó. No se ha escrito nada: la pregunta se hace antes que nada.",
+        "noTransport": "Esta máquina no le ha dado al nodo ninguna forma de salir a la malla.",
+        "meshAddressUnavailable": "No se ha podido escuchar en ese puerto — normalmente porque ya lo tiene otro. No ha cogido otro por su cuenta: un nodo cuyo puerto cambia es un nodo cuyo registro publicado pasa a ser falso, y quien lo lea no se entera.",
+        "noNetwork": "Todavía no hay red que servir.",
+        "addressUnavailable": "Nada ha podido escuchar en esa dirección.",
+        "unknown": "No ha funcionado, y esta versión no sabe leer lo que ha vuelto."
+      }
     }
   },
   "ai": {

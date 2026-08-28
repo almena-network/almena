@@ -9,8 +9,9 @@
  * Every figure is measured from the agent that is **running**, never from what was chosen. The
  * two differ from the moment somebody picks a model until the agent next starts, and a screen
  * showing one for the other would be answering a question nobody asked. Where no agent is
- * running there is nothing to measure, the value is `null`, and `Figure` draws a dash — never a
- * zero and never an empty string (`.agents/rules/honest-emptiness.md`).
+ * running there is nothing to measure, the value is `null`, and `Figure` draws a dash. Never a
+ * zero and never an empty string: each of those reads as a measurement that was taken and came
+ * back small, which is a different thing from one nobody took.
  */
 
 import { useTranslation } from "react-i18next";

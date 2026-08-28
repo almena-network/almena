@@ -2,7 +2,7 @@
 //!
 //! One question, asked once at startup and again whenever one is started, so that the screen
 //! can tell *there is no agent in this build* from *there is one and nobody has asked for it*
-//! — which `.agents/rules/honest-emptiness.md` requires be two answers and not one.
+//! — two facts about an empty screen, and one sentence for both is wrong half the time.
 
 use std::path::PathBuf;
 
@@ -21,7 +21,7 @@ const PROGRAM: &str = "almena-agent";
 /// still builds, runs, and says on its own screen that it has none.
 ///
 /// The suffix comes from [`std::env::consts::EXE_SUFFIX`] rather than from a `cfg`, for the
-/// reason `.agents/rules/storage-and-logs.md` gives about paths: a location decided in
+/// reason no path in this application is written by hand: a location decided in
 /// platform-specific code is one that drifts per platform, and this one does not have to.
 #[must_use]
 pub fn binary(app: &AppHandle) -> Option<PathBuf> {

@@ -11,10 +11,9 @@
  *
  * The identity colour is the one place in the application where five colours are on screen at
  * once, and it is the exception that proves the rule: everywhere else exactly one of them
- * exists, because it means "this is Almena" or "this is the thing you came here for"
- * (`.agents/rules/interface.md`). Here they are the thing being chosen, so each is drawn
- * as itself — and each says its name to a screen reader and to the line beside the row, because
- * a colour is never the only carrier of meaning.
+ * exists, because it means "this is Almena" or "this is the thing you came here for". Here they
+ * are the thing being chosen, so each is drawn as itself — and each says its name to a screen
+ * reader and to the line beside the row, because a colour is never the only carrier of meaning.
  */
 
 import { useId } from "react";

@@ -30,7 +30,7 @@
 //! and the lock. [`lifecycle`] is the child's existence — spawning one, waiting for it to say
 //! hello, and ending it. [`wire`] is what crosses the pipe once it exists. Neither half can be
 //! described without the other's noun, and neither can be described with the word "and", which
-//! is the test `.agents/rules/code.md` sets.
+//! is the test a module is held to here: say what it does without that word, or it is two.
 
 mod lifecycle;
 mod wire;
@@ -70,7 +70,7 @@ pub enum State {
 ///
 /// Every figure is an `Option`, and that is not tidiness: a reading nobody took is `null` all
 /// the way down, and a screen that drew a zero or an empty string for one would be claiming a
-/// measurement — `.agents/rules/honest-emptiness.md`.
+/// measurement nobody made.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -95,8 +95,8 @@ pub struct Status {
 
 /// Why an ask could not be accepted.
 ///
-/// An identifier and never prose — `.agents/rules/language.md`. What a person reads is
-/// looked up from it in the catalogs.
+/// An identifier and never prose — what a person reads is looked up from it in the catalogs,
+/// and only the interface holds those.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Refusal {

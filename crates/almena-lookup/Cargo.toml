@@ -1,0 +1,25 @@
+[package]
+name = "almena-lookup"
+description = "Asking DNS what a zone publishes, and telling silence apart from an empty answer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+almena-node = { workspace = true }
+hickory-resolver = { workspace = true }
+# Only for giving up on a zone that will not answer. A node that waited for ever would have no
+# answer and no way to say so.
+tokio = { workspace = true, features = ["time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+# Handing what a zone published to the thing that decides what it means.
+almena-store = { workspace = true }
+almena-suite = { workspace = true }
+almena-time = { workspace = true }

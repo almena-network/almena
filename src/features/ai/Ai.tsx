@@ -4,8 +4,7 @@
  * The agent is a *second program this application runs*: it is started beside the window,
  * spoken to over a pipe and ended with it. That is why this screen belongs to the windowed
  * application and to nothing else the project builds — the CLI brings a node up on a machine
- * in a rack, and an agent is something a person sits in front of
- * (`.agents/rules/deployments.md`).
+ * in a rack, and an agent is something a person sits in front of.
  *
  * # Two screens
  *
@@ -22,8 +21,8 @@
  *
  * There is no agent in this build; there is one and nobody has asked it anything; there is one
  * and it will not start; there was one and it stopped. A screen that answered all four with
- * *nothing to show* would be telling a reader the wrong one three times out of four
- * (`.agents/rules/honest-emptiness.md`), so each has an icon, a title and a reason of its own.
+ * *nothing to show* would be telling a reader the wrong one three times out of four, so each
+ * has an icon, a title and a reason of its own.
  */
 
 import { CircleSlash, MessageSquare, PowerOff, TriangleAlert } from "lucide-react";

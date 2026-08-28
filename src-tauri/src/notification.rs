@@ -17,11 +17,11 @@ use tauri_plugin_notification::NotificationExt;
 /// Shows a notification, and says whether the platform accepted it.
 ///
 /// `title` is the first line and `body` the rest. Both are read by a person, so neither is
-/// ever a literal in the source ([`user-facing-text`]): they arrive already translated, from a
-/// caller that took them out of the catalogs. That is why this takes text and not a key —
-/// only the frontend holds the catalogs, and this function is for the side that does not. The
-/// operating system draws the application's own name beside the title, so repeating it there
-/// spends the line on nothing.
+/// ever a literal in the source: they arrive already translated, from a caller that took them
+/// out of the catalogs. That is why this takes text and not a key — only the frontend holds
+/// the catalogs, and this function is for the side that does not. The operating system draws
+/// the application's own name beside the title, so repeating it there spends the line on
+/// nothing.
 ///
 /// Returns `false` when the platform refused: permission not granted, or nothing running to
 /// draw it. A caller has nothing to retry and nowhere to report it — the one way to tell a
@@ -36,8 +36,6 @@ use tauri_plugin_notification::NotificationExt;
 /// almena_app_lib::notification::show(app, title, body);
 /// # }
 /// ```
-///
-/// [`user-facing-text`]: https://github.com/almena-network/almena-network/blob/main/.agents/rules/language.md
 pub fn show(app: &AppHandle, title: &str, body: &str) -> bool {
     match app.notification().builder().title(title).body(body).show() {
         Ok(()) => {

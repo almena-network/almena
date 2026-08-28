@@ -12,23 +12,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
 import en from "@/i18n/locales/en.json";
-import es from "@/i18n/locales/es.json";
 import { choose } from "@/lib/preferences";
-
-/**
- * Every language the interface ships in, one catalog each.
- *
- * A language belongs in this list only once its catalog is complete: partial support is not
- * shipped, and until then the language is not offered at all.
- *
- * The list is repeated once, in `scripts/check-catalogs.mjs`, which cannot read this file.
- * Adding a language means both places, which is the point — a language is added
- * deliberately, never by accident.
- */
-export const LANGUAGES = ["en", "es"] as const;
-
-/** One of the languages the interface ships in. */
-export type Language = (typeof LANGUAGES)[number];
 
 /**
  * The language keys are written in, and the one shown when another catalog lacks a key.
@@ -36,22 +20,72 @@ export type Language = (typeof LANGUAGES)[number];
  * English is both by design: a missing translation degrades to readable English rather than
  * to a bare key or an empty line.
  */
-const SOURCE_LANGUAGE: Language = "en";
+const SOURCE_LANGUAGE = "en";
+
+/** One of the languages the interface ships in — a tag, checked with {@link isLanguage}. */
+export type Language = string;
 
 /**
- * The catalogs, bundled into the application rather than fetched.
+ * Every catalog in the directory beside this file, bundled in rather than fetched.
  *
- * There are two and they are small, so loading them up front costs nothing and buys a
- * startup with no asynchronous step — no moment where a screen shows keys instead of text.
+ * **The directory is the list of languages, and that is the whole design.** Adding a language
+ * must not mean touching code, so there is no list here to add it to: dropping `fr.json` in
+ * beside the others is the entire operation, and every place that used to carry a copy of the
+ * list — this file, the picker, the checker, the terminal variant — now reads the directory
+ * instead.
  *
- * Typing every catalog as `typeof en` is the parity rule working at compile time: a key
- * added to English and forgotten in Spanish fails `tsc`. The other direction, a key that
- * exists only in Spanish, is not a type error and is what `task catalogs` is for.
+ * They are bundled rather than fetched because there is no moment in a startup where showing
+ * keys instead of text would be acceptable.
  */
-const catalogs: Record<Language, { translation: typeof en }> = {
-  en: { translation: en },
-  es: { translation: es },
-};
+const bundled = import.meta.glob<{ default: typeof en }>("./locales/*.json", {
+  eager: true,
+});
+
+/** The language a catalog's path names: `./locales/es.json` is `es`. */
+function tagOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1, -".json".length);
+}
+
+/**
+ * Every language the interface ships in, the source first and the rest alphabetically.
+ *
+ * The source leads because it is the fallback: a list that opens with the language everything
+ * degrades to is a list that reads in the order the rules apply.
+ */
+export const LANGUAGES: readonly Language[] = Object.keys(bundled)
+  .map(tagOf)
+  .sort((left, right) =>
+    left === SOURCE_LANGUAGE
+      ? -1
+      : right === SOURCE_LANGUAGE
+        ? 1
+        : left.localeCompare(right),
+  );
+
+/** The catalogs, by the language each one is written in. */
+const catalogs: Record<Language, { translation: typeof en }> = Object.fromEntries(
+  Object.entries(bundled).map(([path, module]) => [
+    tagOf(path),
+    { translation: module.default },
+  ]),
+);
+
+/**
+ * What each language calls itself, in itself.
+ *
+ * Read out of each catalog's own `language.name` rather than from a table here, for the same
+ * reason the list is read from the directory: a new catalog has to arrive knowing its own name,
+ * because nowhere else would learn it without being edited. And a person looking for their
+ * language in a list is looking for the word they would recognise, which is never the
+ * translation of it.
+ */
+export const LANGUAGE_NAMES: Readonly<Record<Language, string>> =
+  Object.fromEntries(
+    Object.entries(catalogs).map(([tag, catalog]) => [
+      tag,
+      catalog.translation.language.name,
+    ]),
+  );
 
 /**
  * Narrows an arbitrary string to a language this interface ships in.
@@ -67,8 +101,8 @@ export function isLanguage(value: string | null | undefined): value is Language 
  * The language the device asks for, else English.
  *
  * The device's preference arrives as a list of tags like `es-419`, most wanted first. Only
- * the part before the dash is matched, so a Spanish of any region gets Spanish.
- *
+ * the part before the dash is matched, so a Spanish of any region gets Spanish — a region this
+ * project does not distinguish must never become a language it does not have.
  */
 export function deviceLanguage(): Language {
   for (const tag of navigator.languages ?? [navigator.language]) {

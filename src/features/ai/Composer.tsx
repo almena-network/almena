@@ -4,15 +4,15 @@
  * One button, two jobs, and that is the point rather than a saving: while a run is in flight
  * the thing a person wants is to stop it, and a screen that offered *ask* beside *stop* would
  * be offering one control that does nothing. It wears the identity colour because it is the
- * thing this screen is for (`.agents/rules/interface.md`).
+ * thing this screen is for, which is one of exactly two things that colour is allowed to mean.
  *
  * Enter sends and shift-enter makes a line, which is what everybody expects of a box like
  * this — and both are only ever an accelerator: the button does the same thing and is
- * reachable by touch, which is what `.agents/rules/deployments.md` asks for.
+ * reachable by touch, because a keyboard is never the only path to anything here.
  *
  * This is the first field in the application, and therefore the one place text can be selected
- * — the exception in `.agents/rules/interface.md`, which is already written as an
- * element rule and needs nothing here.
+ * — an application is not a document, and selection is off everywhere else. `base.css` gives it
+ * back to `input` and `textarea` as an element rule, so nothing here has to ask for it.
  */
 
 import { useId, useState } from "react";

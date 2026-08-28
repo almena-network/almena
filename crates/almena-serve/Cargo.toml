@@ -1,0 +1,28 @@
+[package]
+name = "almena-serve"
+description = "The transport that carries questions to a node and answers back, deciding nothing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+almena-api = { workspace = true }
+almena-node = { workspace = true }
+almena-time = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+# Building an act to hand over, and a socket to hand it over on.
+almena-format = { workspace = true }
+almena-store = { workspace = true }
+almena-time = { workspace = true }
+almena-suite = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "macros"] }

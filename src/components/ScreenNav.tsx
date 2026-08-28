@@ -2,15 +2,15 @@
  * The menu across the top of a section that holds more than one screen.
  *
  * The same navigation as the frame's, one level down and turned on its side: a `<nav>` of
- * shadcn buttons carrying `aria-current="page"`, which is the row the variants table already
- * has (`.agents/rules/interface.md`). Nothing new is drawn and no variant is added — an entry
- * of a navigation is an entry of a navigation whichever navigation it belongs to.
+ * shadcn buttons drawn `ghost` and carrying `aria-current="page"`, which is already what an
+ * entry of a navigation is drawn as here. Nothing new is drawn and no variant is added — an
+ * entry of a navigation is an entry of a navigation whichever navigation it belongs to.
  *
  * # It does not wear the identity colour, and that is the whole of the difference
  *
  * The frame's current entry does. That colour means one of two things in this application, and
- * two current entries wearing it at once would be the second accent on a screen that the rule
- * refuses — so **the colour says which section you are in, once**, and this menu says where you
+ * two current entries wearing it at once would be a second accent, which a screen never
+ * carries — so **the colour says which section you are in, once**, and this menu says where you
  * are inside it with a surface and a weight instead. What carries it for a screen reader is
  * `aria-current`, the same as upstairs, because colour is never the only thing saying anything.
  *

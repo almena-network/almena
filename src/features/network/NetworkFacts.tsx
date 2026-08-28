@@ -1,9 +1,11 @@
 /**
  * The head of the Network screen: what is known about the network this node is on.
  *
- * Three figures, and today all three are a dash. That is the point rather than a placeholder:
- * this build reads no configuration, has no identity and has counted no peers, and `Figure` is
- * the element that draws the difference between "none" and "nobody looked".
+ * Five figures, and today all five are a dash. That is the point rather than a placeholder: this
+ * node is on no network, so it has looked at nothing, and `Figure` is the element that draws the
+ * difference between "none" and "nobody looked".
+ *
+ * The same five the terminal draws, from the same place. Neither face works a figure out.
  */
 
 import { useTranslation } from "react-i18next";
@@ -48,6 +50,22 @@ function NetworkFacts({ reading }: NetworkFactsProps) {
           <Figure
             label={t("network.about.figure.identity")}
             value={reading?.identity ?? null}
+          />
+          <Figure
+            label={t("network.about.figure.written")}
+            value={
+              reading?.written === null || reading?.written === undefined
+                ? null
+                : String(reading.written)
+            }
+          />
+          <Figure
+            label={t("network.about.figure.root")}
+            value={reading?.root ?? null}
+          />
+          <Figure
+            label={t("network.about.figure.peer")}
+            value={reading?.peer ?? null}
           />
           <Figure
             label={t("network.about.figure.peers")}

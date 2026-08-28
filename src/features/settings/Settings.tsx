@@ -10,7 +10,8 @@
  * `SCREENS` below is a total `Record` over the screens `sections.ts` declares, which is the
  * same discipline `App.tsx` applies to the sections themselves: a screen listed with nothing
  * behind it fails `tsc` rather than being found by somebody pressing a menu entry that does
- * nothing (`.agents/rules/honest-emptiness.md`). One level up, one level down, one rule.
+ * nothing — a navigation lists no destination that leads nowhere. One level up, one level down,
+ * one rule.
  *
  * **The menu is the heading.** A section with one screen titles itself with `.screen__title`;
  * a section with a menu does not, because the menu has already marked which screen is showing

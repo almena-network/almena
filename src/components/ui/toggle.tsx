@@ -1,6 +1,6 @@
 /**
  * One entry that is either pressed or not, and the class list every entry of a group is built
- * from. Vendored from shadcn/ui — `.agents/rules/interface.md`.
+ * from. Vendored from shadcn/ui, the registry every element in this interface comes from.
  *
  * **No screen draws a `Toggle`.** This file is here because `toggle-group` imports
  * `toggleVariants` from it and the registry ships the two together; taking it out would mean
@@ -9,7 +9,8 @@
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add toggle --overwrite` produces a diff a reviewer
  * can read. Nothing this project decides is written in here: the colours it names live in
- * `src/styles/tokens.css`, and which of its variants a screen may draw is in the rule.
+ * `src/styles/tokens.css`, and a screen draws only the few of its variants this project has
+ * given a meaning, never everything the registry ships.
  */
 
 "use client"

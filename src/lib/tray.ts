@@ -2,9 +2,9 @@
  * Putting this application on the system tray, named in the reader's own language.
  *
  * The tray is built in Rust, because it is a native thing and there is no other way to build
- * one. Its menu, though, is text a person reads, and the catalogs are on this side
- * (`.agents/rules/language.md`) — so the entries are looked up here and handed over.
- * This file is the whole of that hand-off and holds no text of its own.
+ * one. Its menu, though, is text a person reads, and the catalogs are on this side — so the
+ * entries are looked up here and handed over. This file is the whole of that hand-off and
+ * holds no text of its own.
  */
 
 import { invoke } from "@tauri-apps/api/core";

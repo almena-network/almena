@@ -173,8 +173,8 @@ fn open(path: &Path) -> std::io::Result<File> {
 /// **The prefix includes the separator**, and that is not a detail. A rotated file is
 /// `<program>_<moment>.log`, so matching on `<program>` alone makes `almena` the prefix of
 /// `almena-app`, and this program's retention deletes the windowed application's records.
-/// `.agents/rules/storage-and-logs.md` promises two processes never share a file; taking somebody
-/// else's away is the same promise broken from the other end.
+/// Two processes never share a file; taking somebody else's away is the same promise broken
+/// from the other end.
 fn prune(directory: &Path, program: &str) {
     let prefix = format!("{program}_");
     let Ok(entries) = std::fs::read_dir(directory) else {

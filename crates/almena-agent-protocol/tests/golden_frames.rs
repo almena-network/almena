@@ -6,8 +6,8 @@
 //! copy of it.
 //!
 //! **The twin lives at `agent/tests/test_golden_frames.py`, and the two must carry the same
-//! table.** Nothing enforces that across two repositories; `TODO.md` says so rather than
-//! leaving it to be discovered. Changing a byte here without changing it there is the failure
+//! table.** Nothing enforces that across two repositories, and it is said here rather than
+//! left to be discovered. Changing a byte here without changing it there is the failure
 //! this file exists to make loud, and the day it happens the symptom is an agent that starts,
 //! says nothing a person can see, and writes one refusal to a log.
 //!

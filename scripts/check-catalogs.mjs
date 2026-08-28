@@ -5,10 +5,12 @@
  * English text would silently stand in for the Spanish one, and nobody would notice until a
  * user did.
  *
- * It exists as a script, outside the application, because it catches the half TypeScript
- * cannot. Every catalog is typed against the English one, so a key added to `en.json` and
- * forgotten in `es.json` already fails `tsc`; a key that exists only in `es.json` is an extra
- * property, which is not a type error. `task build` runs this.
+ * It exists as a script, outside the application, because the application no longer names its
+ * languages: adding one must not mean touching code, and the design does not assume two, so the
+ * catalog directory *is* the list, and nothing in TypeScript enumerates it any more. What used
+ * to be `tsc`'s half — a key in English and not in Spanish — is checked here too, in both
+ * directions, along with every catalog having a name of its own. `task build` and `task check`
+ * run this.
  */
 
 import { readFileSync, readdirSync } from "node:fs";
@@ -23,13 +25,13 @@ const CATALOGS = fileURLToPath(
 const SOURCE = "en";
 
 /**
- * Every language the interface has to ship in.
+ * The key every catalog carries its own name under.
  *
- * Kept here as well as in `src/i18n/index.ts` on purpose. A language is added deliberately
- * and only with a complete catalog, so the second place to edit is a feature: it will not
- * happen by accident.
+ * Each language is shown the way it names itself, never translated into the other, and the
+ * picker reads this key rather than a table it would have to be taught. A catalog without it
+ * is a language nobody could choose.
  */
-const REQUIRED = ["en", "es"];
+const NAME = "language.name";
 
 /** Every leaf of a catalog, as a dotted path. */
 function keysOf(value, prefix = "") {
@@ -42,13 +44,22 @@ function keysOf(value, prefix = "") {
   );
 }
 
-const catalogs = new Map(
+/** What a catalog says at a dotted key, or undefined. */
+function at(value, key) {
+  return key.split(".").reduce((node, part) => node?.[part], value);
+}
+
+const parsed = new Map(
   readdirSync(CATALOGS)
     .filter((name) => name.endsWith(".json"))
     .map((name) => [
       name.slice(0, -".json".length),
-      new Set(keysOf(JSON.parse(readFileSync(join(CATALOGS, name), "utf8")))),
+      JSON.parse(readFileSync(join(CATALOGS, name), "utf8")),
     ]),
+);
+
+const catalogs = new Map(
+  [...parsed].map(([language, value]) => [language, new Set(keysOf(value))]),
 );
 
 let failed = false;
@@ -58,12 +69,33 @@ function report(message) {
   failed = true;
 }
 
-for (const language of REQUIRED) {
-  if (!catalogs.has(language)) {
-    report(
-      `${language}: no catalog. Every supported language ships with a complete one.`,
-    );
+// The directory is the list of languages: adding one must not mean touching code, so there is
+// no list here either. What is still checked is what would make the folder a lie: no source to
+// compare against, only one language in a platform that is multilingual from the first day, or
+// two languages that call themselves the same thing.
+if (catalogs.size < 2) {
+  report(
+    `Only ${catalogs.size} catalog in ${CATALOGS}. The platform is multilingual from the first day.`,
+  );
+}
+
+const names = new Map();
+
+for (const [language, value] of parsed) {
+  const name = at(value, NAME);
+
+  if (typeof name !== "string" || name.trim() === "") {
+    report(`${language}: no "${NAME}". A language has to arrive knowing its own name.`);
+    continue;
   }
+
+  const taken = names.get(name);
+
+  if (taken) {
+    report(`${language}: calls itself "${name}", and so does ${taken}.`);
+  }
+
+  names.set(name, language);
 }
 
 const source = catalogs.get(SOURCE);

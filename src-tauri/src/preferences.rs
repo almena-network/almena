@@ -2,10 +2,10 @@
 //! model the agent is asked for.
 //!
 //! Four small facts, kept in one file so that they survive a restart, and kept **here** rather
-//! than in the webview's own storage because the rule about where a file goes is a rule about
-//! files this application writes — `.agents/rules/storage-and-logs.md`. They are what the
-//! user chose, so they are configuration, so they live in the configuration directory, and the
-//! path comes from the resolver rather than from a literal.
+//! than in the webview's own storage, which is somewhere nobody can find, back up or delete
+//! with the conventions of their own operating system. They are what the user chose, so they
+//! are configuration, so they live in the configuration directory, and the path comes from the
+//! resolver rather than from a literal.
 //!
 //! **The vocabularies are not here.** This side knows that there are four choices and what
 //! they are called; it does not know that a palette is `light` or `dark`, that a language is

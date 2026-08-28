@@ -1,8 +1,7 @@
 /**
  * The peers, or the reason there are none — and there are three different reasons.
  *
- * Telling them apart is the whole of this file, and they are not interchangeable
- * (`.agents/rules/honest-emptiness.md`):
+ * Telling them apart is the whole of this file, and they are not interchangeable:
  *
  * - **Nobody has looked yet.** Before the first reading comes back, saying "no peers" would be
  *   reporting a result nobody obtained. That it is only true for a moment is not a defence.

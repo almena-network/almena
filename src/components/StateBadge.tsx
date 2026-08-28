@@ -2,9 +2,9 @@
  * One of the four states, drawn as a colour and said as a word.
  *
  * It exists because the pairing is the rule and not the screen's to choose: a state is never
- * carried by colour alone, and the four are the only four
- * (`.agents/rules/interface.md`). Two screens showing the same state in two different
- * words, or a fifth colour arriving because somebody needed one, are both what this closes.
+ * carried by colour alone, and the four are the only four. Two screens showing the same state
+ * in two different words, or a fifth colour arriving because somebody needed one, are both
+ * what this closes.
  *
  * The badge around it is shadcn/ui's, in its outline tone. A badge *filled* with a state colour
  * would put a second, louder red on a screen that already has one meaning for red, so the

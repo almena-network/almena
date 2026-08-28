@@ -32,9 +32,8 @@ const SAYS = [
  *
  * The narrowing is here and it is deliberate: an identifier is not text, and an application
  * that drew one because it had nothing better would be putting a subprocess's vocabulary in
- * front of a person (`.agents/rules/language.md`). The code itself is already in the
- * records — the Rust side writes it the moment the failure arrives — so nothing is lost by
- * keeping it off the screen.
+ * front of a person. The code itself is already in the records — the Rust side writes it the
+ * moment the failure arrives — so nothing is lost by keeping it off the screen.
  */
 function reasonFor(code: string) {
   const known = SAYS.find((said) => said === code);

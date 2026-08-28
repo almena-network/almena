@@ -8,9 +8,8 @@
  * # Three facts about an answer, kept apart
  *
  * *Nothing has been asked*, *something was asked and nothing has come back yet*, and *this is
- * the answer* are three states, and the screen draws a different thing for each
- * (`.agents/rules/honest-emptiness.md`). They are `turns` being empty, `running` with an empty
- * `saying`, and `saying` having something in it.
+ * the answer* are three states, and the screen draws a different thing for each. They are
+ * `turns` being empty, `running` with an empty `saying`, and `saying` having something in it.
  *
  * A cancelled run **keeps what it already said**. `cancelled` means no further event is coming;
  * it does not withdraw the tokens that arrived, and clearing the line would be throwing away
@@ -25,8 +24,7 @@
  *
  * What it cannot do is show the answer. Those tokens went to a channel nobody is holding, and
  * they are gone. `adopted` is that fourth fact, kept apart from the other three because a
- * screen that drew an ordinary empty answer here would be claiming the agent said nothing
- * (`.agents/rules/honest-emptiness.md`).
+ * screen that drew an ordinary empty answer here would be claiming the agent said nothing.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

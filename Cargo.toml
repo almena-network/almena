@@ -13,8 +13,19 @@ resolver = "3"
 members = [
   "cli",
   "crates/almena-agent-protocol",
+  "crates/almena-api",
+  "crates/almena-cbor",
+  "crates/almena-format",
   "crates/almena-log",
+  "crates/almena-mesh",
+  "crates/almena-lookup",
+  "crates/almena-node",
   "crates/almena-paths",
+  "crates/almena-serve",
+  "crates/almena-store",
+  "crates/almena-suite",
+  "crates/almena-time",
+  "crates/almena-tls",
   "src-tauri",
 ]
 
@@ -46,10 +57,61 @@ todo = "deny"
 # and not a number, so two members can never end up on two versions of the same crate and
 # nobody has to grep to find out which version is in use.
 [workspace.dependencies]
+# The mesh. Chosen for what it gives that HTTP does not: getting through a domestic router, one
+# identity rather than two censuses to keep in step, and content asked for by hash. Kept to the
+# smallest set of features that does those things.
+libp2p = { version = "0.56", default-features = false, features = [
+  "ed25519",
+  "noise",
+  "yamux",
+  "tcp",
+  "dns",
+  "tokio",
+  "macros",
+  "identify",
+  "request-response",
+] }
+almena-mesh = { path = "crates/almena-mesh" }
+# Already in the tree by way of libp2p; named here because the codec trait it defines is one this
+# project implements, and an implementation cannot use a macro it does not depend on.
+async-trait = { version = "0.1" }
+hickory-resolver = { version = "0.26" }
+almena-lookup = { path = "crates/almena-lookup" }
+# TLS for whichever face serves under a certificate. Not in the transport: serving takes a stream
+# and does not ask what it is, so the second cryptographic implementation enters with the face that
+# needs it rather than with everything that links the transport. `ring` rather than the default
+# provider, and named here so that nothing picks one by accident.
+rustls-pki-types = { version = "1", features = ["std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+almena-tls = { path = "crates/almena-tls" }
 # This repository's own crates. Paths, because they are published with it or not at all.
 almena-agent-protocol = { path = "crates/almena-agent-protocol" }
+# The canonical CBOR profile and its check. No dependencies: every identifier hangs from these
+# bytes, so the rule that decides them is one anybody can read end to end.
+# What can be asked of a node and what comes back. It knows nothing about a network: reaching
+# `hyper` from here is what `task isolation` refuses, so an answer can never learn what a status
+# code or a stream is.
+almena-api = { path = "crates/almena-api" }
+almena-cbor = { path = "crates/almena-cbor" }
+# The log entry, the operation, and the identifier an object takes from the operation that
+# creates it. Replicated in `client`, held to the same golden vectors.
+almena-format = { path = "crates/almena-format" }
 almena-log = { path = "crates/almena-log" }
+# Everything a node does. Both faces of the node call this and neither holds logic of its own.
+almena-node = { path = "crates/almena-node" }
 almena-paths = { path = "crates/almena-paths" }
+# The crypto suite, fixed once for the whole platform because a second definition would agree with
+# the first for about a month. Replicated in `client`, held to the same golden vectors.
+# What a node keeps: the append-only log and the chain each object advances along.
+# The transport, which decides nothing: it carries a question to `almena-api` and writes down
+# whatever comes back.
+almena-serve = { path = "crates/almena-serve" }
+almena-store = { path = "crates/almena-store" }
+almena-suite = { path = "crates/almena-suite" }
+# The epoch, and every deadline the protocol counts in them. Replicated in `client` rather than
+# shared, so neither repository owns the other's format, and held to the same golden vectors,
+# which is what keeps two honest copies from drifting a byte apart.
+almena-time = { path = "crates/almena-time" }
 
 # The application. `tray-icon` is what lets it live on a bar with no window on screen, and
 # `image-png` is what lets the glyph it wears be one of the files `task icons` generates rather
@@ -61,7 +123,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-log = "2"
 # What the application says when its own window is not what the person is looking at. Adopted
 # because it serves every platform this repository builds for — a dependency that served only
-# some is one `.agents/rules/deployments.md` refuses.
+# some leaves one platform quietly missing what the others do.
 tauri-plugin-notification = "2"
 # What the window remembers between runs, and what folds a second launch into the running
 # application instead of starting another.
@@ -70,8 +132,9 @@ tauri-plugin-single-instance = "2"
 # The native dialogs — a question, a warning, a file to pick. Nothing draws one yet.
 tauri-plugin-dialog = "2"
 # Updating the application in place, where an application is a file somebody downloaded.
-# Registered but never asked: `.agents/rules/deployments.md` is what it may and may not do, and
-# the endpoint and the key it would need are not decided.
+# Registered but never asked: it may say a version exists, never install one unasked — an
+# identity application left out of date is a risk, and an update nobody chose is a decision
+# taken for the person running it. The endpoint and the key it would need are not decided.
 tauri-plugin-updater = "2"
 # Whether the operating system opens this application when somebody logs in. Windows and
 # Linux only: each has one register for it and this writes to it. macOS keeps two and means
@@ -113,3 +176,30 @@ serde_json = "1"
 # The facade every program writes records through. What they look like is `almena-log`.
 log = "0.4"
 time = "0.3.55"
+
+# The algorithms themselves, all of them RustCrypto: one family, pure Rust, and therefore one
+# cross-compilation story for the five desktop platforms plus Android and iOS.
+sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
+p256 = { version = "0.13", default-features = false, features = ["std", "ecdsa"] }
+# The words a person writes down. Derivation from them is SLIP-0010, which is short enough to
+# hold here rather than take a dependency for — see `seed.rs`.
+bip39 = { version = "2", default-features = false, features = ["std"] }
+hmac = "0.12"
+# Where a key that has to be unguessable comes from. The suite deliberately generates nothing —
+# every path in it is reproducible in a test, and nothing in it can be weakened by a bad
+# generator — so the need lands here instead. This is the operating system's own source and
+# carries no algorithm of its own: one crate, and nothing to get wrong.
+getrandom = "0.3"
+
+# What carries the node's interface. `hyper` is already in this workspace at exactly this version,
+# built for the windowed application's updater — turning on its server side is a smaller supply
+# chain event than adopting a framework this project does not have. There is no router: the set of
+# questions is fixed and small, and a `match` covers it.
+#
+# **TLS is not here.** Whoever terminates it supplies the stream, so the second cryptographic
+# implementation TLS needs enters with the face that needs it and not with every node.
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }

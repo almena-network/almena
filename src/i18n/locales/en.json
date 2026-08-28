@@ -10,8 +10,7 @@
     "working": "Working"
   },
   "language": {
-    "en": "English",
-    "es": "Español"
+    "name": "English"
   },
   "section": {
     "home": "Home",
@@ -68,6 +67,9 @@
       "figure": {
         "network": "Network",
         "identity": "This node",
+        "written": "Acts written down",
+        "root": "Root",
+        "peer": "Mesh name",
         "peers": "Peers"
       }
     },
@@ -87,6 +89,42 @@
       "warn": "Degraded",
       "bad": "Failed",
       "idle": "Idle"
+    },
+    "control": {
+      "heading": "Running this node",
+      "body": "What an operator can do to it from here. The terminal offers the same two.",
+      "open": "Open a development network",
+      "zone": "Zone, or empty for this network's own",
+      "serve": "Serve the interface",
+      "mesh": "Mesh port",
+      "joinTheMesh": "Take a place on the mesh",
+      "closeEpoch": "Close the epoch now",
+      "certificate": "Certificate (PEM), or nothing to answer in the clear",
+      "privateKey": "Private key (PEM)",
+      "address": "Address to serve on",
+      "reason": {
+        "alreadyOnANetwork": "This node is already on a network. A second one would be a second history for one identity.",
+        "noRandomness": "The system would not produce randomness, so there is no key to be. A node with a guessable key is worse than one that did not start.",
+        "noClock": "The system would not say what time it is, and a network has to record when its first epoch began.",
+        "noDirectory": "This computer would not say where the node keeps things, so it has nowhere to be a node.",
+        "unreadableIdentity": "There is a key in the node's directory and it cannot be read. It has been left alone: writing over it would be quietly becoming a different node.",
+        "recordWouldNotStart": "The record would not take the acts that start it, so the network was not opened. Nothing is half-open: this node is as it was.",
+        "unreadableRecord": "There is a record in the node's directory and it cannot be read. It has been left alone: opening a network on top of it would put this node on a second one.",
+        "recordDoesNotAddUp": "The record no longer holds everything this node has already signed for. It has not come up, rather than serve a history that contradicts what it has told other people.",
+        "directoryHeld": "Another node is already running on this directory. A node is a directory with a key in it, and two of them over one would be a single identity with two histories.",
+        "directoryCannotBeHeld": "This filesystem will not say whether another node is using the directory. Starting anyway would mean guessing that nobody is — network drives often cannot answer this.",
+        "noCertificate": "The certificate file is not there, cannot be read, or holds no certificate. The interface has not come up: serving in the clear having been asked not to would be the worst of both.",
+        "noPrivateKey": "The private key is not there, cannot be read, or holds no key. A certificate and its key are one decision, and one without the other is not it.",
+        "certificateAndKeyAreNotAPair": "That key does not belong to that certificate. Found here rather than by the first person who fails to connect.",
+        "zoneSilent": "The zone did not answer, so whether anybody is already there is unknown. Nothing was opened: reading silence as an empty zone is how a second network gets started beside the one that was already running.",
+        "thereIsANetwork": "The zone says there is already a network. A node joins one when somebody is there and opens one only when nobody is.",
+        "notThePromisedNetwork": "Somebody listed as being on this network turned out to be on another one, or to be passing off one they made up. Nothing was written down — the question is asked before anything is.",
+        "noTransport": "This machine would not give the node a way onto the mesh at all.",
+        "meshAddressUnavailable": "That port could not be listened on — usually somebody else already has it. It has not quietly taken another: a node whose port moved is a node whose published record is now wrong, and nobody reading it would be told.",
+        "noNetwork": "There is no network to serve yet.",
+        "addressUnavailable": "Nothing could listen on that address.",
+        "unknown": "It did not work, and this build has no reading for what came back."
+      }
     }
   },
   "ai": {

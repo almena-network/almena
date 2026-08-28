@@ -2,11 +2,12 @@
  * What a person chose, and what it takes to keep it.
  *
  * Four choices — the palette, the identity colour, the language, and which model the agent is
- * asked for — held in one file by the Rust side, which is where a file this application writes
- * belongs (`.agents/rules/storage-and-logs.md`). Nothing here knows what any of them
- * *mean*: this file is the store, and the vocabularies live where they are already written
- * down — `@/lib/appearance` for the two the interface is drawn from, `@/i18n` for the
- * language, `@/lib/models` for the model.
+ * asked for — held in one file by the Rust side rather than in the webview's own storage: they
+ * are what a person chose, so they are configuration, and configuration goes where the
+ * platform keeps configuration. Nothing here knows what any of them *mean*: this file is the
+ * store, and the vocabularies live where they are already written down — `@/lib/appearance`
+ * for the two the interface is drawn from, `@/i18n` for the language, `@/lib/models` for the
+ * model.
  *
  * The choices are read **once**, before anything is drawn, and held here afterwards. That is
  * what lets a screen ask what the palette is without waiting: a settings screen whose controls

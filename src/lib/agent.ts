@@ -46,8 +46,7 @@ export interface Turn {
  * What the application knows about the agent without asking it anything.
  *
  * Every figure may be `null`, and `null` is doing real work: nobody measured it. A screen that
- * drew a zero or an empty string for one of these would be claiming a reading nobody took
- * (`.agents/rules/honest-emptiness.md`).
+ * drew a zero or an empty string for one of these would be claiming a reading nobody took.
  */
 export interface AgentStatus {
   /** Where the agent is. */
@@ -165,8 +164,7 @@ export async function stopAgent(): Promise<void> {
  *
  * The Rust side answers with an object carrying one identifier, and a call that could not be
  * reached at all answers with something else entirely. Both end here, and neither is ever
- * drawn as it arrived: what a person reads is looked up from this in the catalogs
- * (`.agents/rules/language.md`).
+ * drawn as it arrived: what a person reads is looked up from this in the catalogs.
  */
 function codeOf(refusal: unknown): string {
   if (typeof refusal === "object" && refusal !== null && "code" in refusal) {

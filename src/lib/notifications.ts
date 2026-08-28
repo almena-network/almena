@@ -7,9 +7,8 @@
  * notification that arrives one press later.
  *
  * **No text lives in this file.** What a notification says arrives from the caller, which is
- * the side that took it out of the catalogs — `.agents/rules/language.md`. The Rust
- * side has its own way to the same plugin, in `src-tauri/src/notification.rs`, for the code
- * that runs with no window in front of it.
+ * the side that took it out of the catalogs. The Rust side has its own way to the same plugin,
+ * in `src-tauri/src/notification.rs`, for the code that runs with no window in front of it.
  */
 
 import {

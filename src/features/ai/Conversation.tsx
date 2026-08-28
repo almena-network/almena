@@ -12,7 +12,7 @@
  * A run this page adopted is drawn as its own line rather than as an ordinary one that has said
  * nothing yet. It will never say anything here — its tokens are going to a channel that went
  * with the page that started it — and letting the spinner imply otherwise would be showing a
- * reader an answer on its way that is not on its way (`.agents/rules/honest-emptiness.md`).
+ * reader an answer on its way that is not on its way.
  */
 
 import { useTranslation } from "react-i18next";

@@ -10,7 +10,7 @@
  *
  * They are layout and typography, which is exactly what is **not** an element: nobody operates
  * a paragraph, and a component whose whole body is a `<p>` earns its reader nothing. What a
- * person operates comes from `src/components/` — see `.agents/rules/interface.md`.
+ * person operates comes from `src/components/`.
  *
  * The column takes the whole width it is given, at every size, so that the application fills
  * the window the person sized rather than sitting in a narrow strip down the middle of it. What stops a card from becoming a line of text too wide to read is

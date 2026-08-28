@@ -9,8 +9,8 @@
  * **It is built to be added to.** The left group is where what the application is *doing*
  * belongs — which network, how many peers, what it is waiting on — and it is deliberately
  * empty today, because none of that is known yet and a status bar that invented something to
- * say would be the worst place in the interface to do it (`AGENTS.md`, Transparency). The
- * right group holds what does not change while the application runs.
+ * say would be the worst place in the interface to do it. The right group holds what does not
+ * change while the application runs.
  *
  * The mark is drawn in the strip's own faint colour rather than in the identity one. It is
  * here to say which application this is at a glance, not to be the thing anybody is looking
@@ -21,7 +21,7 @@
  * strip is the only thing in the application that is. It is brighter than everything else on
  * the strip because it is the one thing there that should be noticed; it is not a state colour,
  * because being a development build is not one of the four states and borrowing one of those
- * would cost them their meaning (`.agents/rules/interface.md`).
+ * would cost them their meaning.
  */
 
 import { useTranslation } from "react-i18next";

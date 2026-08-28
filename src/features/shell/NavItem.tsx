@@ -8,10 +8,9 @@
  * to a question CSS has already given.
  *
  * It is shadcn/ui's button rather than markup of its own: an entry of a navigation is a thing
- * a person operates, and there is one button in this application
- * (`.agents/rules/interface.md`). `ghost` is the tone for an entry that is not the
- * current one; the current one is the same button wearing the identity colour, which is one of
- * exactly two things that colour is allowed to mean.
+ * a person operates, and there is one button in this application. `ghost` is the tone for an
+ * entry that is not the current one; the current one is the same button wearing the identity
+ * colour, which is one of exactly two things that colour is allowed to mean.
  */
 
 import { useTranslation } from "react-i18next";

@@ -6,7 +6,7 @@
  * list is what Almena knows how to *ask for* — not what this computer can answer — and the
  * card says so in as many words rather than leaving somebody to find out by choosing one that
  * is not there. There is no discovery behind it, and pretending otherwise would be the screen
- * claiming a reading nobody took (`.agents/rules/honest-emptiness.md`).
+ * claiming a reading nobody took.
  *
  * # Chosen, and in force
  *

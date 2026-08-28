@@ -3,8 +3,7 @@
  *
  * `src/styles/tokens.css` holds every value of both and switches between them on `data-theme`
  * and `data-accent`, set on the document element. **This file is the only thing that writes
- * them**, so a screen never asks which palette it is in and no component branches on one —
- * `.agents/rules/interface.md`.
+ * them**, so a screen never asks which palette it is in and no component branches on one.
  *
  * The two vocabularies are here rather than in `@/lib/preferences` because they are these
  * values: a sixth accent is a block in the token file and a name in this list, and nothing else

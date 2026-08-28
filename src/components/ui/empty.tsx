@@ -1,14 +1,15 @@
 /**
- * What a region says when it holds nothing. Vendored from shadcn/ui —
- * `.agents/rules/interface.md`.
+ * What a region says when it holds nothing. Vendored from shadcn/ui, the registry every
+ * element in this interface comes from.
  *
  * It is the element behind one of this project's promises: an empty answer is an answer, and a
- * blank region reads as a broken screen rather than an empty one (`AGENTS.md`, Transparency).
+ * blank region reads as a broken screen rather than an empty one.
  *
  * Everything below this header is the registry's own source, left exactly as it arrived so
  * that re-running `pnpm dlx shadcn@latest add empty --overwrite` produces a diff a reviewer
  * can read. Nothing this project decides is written in here: the colours it names live in
- * `src/styles/tokens.css`, and which of its variants a screen may draw is in the rule.
+ * `src/styles/tokens.css`, and a screen draws only the few of its variants this project has
+ * given a meaning, never everything the registry ships.
  */
 
 import { cva, type VariantProps } from "class-variance-authority"

@@ -31,9 +31,9 @@ use tauri::{AppHandle, LogicalSize, Manager, PhysicalSize, Window};
 /// The file the size is kept in.
 ///
 /// Beside the log rather than beside the configuration, because a window's geometry is state:
-/// worth keeping between runs, not worth backing up, and never required to start —
-/// `.agents/rules/storage-and-logs.md`. Deleting it costs the remembered size and nothing
-/// else, and the window then opens at the size `tauri.conf.json` declares.
+/// worth keeping between runs, not worth backing up, and never required to start. Deleting it
+/// costs the remembered size and nothing else, and the window then opens at the size
+/// `tauri.conf.json` declares.
 const FILE: &str = "window.json";
 
 /// How far two sizes may differ, in points, before the difference is worth acting on.

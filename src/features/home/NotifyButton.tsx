@@ -4,7 +4,7 @@
  * The outcome is said on screen rather than left to the notification itself to be the
  * evidence, because two of the three outcomes draw nothing at all: a person who pressed a
  * button and saw nothing happen cannot tell a refusal from a failure, and would be left
- * guessing which. An empty answer is an answer — `AGENTS.md`, Transparency.
+ * guessing which. An empty answer is an answer.
  *
  * It is shadcn/ui's `Alert`, which carries `role="alert"` and is therefore read out the moment
  * it appears — so it is absent rather than empty until there is an outcome. Two of the three

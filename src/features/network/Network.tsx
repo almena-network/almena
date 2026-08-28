@@ -1,16 +1,16 @@
 /**
  * The Network screen: what this node is part of, and who it is talking to.
  *
- * Two cards, and both of them tell the same truth in different words today — there is no
- * peer-to-peer layer in this build, so there is no network and no peer. What is real here is
- * the machinery: a reading taken on a timer and on demand, figures that know the difference
- * between none and unmeasured, and a list that will draw a peer the day there is one.
+ * A node that has not opened or joined a network reports having looked at nothing, and the controls
+ * offer the one thing it can do about that. There is no mesh in this build, so there are no peers
+ * and the list says so — figures here know the difference between none and unmeasured.
  */
 
 import { useState } from "react";
 
 import ScreenNav from "@/components/ScreenNav";
 import NetworkFacts from "@/features/network/NetworkFacts";
+import NodeControls from "@/features/network/NodeControls";
 import Peers from "@/features/network/Peers";
 import { screensOf, type ScreensOf } from "@/features/shell/sections";
 import { useNetwork } from "@/hooks/useNetwork";
@@ -31,7 +31,15 @@ function Network() {
 
   // Total over `Screen`: naming a screen in `sections.ts` and forgetting it here fails `tsc`.
   const shown: Record<Screen, React.ReactNode> = {
-    about: <NetworkFacts reading={reading} />,
+    about: (
+      <>
+        <NetworkFacts reading={reading} />
+        <NodeControls
+          onNetwork={reading?.network !== null && reading?.network !== undefined}
+          onChanged={refresh}
+        />
+      </>
+    ),
     peers: (
       <Peers reading={reading} lookedAt={lookedAt} looking={looking} onRefresh={refresh} />
     ),

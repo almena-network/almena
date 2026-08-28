@@ -19,8 +19,7 @@
  * the arrangement complying with the rule rather than an exception to it.
  *
  * The icons are Lucide's, which is the set shadcn/ui draws with and therefore the project's —
- * one set, one grid, one stroke weight, and no icon of our own beside them
- * (`.agents/rules/interface.md`).
+ * one set, one grid, one stroke weight, and no icon of our own beside them.
  */
 
 import { House, Network, Settings, Sparkles, type LucideIcon } from "lucide-react";
@@ -47,14 +46,13 @@ interface Section {
  * Four, and every deployment of this application draws all four: the windowed application runs
  * on computers alone, so there is no longer a platform here that has one of these and not
  * another. A section marked for some devices and not others was the shape this list had while
- * a phone was one of the things it was drawn on, and nothing needs it now
- * (`.agents/rules/deployments.md`).
+ * a phone was one of the things it was drawn on, and nothing needs it now.
  *
  * Four is also close to what the compact shape has room for. Below 600 the navigation is a
  * menu the width of the narrowest window this application opens in, which is 400 points
  * across; a fifth entry leaves each of them around 70, and 44 of that is what a finger is
  * entitled to — a computer with a touch screen is still a computer, and every interaction here
- * is reachable both ways (`.agents/rules/deployments.md`).
+ * is reachable both ways.
  *
  * So a fifth section is a line added here and nothing more, and a sixth is not: that one is
  * either a change to the shape of the navigation, or an argument that one of the others should

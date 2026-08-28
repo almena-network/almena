@@ -22,7 +22,7 @@
 /// Read from the process arguments directly. There is nothing else on this application's
 /// command line, and an argument it does not know is not an error: a person who mistyped
 /// something is better served by the application they asked for than by a refusal written in
-/// a language nobody chose (`.agents/rules/language.md`).
+/// a language nobody chose — nothing on a command line has read a catalog yet.
 ///
 /// # Examples
 ///

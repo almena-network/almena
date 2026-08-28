@@ -35,7 +35,9 @@
 //! [`line`] reads the clock itself. A caller that passed one in could pass a local one, and
 //! the whole point of the paragraph above is that nobody gets to.
 //!
-//! See `.agents/rules/storage-and-logs.md`, which this crate is the enforceable half of.
+//! The rest of the same promise is not this crate's to hold: which directory a file is written
+//! to, what each level means, and that no key, token or word of somebody's message ever reaches
+//! a record at all.
 
 use std::fmt::Arguments;
 

@@ -1,11 +1,10 @@
 //! The agent's own records, forwarded into this program's log.
 //!
-//! The agent writes to its stderr in the same line shape every Almena program writes — that is
-//! `.agents/rules/storage-and-logs.md` applied to a program in another language, and `almena-log` is
-//! the crate that defines it. What it does **not** do is open a file: it writes to a pipe, and
+//! The agent writes to its stderr in the same line shape every Almena program writes — nobody
+//! reading the logs of two of them should have to learn two formats — and `almena-log` is the
+//! crate that defines it. What it does **not** do is open a file: it writes to a pipe, and
 //! this side writes the record. So one file holds two programs' records and nothing competes
-//! for a file handle, which is the thing that rule's *two processes never share a file* exists
-//! to prevent.
+//! for a file handle, which is what keeps two processes from ever sharing one.
 //!
 //! # Why the line is taken apart rather than passed on
 //!
@@ -24,10 +23,10 @@
 //! # What is never forwarded
 //!
 //! Nothing that crosses the wire. Tokens, the text of a turn and a tool's arguments are the
-//! content of a person's conversation, and `.agents/rules/storage-and-logs.md` rules out logging that in
-//! as many words. This module only ever sees the agent's stderr, which by the agent's own
-//! design carries none of it — but the supervisor is held to the same line, and says so where
-//! it writes its own records.
+//! content of a person's conversation, and no key, no password, no token and nothing anybody
+//! said is ever written down here. This module only ever sees the agent's stderr, which by the
+//! agent's own design carries none of it — but the supervisor is held to the same line, and
+//! says so where it writes its own records.
 
 use log::{Level, log, warn};
 
@@ -59,9 +58,9 @@ pub fn forward(line: &str) {
 
 /// The level, the target and the message of one record, or nothing when it is not one.
 ///
-/// The shape is `<timestamp> <LEVEL> <name> <message>`, which is `.agents/rules/storage-and-logs.md`'s
-/// and is what the agent's `records.py` writes. The timestamp is read only far enough to know
-/// it was there; its value is deliberately discarded.
+/// The shape is `<timestamp> <LEVEL> <name> <message>`, the one line `almena-log` defines for
+/// every program here and what the agent's `records.py` writes. The timestamp is read only far
+/// enough to know it was there; its value is deliberately discarded.
 fn read(line: &str) -> Option<(Level, String, String)> {
     // Split one field at a time, trimming before each: the level is padded to five columns, so
     // what separates it from the name is a *run* of spaces rather than one. Splitting on every

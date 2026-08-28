@@ -6,8 +6,9 @@
  * one the element was built with instead of landing beside it and losing to source order.
  *
  * The file is named after the function rather than called `utils`, which is what shadcn's
- * scaffold names it — see `.agents/rules/code.md`, and `components.json`,
- * whose `aliases.utils` is what points the generated imports here.
+ * scaffold names it: a file named after a category is an invitation to put the next loose
+ * function in it. What keeps the generated imports arriving here anyway is `components.json`,
+ * whose `aliases.utils` names this path.
  */
 
 import { clsx, type ClassValue } from "clsx";

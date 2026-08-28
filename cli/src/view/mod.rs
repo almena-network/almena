@@ -49,11 +49,16 @@ pub fn run(node: &Node, catalog: &Catalog) -> std::io::Result<()> {
             // A key event arrives twice on Windows — once pressed, once released — and
             // answering both would leave on the press and then act on a terminal that is
             // already restored.
-            Ok(Event::Key(key)) if key.is_press() => {
-                if keys::action(key) == keys::Action::Leave {
-                    break Ok(());
+            Ok(Event::Key(key)) if key.is_press() => match keys::action(key) {
+                keys::Action::Leave => break Ok(()),
+                // Nothing is drawn about it beyond the count going up on the next frame: what a
+                // node owes and what it has closed are facts it reports, and a face that answered
+                // this one itself would be a face computing a fact.
+                keys::Action::CloseEpoch => {
+                    let _ = node.close_epoch();
                 }
-            }
+                keys::Action::Stay => {}
+            },
             Ok(_) => {}
         }
     };

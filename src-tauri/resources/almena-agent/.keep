@@ -6,4 +6,4 @@ depends on the machine, and a build with nothing staged is an ordinary state: th
 builds, runs, and says on its own AI screen that it carries no agent.
 
 That state has to exist and be drawn anyway, so this is not a workaround. What it does leave
-open is a *release* built with nothing staged and nobody noticing, which `TODO.md` carries.
+open is a *release* built with nothing staged and nobody noticing, and nothing yet refuses one.

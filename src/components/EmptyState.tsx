@@ -8,8 +8,7 @@
  *
  * The icon is passed in rather than fixed, because the three reasons a list can be empty are
  * three different facts and a reader should be able to tell them apart before reading a word:
- * still looking, nothing to look at, looked and found none —
- * `.agents/rules/honest-emptiness.md`.
+ * still looking, nothing to look at, looked and found none.
  */
 
 import type { ReactNode } from "react";

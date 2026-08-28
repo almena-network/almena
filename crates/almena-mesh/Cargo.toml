@@ -1,0 +1,27 @@
+[package]
+name = "almena-mesh"
+description = "How nodes reach each other, and what they are called when they do"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+almena-format = { workspace = true }
+almena-node = { workspace = true }
+almena-store = { workspace = true }
+almena-suite = { workspace = true }
+almena-time = { workspace = true }
+async-trait = { workspace = true }
+libp2p = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
+# Two real nodes with two real records, to check that what one hands over the other accepts.
+almena-format = { workspace = true }
+almena-suite = { workspace = true }

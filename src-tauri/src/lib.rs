@@ -6,8 +6,8 @@
 //!
 //! There is one shape of this application and there used to be two. It ran on phones as well
 //! as on computers, and the modules a phone had no use for were marked `#[cfg(desktop)]`; the
-//! windowed application is built for Windows, macOS and Linux alone now
-//! (`.agents/rules/deployments.md`), so a condition that can never be false is not written.
+//! phone application is a repository of its own now and this one is built for Windows, macOS
+//! and Linux alone, so a condition that can never be false is not written.
 //! What remains conditional below is the genuine difference **between those three** — which
 //! register an operating system keeps for opening an application at login, and the Dock.
 
@@ -20,7 +20,8 @@ mod logging;
 // The one public module of this crate, and public on purpose. Every other module here is
 // wiring that only `run` below has any business calling; `notification` is what this crate
 // offers to whatever comes to have something to announce, including code that runs when no
-// window exists (`.agents/rules/code.md`).
+// window exists — and what leaves the crate is the only thing `pub` is for.
+mod node;
 pub mod notification;
 mod open_at_login;
 // What a person chose about how the interface looks and which language it speaks.
@@ -92,8 +93,8 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
     // accident. `dialog` is what a native question, warning or file picker will come from the
     // day something has one to ask. `updater` is what lets an application that is a file
     // somebody downloaded replace itself — and it is registered **inert**: nothing in this
-    // application asks it anything, and what it may and may not do when something does is
-    // `.agents/rules/deployments.md`, not a builder argument.
+    // application asks it anything, and never looking for an update unless a person asked for
+    // one is decided at the call that does the asking, not by a builder argument.
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
@@ -109,6 +110,8 @@ fn assemble_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
     // say which nothing it is showing without fifty megabytes of Python resident for
     // everybody who never opens it.
     let builder = builder.manage(agent::process::Supervisor::new());
+    // The node this application runs. Nothing is opened until somebody asks for it.
+    let builder = builder.manage(node::Running::default());
 
     // A launch the system started at login puts nothing on the screen. The window is still
     // built and the interface still loads — the tray has to be named from there — it is simply
@@ -191,6 +194,11 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
         tray::install_tray,
         open_at_login::opens_at_login,
         open_at_login::set_opens_at_login,
+        node::node_facts,
+        node::open_development_network,
+        node::serve_interface,
+        node::close_epoch,
+        node::join_the_mesh,
         preferences::preferences,
         preferences::set_preferences,
         agent::commands::agent_status,

@@ -29,9 +29,18 @@ tauri-plugin-opener = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # The facade this program writes records through, and the format they take. The format is a
-# crate of its own because it is a decision — the line shape, the rotation, the retention that
-# `.agents/rules/storage-and-logs.md` sets — and a decision is easier to hold to in one place than in a
-# builder call halfway down a plugin registration.
+# crate of its own because it is a decision — one line shape for every program here, the size a
+# file rotates at, how many are kept — and a decision is easier to hold to in one place than in
+# a builder call halfway down a plugin registration.
+# Everything a node does. This face draws it and holds no logic of its own.
+almena-node = { workspace = true }
+# What carries the interface, when this node is asked to serve it. The same one the terminal uses.
+almena-lookup = { workspace = true }
+almena-mesh = { workspace = true }
+almena-serve = { workspace = true }
+almena-tls = { workspace = true }
+almena-api = { workspace = true }
+tokio = { workspace = true }
 almena-log = { workspace = true }
 log = { workspace = true }
 tauri-plugin-log = { workspace = true }

@@ -12,6 +12,22 @@ vars:
   # The built agent to bundle. What `task build` in that repository leaves behind.
   AGENT_DIST: "../agent/dist/almena-agent"
 
+  # ----- What a node in development answers on ---------------------------------------------
+  #
+  # **The window and the terminal are two nodes**, not two views of one: they keep separate data
+  # directories, so they hold separate keys, so they are two participants that happen to share a
+  # computer. Two nodes cannot share a port, so each has its own here — and running both is a
+  # normal thing to do while working, not a mistake to be caught later by a bind that fails.
+  #
+  # Override any of them for a run: task dev:cli API=127.0.0.1:9999 MESH=4009
+  API: "127.0.0.1:8790"
+  MESH: "4001"
+  # The zone a node looks in for somebody to join. **It opens a network only when nobody is
+  # there**, and it finds that out by asking — so pointing this somewhere else is answering that
+  # question about a different network. Empty means the one the node already knows.
+  ZONE: ""
+
+
 tasks:
   # Announce the project and the operation about to run. Every task calls it as
   # its first command, passing OPERATION.
@@ -109,6 +125,16 @@ tasks:
         vars: { OPERATION: catalogs }
       - node scripts/check-catalogs.mjs
 
+  parity:
+    desc: Check that neither face of the node can do something the other cannot
+    cmds:
+      - task: banner
+        vars: { OPERATION: parity }
+      # It runs here as well as in `task test` because it is not a test of behaviour: it is the
+      # rule that the two ways of running a node stay the same node. A change that breaks it has
+      # to fail before it is pushed, not when somebody next runs the suite.
+      - 'cargo test -q -p almena-node facade::'
+
   check:
     desc: Run every check a change has to pass before it is pushed
     deps: [install]
@@ -122,6 +148,7 @@ tasks:
       - pnpm exec tsc --noEmit
       - task: catalogs
       - task: isolation
+      - task: parity
 
   agent:build:
     desc: Build the agent from its own repository, so that there is something to stage
@@ -198,6 +225,44 @@ tasks:
         assert_cannot_reach almena-cli almena-agent-protocol \
           "a node in a rack has no agent beside it to speak to"
 
+        # The protocol crates are replicated in `client` rather than shared, so that no
+        # repository ends up owning the format the others depend on and moving the ground under
+        # them with its versions. A dependency any of them picks up here is one that repository
+        # has to pick up too, or the copy stops being a copy — which is why they must reach
+        # nothing that is an application.
+        assert_cannot_reach almena-cbor tauri \
+          "the bytes an identifier hangs from must not know what draws them"
+        assert_cannot_reach almena-suite tauri \
+          "the suite is replicated in the holder's app, which draws with something else"
+        assert_cannot_reach almena-time tauri \
+          "an epoch is arithmetic, and arithmetic links no framework"
+        assert_cannot_reach almena-format tauri \
+          "the shapes both repositories have to agree on must not know what draws them"
+        assert_cannot_reach almena-store tauri \
+          "what a node keeps is decided by the protocol, not by whether there is a window"
+        # The core the two faces sit on. If it could reach either framework, the face would have
+        # somewhere to put logic of its own — which is the failure the two-face rule exists to
+        # prevent, arriving as a dependency rather than as a decision.
+        assert_cannot_reach almena-node tauri \
+          "the core must not know which face is drawing it"
+        assert_cannot_reach almena-node ratatui \
+          "nor the other one"
+        # The shape of an answer must not be able to learn what a status code, a header or a
+        # stream is. If it could, the transport would have somewhere to decide something, and a
+        # transport that decides is a second place the node's behaviour lives.
+        assert_cannot_reach almena-api tauri \
+          "an answer is not drawn"
+        assert_cannot_reach almena-api ratatui \
+          "nor is it drawn the other way"
+        assert_cannot_reach almena-api hyper \
+          "and it must not learn what a status code is, or the transport would have somewhere to decide"
+        # The transport carries; it does not draw. It has to work under both faces, so it may know
+        # neither.
+        assert_cannot_reach almena-serve tauri \
+          "the transport serves the same node whichever face is running"
+        assert_cannot_reach almena-serve ratatui \
+          "and the same the other way"
+
         exit "$failed"
 
   test:agent:
@@ -260,7 +325,7 @@ tasks:
 
   dev:
     aliases: [dev:desktop]
-    desc: 'Run on this computer, with hot reload. ARGS="--hidden" gives it a command line'
+    desc: 'Run the windowed node, with hot reload. ARGS="--hidden" gives it a command line'
     deps: [install, agent:stage]
     cmds:
       - task: banner
@@ -273,14 +338,35 @@ tasks:
       - pnpm tauri dev {{if .ARGS}}-- -- {{.ARGS}}{{end}}
 
   dev:cli:
-    desc: Run the node in this terminal
+    desc: 'Run a whole development node in this terminal: its network, its interface and its place on the mesh'
     deps: [install]
     cmds:
       - task: banner
         vars: { OPERATION: "dev:cli" }
-      # No hot reload and nothing to serve: this program has no frontend. `ARGS` reaches it the
-      # ordinary way, because there is no Tauri CLI in between to get past — `task dev:cli
-      # ARGS="--quiet"` is the one to try when what you want to see is the records.
+      # **Everything a node needs to be a node, because a node that does none of it is not one to
+      # develop against.** Left to a bare `cargo run` this comes up holding no network, answering
+      # nobody and reachable by nobody — which is a state worth being able to reach, and a poor
+      # thing to have to type four flags to get out of every time.
+      #
+      # No hot reload and nothing to serve: this program has no frontend. `ARGS` is added on the
+      # end and wins, because a flag given twice is the last one that counts — so `task dev:cli
+      # ARGS="--quiet"` shows the records, and ARGS can override anything below it.
+      - >
+        cargo run -q -p almena-cli --
+        --open-development
+        --serve {{.API}}
+        --mesh {{.MESH}}
+        {{if .ZONE}}--zone {{.ZONE}}{{end}}
+        {{.ARGS}}
+
+  dev:bare:
+    desc: Run the node in this terminal with nothing turned on, to see what it says about that
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: "dev:bare" }
+      # A node holding no network reports having looked at nothing rather than reporting nothing,
+      # and that is a state somebody has to be able to see on purpose.
       - cargo run -q -p almena-cli -- {{.ARGS}}
 
   # ----- Release builds ------------------------------------------------------
@@ -317,7 +403,7 @@ tasks:
         vars: { OPERATION: "build:cli" }
       # One binary and no bundle. A node on a server is a file somebody copies there, and which
       # packages that becomes — the Debian and RPM families the desktop already builds for — is
-      # not decided (`.agents/rules/deployments.md`).
+      # not decided.
       - cargo build -q --release -p almena-cli
       - cmd: echo "Built target/release/almena"
         silent: true
