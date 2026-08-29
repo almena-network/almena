@@ -1007,6 +1007,20 @@ impl Node {
         self.stamped(self.objects.running(), now)
     }
 
+    /// Everything in the catalogue this node holds, by what each object is.
+    ///
+    /// **Names and not entries**, so that whoever asked composes each one from its own acts and
+    /// checks the signatures on the way — the same rule the rest of the interface follows, and for
+    /// the same reason: a catalogue handed over finished is one somebody has to believe.
+    ///
+    /// Unlike `about`, an empty answer here is a fact and not a gap: this node holds the acts it
+    /// holds, and *nothing in the catalogue yet* is what a network before its first source looks
+    /// like.
+    #[must_use]
+    pub fn catalogue(&self, now: Epoch) -> Answered<almena_store::chain::Catalogue> {
+        self.stamped(self.objects.catalogue(), now)
+    }
+
     /// Take note of having actually reached somebody somewhere.
     ///
     /// **Kept apart from the record, and never written into it.** Where a node says it is, is its

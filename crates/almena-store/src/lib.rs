@@ -34,12 +34,14 @@
 //! over fields it did not understand well enough to tidy safely.
 
 pub mod announce;
+pub mod attribute;
 pub mod bind;
 pub mod capability;
 pub mod certification;
 pub mod chain;
 pub mod checkpoint;
 pub mod contradiction;
+pub mod core;
 pub mod element;
 pub mod entity;
 pub mod firm;
@@ -51,7 +53,10 @@ pub mod reply;
 pub mod resolution;
 pub mod root;
 pub mod share;
+pub mod source;
 pub mod summary;
+pub mod tag;
+pub mod template;
 pub mod tree;
 
 /// What an act is about, when that is not its author.

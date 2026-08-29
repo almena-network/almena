@@ -78,6 +78,14 @@ pub enum Answer {
 pub enum State {
     /// A person's account.
     Holder(Holder),
+    /// A place definitions may be copied from, admitted by Almena Government.
+    Source(Box<crate::source::Source>),
+    /// One piece of data a credential can carry, with its definition copied in.
+    Attribute(Box<crate::attribute::Attribute>),
+    /// What a request is for, from a list nobody may extend on their own.
+    Tag(Box<crate::tag::Tag>),
+    /// The shape of what is issued or of what is asked for.
+    Template(Box<crate::template::Template>),
     /// What the party a decision was taken about has to say back.
     ///
     /// **Its own object, pointing at the decision** (`SPECS.md §7.8`). Appended to the decision's
@@ -364,6 +372,24 @@ struct Chain {
     dated: Epoch,
 }
 
+/// What is in the catalogue, by what each object is.
+///
+/// **Names and not states.** Whoever asked composes each object from its own acts and checks the
+/// signatures on the way, the same as everywhere else: a node handing over finished catalogue
+/// entries would be a source somebody has to believe, and the catalogue exists to be compared
+/// rather than trusted (`SPECS.md §9.4`, `§13.6`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Catalogue {
+    /// The places definitions are copied from.
+    pub sources: Vec<Name>,
+    /// The pieces of data a credential can carry.
+    pub attributes: Vec<Name>,
+    /// The closed list of what a request may be for.
+    pub tags: Vec<Name>,
+    /// The shapes of what is issued and of what is asked for.
+    pub templates: Vec<Name>,
+}
+
 /// What the network says it is running, and how much of it could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Running {
@@ -485,6 +511,35 @@ impl Objects {
         self.chains.is_empty()
     }
 
+    /// Everything in the catalogue this node holds, by what each object is.
+    ///
+    /// **Walked rather than kept in an index of its own.** An index would be a second place the
+    /// catalogue is written down, and the day it drifted from the chains a page would show
+    /// something no act ever said. What bounds the walk is not this method: sources and tags are
+    /// Almena Government's alone and attributes and templates are the seal's (`SPECS.md §9.4`), so
+    /// the catalogue grows by governance and not by however many accounts exist.
+    ///
+    /// **Only what resolves.** A forked or unreadable object is left out rather than listed as an
+    /// entry nobody can open — a catalogue is a comparison, and a row that cannot be read is one
+    /// that invites the comparison to be made wrong.
+    #[must_use]
+    pub fn catalogue(&self) -> Catalogue {
+        let mut listed = Catalogue::default();
+        for (name, chain) in &self.chains {
+            if chain.forked || chain.opaque {
+                continue;
+            }
+            match chain.state {
+                State::Source(_) => listed.sources.push(name.clone()),
+                State::Attribute(_) => listed.attributes.push(name.clone()),
+                State::Tag(_) => listed.tags.push(name.clone()),
+                State::Template(_) => listed.templates.push(name.clone()),
+                _ => {}
+            }
+        }
+        listed
+    }
+
     /// What this node says about an object.
     #[must_use]
     pub fn resolve(&self, name: &Name) -> Answer {
@@ -532,6 +587,11 @@ impl Objects {
         if self.chains.contains_key(&name) {
             return Err(Refused::AlreadyExists);
         }
+        // **Before it is born**, because a first act on the catalogue is where the gate and the
+        // references have to hold: a template naming an attribute nobody published would otherwise
+        // be stored as a shape nobody can read, and taken back only by whoever noticed.
+        self.catalogue_holds_up(operation)?;
+
         let governor = self.governing_the_creation(operation);
         let state = born(
             operation,
@@ -631,6 +691,7 @@ impl Objects {
         // holders.
         self.domain_is_free(operation, name)?;
         self.alias_is_free(operation, name)?;
+        self.catalogue_holds_up(operation)?;
 
         // Who governs this object is that object's own chains' answer, never this act's, and it is
         // resolved here where the record is.
@@ -998,6 +1059,99 @@ impl Objects {
         }
     }
 
+    /// Whether an act on the catalogue may be taken, given everything else in the record.
+    ///
+    /// Three questions this object cannot answer on its own, and all three are the record's:
+    ///
+    /// - **The seal is a gate on publishing** (`SPECS.md §9.4`). Only parties Almena has certified —
+    ///   and Almena itself — may create attributes and templates. Using one needs no permission:
+    ///   *a template is not a licence, it is a shape*, and what the seal unlocks is **creating**.
+    /// - **A template references attributes rather than defining them.** One naming an attribute
+    ///   that is not published would be a shape nobody can read, so it is refused rather than
+    ///   stored — and one naming a tag outside the closed list would be a purpose invented to be
+    ///   compared with nobody.
+    /// - **A derivation names a real baseline.** Declaring one that does not exist would make the
+    ///   diff a comparison against nothing, which is worse than no comparison at all.
+    fn catalogue_holds_up(&self, operation: &Operation) -> Result<(), Refused> {
+        let Some(kind) = Kind::new(operation.kind) else {
+            return Ok(());
+        };
+        match kind {
+            Kind::ATTRIBUTE_PUBLISH => {
+                let by = crate::attribute::publishing(operation).ok_or(Refused::Malformed)?;
+                self.past_the_gate(&by, operation.issued)?;
+                // **The source has to be one that was admitted**, or the definition copied in came
+                // from somewhere nobody agreed to take definitions from.
+                let from = crate::attribute::copied_from(operation).ok_or(Refused::Malformed)?;
+                match self.resolve(&from) {
+                    Answer::Here(State::Source(source)) if source.admits(operation.issued) => {
+                        Ok(())
+                    }
+                    _ => Err(Refused::NotAuthorised),
+                }
+            }
+            Kind::TEMPLATE_PUBLISH => {
+                let by = crate::template::publishing(operation)
+                    .or_else(|| self.published_by(operation))
+                    .ok_or(Refused::Malformed)?;
+                self.past_the_gate(&by, operation.issued)?;
+                self.references_hold(operation)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Whoever a template already in the record says publishes it.
+    ///
+    /// A later version does not have to say again what the first one said; what it may not do is
+    /// say something else, which the threshold count settles by asking that party's owners.
+    fn published_by(&self, operation: &Operation) -> Option<Did> {
+        match self.resolve(operation.object.name()) {
+            Answer::Here(State::Template(template)) => Some(template.by.clone()),
+            _ => None,
+        }
+    }
+
+    /// Whether that party may publish to the catalogue at all.
+    fn past_the_gate(&self, by: &Did, at: Epoch) -> Result<(), Refused> {
+        // Almena's own, and the parties it has certified. This is the one place in the design where
+        // Almena is not a root among several but the one that gives permission, and `SPECS.md §7.3`
+        // and `§9.4` both say so out loud rather than leaving it to be discovered.
+        if self.government.as_ref() == Some(by.name()) || self.sealed_by_almena(by, at) {
+            return Ok(());
+        }
+        Err(Refused::NotAuthorised)
+    }
+
+    /// Whether everything a template names is in the record and may still be named.
+    fn references_hold(&self, operation: &Operation) -> Result<(), Refused> {
+        for asked in crate::template::asks(operation)? {
+            match self.resolve(&asked.attribute) {
+                Answer::Here(State::Attribute(attribute)) if attribute.usable(operation.issued) => {
+                    // **A predicate only where the attribute says it answers one.** Asking a plain
+                    // date for an answer would be asking for something nobody undertook to give.
+                    if asked.how == crate::template::How::Predicate.number() && !attribute.predicate
+                    {
+                        return Err(Refused::NotAuthorised);
+                    }
+                }
+                _ => return Err(Refused::NotAuthorised),
+            }
+        }
+        for tag in crate::template::tags(operation)? {
+            match self.resolve(&tag) {
+                Answer::Here(State::Tag(held)) if held.usable(operation.issued) => {}
+                _ => return Err(Refused::NotAuthorised),
+            }
+        }
+        if let Some(baseline) = crate::template::derives(operation)
+            && !matches!(self.resolve(&baseline), Answer::Here(State::Template(_)))
+        {
+            return Err(Refused::NotAuthorised);
+        }
+        Ok(())
+    }
+
     /// Whether Almena has certified that entity, and the certification still stands.
     ///
     /// **Almena's and not anybody's.** `SPECS.md §7.3` lets anybody certify anybody, and what a
@@ -1106,21 +1260,16 @@ impl Objects {
                 };
                 self.governed_by(&by, operation.issued)
             }
-            Some(Kind::REPLY_PUBLISH) => {
-                // **Who the decision was about**, resolved from the decision rather than taken from
-                // the reply — an act that named its own author would let anybody answer in somebody
-                // else's name. And it is that party's organisation that signs, at what its routine
-                // acts cost, because saying something concedes nothing.
-                let Some(answers) = crate::reply::answers(operation) else {
-                    return empty();
-                };
-                let Answer::Here(State::Certification(decision)) = self.resolve(&answers) else {
-                    return empty();
-                };
-                let mut governor = self.governed_by(&decision.subject, operation.issued);
-                governor.answering = Some(decision.subject.clone());
-                governor
-            }
+            Some(
+                Kind::SOURCE_ADMIT
+                | Kind::TAG_ADD
+                | Kind::ATTRIBUTE_PUBLISH
+                | Kind::TEMPLATE_PUBLISH,
+            ) => match publisher(operation) {
+                Some(by) => self.governed_by(&by, operation.issued),
+                None => empty(),
+            },
+            Some(Kind::REPLY_PUBLISH) => self.answering(operation),
             Some(Kind::ISSUER_CREATE) => {
                 let Some(Value::Text(of)) = operation.payload.get(&crate::element::field::OF)
                 else {
@@ -1133,6 +1282,23 @@ impl Objects {
             }
             _ => empty(),
         }
+    }
+
+    /// Who may answer a decision: the party it was taken about.
+    ///
+    /// **Resolved from the decision rather than taken from the reply** — an act that named its own
+    /// author would let anybody answer in somebody else's name. And it is that party's organisation
+    /// that signs, at what its routine acts cost, because saying something concedes nothing.
+    fn answering(&self, operation: &Operation) -> Governor {
+        let Some(answers) = crate::reply::answers(operation) else {
+            return Governor::nobody();
+        };
+        let Answer::Here(State::Certification(decision)) = self.resolve(&answers) else {
+            return Governor::nobody();
+        };
+        let mut governor = self.governed_by(&decision.subject, operation.issued);
+        governor.answering = Some(decision.subject.clone());
+        governor
     }
 
     /// The owners of an organisation, and what each class of act costs them.
@@ -1185,6 +1351,11 @@ impl Objects {
             State::Certification(certification) => {
                 self.governed_by(&certification.by, operation.issued)
             }
+            // Everything in the catalogue is governed by whoever published it.
+            State::Source(source) => self.governed_by(&source.by, operation.issued),
+            State::Attribute(attribute) => self.governed_by(&attribute.by, operation.issued),
+            State::Tag(tag) => self.governed_by(&tag.by, operation.issued),
+            State::Template(template) => self.governed_by(&template.by, operation.issued),
             _ => Governor::nobody(),
         }
     }
@@ -1393,6 +1564,7 @@ fn signed_as_required(operation: &Operation) -> Result<(), Refused> {
         concerns_an_entity(kind)
             || concerns_an_element(kind)
             || concerns_a_certification(kind)
+            || concerns_the_catalogue(kind)
             || kind == Kind::REPLY_PUBLISH
     }) {
         return match operation.signatures.is_empty() {
@@ -1448,6 +1620,10 @@ fn created_vocabulary(state: &State) -> Option<almena_format::field::Vocabulary<
         State::Element(_) => Some(crate::element::vocabulary()),
         State::Certification(_) => Some(crate::certification::vocabulary()),
         State::Reply(_) => Some(crate::reply::vocabulary()),
+        State::Source(_) => Some(crate::source::vocabulary()),
+        State::Attribute(_) => Some(crate::attribute::vocabulary()),
+        State::Tag(_) => Some(crate::tag::vocabulary()),
+        State::Template(_) => Some(crate::template::vocabulary()),
         State::Node { .. } => Some(crate::capability::vocabulary()),
         _ => None,
     }
@@ -1513,49 +1689,24 @@ fn apply(
         // **Enough owners first, then what the act does** (`SPECS.md §8.5`). The two are separate
         // questions and stay separate: how many signed is about the entity's own configuration,
         // and what the act means is about the act.
-        (State::Element(_) | State::Entity(_) | State::Certification(_), Some(kind))
-            if concerns_an_element(kind)
-                || concerns_an_entity(kind)
-                || concerns_a_certification(kind) =>
+        (
+            State::Element(_)
+            | State::Entity(_)
+            | State::Certification(_)
+            | State::Source(_)
+            | State::Attribute(_)
+            | State::Tag(_)
+            | State::Template(_),
+            Some(kind),
+        ) if concerns_an_element(kind)
+            || concerns_an_entity(kind)
+            || concerns_a_certification(kind)
+            || concerns_the_catalogue(kind) =>
         {
             governed(operation, state, kind, speaks)
         }
-        // A node saying what it saw of others changes nothing about what the node **is** — its key
-        // is its key whatever it observed — so the state comes through untouched. What the act is
-        // for is being in the record: the summary is the thing, and the chain is where it lives.
-        (State::Node { key, .. }, Some(Kind::NODE_SUMMARY)) => {
-            check(operation, key)?;
-            Ok(Applied::State(state.clone()))
-        }
-        // Announcing is meant to happen again: what a node offers and what version it runs change
-        // over its life, and neither may rename it. Only the first one named anything.
-        (
-            State::Node {
-                key, claimed_by, ..
-            },
-            Some(Kind::NODE_ANNOUNCE),
-        ) => {
-            check(operation, key)?;
-            offering(operation, *key, claimed_by.clone())
-        }
-        // A node letting go of whoever contributed it. **The node alone**: whoever claimed it agreed
-        // to be credited for what it served, and letting go of that costs them nothing they can be
-        // held to, so nobody has to be asked.
-        // Both sides, or it binds nothing. The node signs the act because it is the node's chain,
-        // and whoever is claiming it approved a challenge naming this node and no other — checked
-        // against the key their own chain authorises, resolved from the record.
-        (State::Node { key, .. }, Some(Kind::NODE_BIND)) => {
-            check(operation, key)?;
-            let (approval, _) = crate::bind::claimed(operation).ok_or(Refused::Malformed)?;
-            let speaks_for_them = claimant.ok_or(Refused::NotAuthorised)?;
-            if !crate::bind::agreed(operation, &speaks_for_them) {
-                return Err(Refused::NotAuthorised);
-            }
-            Ok(Applied::State(claimed(state, Some(approval.claimant))))
-        }
-        (State::Node { key, .. }, Some(Kind::NODE_UNBIND)) => {
-            check(operation, key)?;
-            Ok(Applied::State(claimed(state, None)))
+        (State::Node { .. }, Some(kind)) if concerns_a_node(kind) => {
+            on_a_node(operation, state, kind, claimant)
         }
         // A summary changes nothing about the account: it restates what the chain already produces,
         // so that whoever arrives later does not have to work it out again. **The state is not
@@ -1626,19 +1777,7 @@ fn governed(
             crate::entity::does(operation, entity, kind)
                 .map(|next| Applied::State(State::Entity(Box::new(next))))
         }
-        State::Certification(certification) => {
-            if operation
-                .understood(crate::certification::vocabulary())
-                .is_err()
-            {
-                return Ok(Applied::Beyond);
-            }
-            crate::certification::does(operation, certification, kind)
-                .map(|next| Applied::State(State::Certification(Box::new(next))))
-        }
-        // Unreachable: the caller matched on these two. Beyond rather than a panic, because a
-        // node that fell over on an act would be a node an act can stop.
-        _ => Ok(Applied::Beyond),
+        _ => in_the_catalogue(operation, state, kind),
     }
 }
 
@@ -1674,6 +1813,119 @@ struct Split<'a> {
     state: &'a State,
     /// Whether it had already split before this act, or is splitting because of it.
     already: bool,
+}
+
+/// Whether that act is one performed on a node's own chain.
+const fn concerns_a_node(kind: Kind) -> bool {
+    matches!(
+        kind,
+        Kind::NODE_SUMMARY | Kind::NODE_ANNOUNCE | Kind::NODE_BIND | Kind::NODE_UNBIND
+    )
+}
+
+/// What one act does to a node's own chain.
+///
+/// Every one of them is signed by the node's own key, because a node's chain is the node's and
+/// nobody else has anything to say on it.
+fn on_a_node(
+    operation: &Operation,
+    state: &State,
+    kind: Kind,
+    claimant: Option<[u8; ed25519::PUBLIC_KEY_WIDTH]>,
+) -> Result<Applied, Refused> {
+    let State::Node {
+        key, claimed_by, ..
+    } = state
+    else {
+        // Unreachable: the caller matched on a node.
+        return Ok(Applied::Beyond);
+    };
+    check(operation, key)?;
+    match kind {
+        // A node saying what it saw of others changes nothing about what the node **is** — its key
+        // is its key whatever it observed — so the state comes through untouched. What the act is
+        // for is being in the record: the summary is the thing, and the chain is where it lives.
+        Kind::NODE_SUMMARY => Ok(Applied::State(state.clone())),
+        // Announcing is meant to happen again: what a node offers and what version it runs change
+        // over its life, and neither may rename it. Only the first one named anything.
+        Kind::NODE_ANNOUNCE => offering(operation, *key, claimed_by.clone()),
+        // A node letting go of whoever contributed it. **The node alone**: whoever claimed it
+        // agreed to be credited for what it served, and letting go of that costs them nothing they
+        // can be held to, so nobody has to be asked.
+        Kind::NODE_UNBIND => Ok(Applied::State(claimed(state, None))),
+        // Both sides, or it binds nothing. The node signs the act because it is the node's chain,
+        // and whoever is claiming it approved a challenge naming this node and no other — checked
+        // against the key their own chain authorises, resolved from the record.
+        _ => {
+            let (approval, _) = crate::bind::claimed(operation).ok_or(Refused::Malformed)?;
+            let speaks_for_them = claimant.ok_or(Refused::NotAuthorised)?;
+            if !crate::bind::agreed(operation, &speaks_for_them) {
+                return Err(Refused::NotAuthorised);
+            }
+            Ok(Applied::State(claimed(state, Some(approval.claimant))))
+        }
+    }
+}
+
+/// What one act does to a certification, which is its issuer's statement to change.
+fn to_a_certification(
+    operation: &Operation,
+    certification: &crate::certification::Certification,
+    kind: Kind,
+) -> Result<Applied, Refused> {
+    if operation
+        .understood(crate::certification::vocabulary())
+        .is_err()
+    {
+        return Ok(Applied::Beyond);
+    }
+    crate::certification::does(operation, certification, kind)
+        .map(|next| Applied::State(State::Certification(Box::new(next))))
+}
+
+/// What one act does to something in the catalogue.
+///
+/// Four objects and one shape, because they are four ways of saying the same kind of thing: rule 4
+/// stops each of them where a critical field this build has no meaning for appears, and the object
+/// goes opaque rather than this node serving the state from before the act.
+fn in_the_catalogue(operation: &Operation, state: &State, kind: Kind) -> Result<Applied, Refused> {
+    match state {
+        State::Certification(certification) => to_a_certification(operation, certification, kind),
+        State::Source(source) => {
+            if operation.understood(crate::source::vocabulary()).is_err() {
+                return Ok(Applied::Beyond);
+            }
+            crate::source::does(operation, source, kind)
+                .map(|next| Applied::State(State::Source(Box::new(next))))
+        }
+        State::Attribute(attribute) => {
+            if operation
+                .understood(crate::attribute::vocabulary())
+                .is_err()
+            {
+                return Ok(Applied::Beyond);
+            }
+            crate::attribute::does(operation, attribute, kind)
+                .map(|next| Applied::State(State::Attribute(Box::new(next))))
+        }
+        State::Tag(tag) => {
+            if operation.understood(crate::tag::vocabulary()).is_err() {
+                return Ok(Applied::Beyond);
+            }
+            crate::tag::does(operation, tag, kind)
+                .map(|next| Applied::State(State::Tag(Box::new(next))))
+        }
+        State::Template(template) => {
+            if operation.understood(crate::template::vocabulary()).is_err() {
+                return Ok(Applied::Beyond);
+            }
+            crate::template::does(operation, template, kind)
+                .map(|next| Applied::State(State::Template(Box::new(next))))
+        }
+        // Unreachable: the caller matched on these four. Beyond rather than a panic, because a node
+        // that fell over on an act would be a node an act can stop.
+        _ => Ok(Applied::Beyond),
+    }
 }
 
 /// Where one act lands on a chain that was already here.
@@ -1816,6 +2068,46 @@ fn released_domain(operation: &Operation) -> Option<String> {
             },
         )
         .flatten()
+}
+
+/// Whether that act is one performed on the catalogue: a source, an attribute, a tag, a template.
+const fn concerns_the_catalogue(kind: Kind) -> bool {
+    matches!(
+        kind,
+        Kind::SOURCE_ADMIT
+            | Kind::SOURCE_DEPRECATE
+            | Kind::ATTRIBUTE_PUBLISH
+            | Kind::ATTRIBUTE_TRANSLATE
+            | Kind::ATTRIBUTE_DEPRECATE
+            | Kind::TAG_ADD
+            | Kind::TAG_TRANSLATE
+            | Kind::TAG_DEPRECATE
+            | Kind::TEMPLATE_PUBLISH
+            | Kind::TEMPLATE_DEPRECATE
+    )
+}
+
+/// What one act on the catalogue costs whoever publishes it.
+///
+/// **Two classes and the reason for each.** Admitting a source or adding a tag **changes the rules
+/// of the ecosystem** rather than attesting to a fact, so it goes with the governance threshold and
+/// not the sealing one (`SPECS.md §8.2`, `§9.4`). Publishing an attribute or a template is an
+/// organisation acting on its own configuration — the gate on it is the **seal**, not the class —
+/// so it costs what routine costs.
+const fn costs(kind: Kind) -> Option<crate::entity::Class> {
+    Some(match kind {
+        Kind::SOURCE_ADMIT
+        | Kind::SOURCE_DEPRECATE
+        | Kind::TAG_ADD
+        | Kind::TAG_TRANSLATE
+        | Kind::TAG_DEPRECATE => crate::entity::Class::Governance,
+        Kind::ATTRIBUTE_PUBLISH
+        | Kind::ATTRIBUTE_TRANSLATE
+        | Kind::ATTRIBUTE_DEPRECATE
+        | Kind::TEMPLATE_PUBLISH
+        | Kind::TEMPLATE_DEPRECATE => crate::entity::Class::Routine,
+        _ => return None,
+    })
 }
 
 /// Whether that act is one performed on a certification.
@@ -2085,6 +2377,9 @@ fn born(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refused> {
         Some(Kind::CERTIFICATION_ISSUE | Kind::ISSUER_CREATE) => {
             under_an_entity(operation, speaks)?
         }
+        Some(
+            Kind::SOURCE_ADMIT | Kind::ATTRIBUTE_PUBLISH | Kind::TAG_ADD | Kind::TEMPLATE_PUBLISH,
+        ) => catalogued(operation, speaks)?,
         Some(Kind::ENTITY_CREATE) => {
             // **Signed by a person, because an entity has no key of its own to be signed by.** A
             // holder's creation is self-signed by the control key it establishes; an entity's key
@@ -2168,6 +2463,45 @@ fn answered(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refused
         thresholds.of(crate::entity::Class::Routine),
     )?;
     Ok(State::Reply(Box::new(crate::reply::born(operation, by)?)))
+}
+
+/// Who an act on the catalogue says is publishing it.
+///
+/// **Named in the act and checked against the record**, exactly as an element's parent and a
+/// certification's issuer are: naming somebody is not being them, and the count that follows is what
+/// makes it true.
+fn publisher(operation: &Operation) -> Option<Did> {
+    match Kind::new(operation.kind) {
+        Some(Kind::SOURCE_ADMIT) => crate::source::admitting(operation),
+        Some(Kind::TAG_ADD) => crate::tag::adding(operation),
+        Some(Kind::ATTRIBUTE_PUBLISH) => crate::attribute::publishing(operation),
+        Some(Kind::TEMPLATE_PUBLISH) => crate::template::publishing(operation),
+        _ => None,
+    }
+}
+
+/// One thing added to the catalogue, which is what authorises it.
+///
+/// **Signed by whoever the act says is publishing it**, at what that class costs them — and, for the
+/// two that a seal gates, only where that party actually holds one. Whether they do is a fact about
+/// a different object and is asked where the whole record is, so by the time this runs it has been
+/// answered.
+fn catalogued(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refused> {
+    let kind = Kind::new(operation.kind).ok_or(Refused::Malformed)?;
+    if let Some(key) = speaks.alone {
+        check(operation, &key)?;
+    } else {
+        let thresholds = speaks.thresholds.ok_or(Refused::NotAuthorised)?;
+        let class = costs(kind).ok_or(Refused::Malformed)?;
+        enough(operation, speaks.owners, thresholds.of(class))?;
+    }
+
+    Ok(match kind {
+        Kind::SOURCE_ADMIT => State::Source(Box::new(crate::source::born(operation)?)),
+        Kind::ATTRIBUTE_PUBLISH => State::Attribute(Box::new(crate::attribute::born(operation)?)),
+        Kind::TAG_ADD => State::Tag(Box::new(crate::tag::born(operation)?)),
+        _ => State::Template(Box::new(crate::template::born(operation)?)),
+    })
 }
 
 /// An object created under an organisation, which is what authorises it.
@@ -2317,6 +2651,19 @@ fn entitled(operation: &Operation, state: &State, speaks: &Speaks<'_>) -> Result
         // and who may take it back is that organisation's question and nobody else's — including
         // the subject's, who does not get to edit what was said about them.
         State::Certification(_) => sealed(operation, speaks),
+        // Counted against whoever publishes it, at what that class of act costs them. **Who** may
+        // publish at all is a different question, asked where the whole record is: the seal is a
+        // gate and not a threshold (`SPECS.md §9.4`).
+        State::Source(_) | State::Attribute(_) | State::Tag(_) | State::Template(_) => {
+            if let Some(key) = speaks.alone {
+                return check(operation, &key);
+            }
+            let thresholds = speaks.thresholds.ok_or(Refused::NotAuthorised)?;
+            let class = Kind::new(operation.kind)
+                .and_then(costs)
+                .ok_or(Refused::NotAuthorised)?;
+            enough(operation, speaks.owners, thresholds.of(class))
+        }
         // **Published once and never edited.** A reply somebody could revise after the fact would
         // be one whose meaning depends on when it is read, and the whole point is that the decision
         // and the answer stand side by side for ever.

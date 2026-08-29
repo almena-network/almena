@@ -801,6 +801,7 @@ mod tests {
             ("GET", "/state/did:almena:dev:nobody"),
             ("GET", "/kept/0"),
             ("GET", "/capacity"),
+            ("GET", "/catalogue"),
             ("POST", "/post"),
         ] {
             let (_, body) = asked(&serving, method, path, Vec::new()).await;

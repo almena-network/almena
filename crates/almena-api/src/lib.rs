@@ -65,6 +65,23 @@ mod proving {
     pub const ROOT: u64 = 5;
 }
 
+/// What is in the catalogue, by what each object is.
+///
+/// All odd, and every one of them present even when empty: a reader that found no `tags` key would
+/// have no way of telling *no tags have been added* from *this build does not list them*, and a
+/// catalogue is a comparison — the difference decides whether an empty page is about the network or
+/// about the reader.
+mod catalogued {
+    /// The places definitions are copied from.
+    pub const SOURCES: u64 = 1;
+    /// The pieces of data a credential can carry.
+    pub const ATTRIBUTES: u64 = 3;
+    /// The closed list of what a request may be for.
+    pub const TAGS: u64 = 5;
+    /// The shapes of what is issued and of what is asked for.
+    pub const TEMPLATES: u64 = 7;
+}
+
 /// What a published root is made of, when one is asked for.
 ///
 /// All three odd, and none of them weighable: a reader that skipped any one of them would hold a
@@ -179,6 +196,15 @@ pub enum Ask {
     /// **Counted, never declared**, so that what is missing is visible before it is a problem. It
     /// is what nodes *say*; what they do is measured by asking, and the two are kept apart.
     Capacity,
+    /// What is in the catalogue, by what each object is.
+    ///
+    /// **The whole of it, because it is the whole of it that is comparable.** `SPECS.md §9.4` has
+    /// no private template and no arrangement outside the catalogue precisely so that this answer
+    /// is complete rather than a sample — a listing that paged would make *what is asked for in
+    /// this network* a question with a different answer depending on where somebody stopped
+    /// reading. What bounds it is governance: sources and tags are Almena Government's and
+    /// attributes and templates need the seal.
+    Catalogue,
     /// What the network went looking for on a day, and how much of it it found.
     ///
     /// **Nobody's assertion about themselves.** It is a sum over signed acts in a record everybody
@@ -242,6 +268,7 @@ pub fn parse(method: &str, path: &str) -> Result<Ask, Unreadable> {
             .map_err(|_| Unreadable::Malformed),
         ("root", Some(epoch), None) => numbered(epoch).map(Ask::Root),
         ("capacity", None, None) => Ok(Ask::Capacity),
+        ("catalogue", None, None) => Ok(Ask::Catalogue),
         ("kept", Some(day), None) => day
             .parse::<u64>()
             .map(Ask::Kept)
@@ -278,6 +305,7 @@ pub fn answer(node: &Node, ask: &Ask, now: Epoch, limits: &Limits) -> Said {
         Ask::State(object) => composing(node, object, now),
         Ask::Kept(day) => measured(node, *day, now),
         Ask::Capacity => running(node, now),
+        Ask::Catalogue => listed(node, now),
         Ask::About(subject) => match node.about(subject, now).answer {
             Some(hashes) => {
                 let listed = hashes
@@ -429,6 +457,30 @@ fn proved(node: &Node, name: &Name, epoch: Epoch, now: Epoch) -> Said {
         (proving::ROOT, Value::Bytes(published.to_bytes())),
     ]));
     said(node, now, State::Here, Some(proof), None)
+}
+
+/// What is in the catalogue, as an answer.
+///
+/// **Names and never entries.** Whoever asked composes each object from its own acts, which is what
+/// keeps a catalogue page a reading of the record rather than a report from whichever node was
+/// asked (`SPECS.md §13.1`, `§13.6`).
+fn listed(node: &Node, now: Epoch) -> Said {
+    let held = node.catalogue(now).answer;
+    let named = |names: Vec<almena_format::identifier::Name>| {
+        Value::Array(
+            names
+                .into_iter()
+                .map(|name| Value::Text(name.as_str().to_owned()))
+                .collect(),
+        )
+    };
+    let catalogue = Value::Map(BTreeMap::from([
+        (catalogued::SOURCES, named(held.sources)),
+        (catalogued::ATTRIBUTES, named(held.attributes)),
+        (catalogued::TAGS, named(held.tags)),
+        (catalogued::TEMPLATES, named(held.templates)),
+    ]));
+    said(node, now, State::Here, Some(catalogue), None)
 }
 
 /// What the network says it is running, as an answer.
@@ -947,6 +999,7 @@ mod tests {
             Ok(Ask::Act(name))
         );
         assert_eq!(parse("GET", "/root/42"), Ok(Ask::Root(Epoch::new(42))));
+        assert_eq!(parse("GET", "/catalogue"), Ok(Ask::Catalogue));
 
         // Nothing at that path, versus the right path with something unusable in it.
         assert_eq!(parse("GET", "/nothing"), Err(Unreadable::NoSuchQuestion));
@@ -1091,6 +1144,29 @@ mod tests {
     #[test]
     fn what_the_network_is_running_is_a_question_this_node_takes() {
         assert_eq!(parse("GET", "/capacity"), Ok(Ask::Capacity));
+    }
+
+    #[test]
+    fn an_empty_catalogue_lists_every_shelf_rather_than_none_of_them() {
+        // **A missing key and an empty list are different facts.** Somebody comparing what is asked
+        // for across a network needs to know whether nothing has been published or whether this
+        // build does not list that kind — and an answer that left the shelf out would look the same
+        // either way.
+        let node = a_node();
+        let said = answer(&node, &Ask::Catalogue, Epoch::GENESIS, &limits());
+        assert_eq!(said.state, State::Here);
+
+        let Ok(Value::Map(fields)) = almena_format::cbor::read(&said.body) else {
+            panic!("a response is a canonical map");
+        };
+        let Some(Value::Map(listed)) = fields.get(&4) else {
+            panic!("it carries the catalogue, got {fields:?}");
+        };
+        assert_eq!(listed.len(), 4, "every shelf, said rather than left out");
+        assert!(
+            listed.values().all(|shelf| *shelf == Value::Array(vec![])),
+            "and nothing published on any of them yet"
+        );
     }
 
     #[test]
