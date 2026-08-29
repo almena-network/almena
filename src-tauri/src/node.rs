@@ -292,6 +292,8 @@ pub async fn join_the_mesh(
     app: tauri::AppHandle,
     running: tauri::State<'_, Running>,
     port: u16,
+    carry: bool,
+    carried_by: Vec<String>,
 ) -> Result<(), &'static str> {
     let held = running.held.read().await;
     let serving = held.as_ref().ok_or("no_network")?;
@@ -302,12 +304,27 @@ pub async fn join_the_mesh(
         .map_err(|_| "no_directory")?;
     let key = almena_node::identity::load_or_make(&directory).map_err(|_| "unreadable_identity")?;
 
-    let mut listening = almena_mesh::listen(&key, &network, port).map_err(|why| match why {
-        almena_mesh::NotListening::NoIdentity | almena_mesh::NotListening::NoTransport => {
-            "no_transport"
+    let carrying = if carry {
+        almena_mesh::Carrying::ForOthers
+    } else {
+        almena_mesh::Carrying::ForNobody
+    };
+    let mut listening =
+        almena_mesh::listening(&key, &network, port, carrying).map_err(|why| match why {
+            almena_mesh::NotListening::NoIdentity
+            | almena_mesh::NotListening::NoTransport
+            | almena_mesh::NotListening::Anonymous => "no_transport",
+            almena_mesh::NotListening::AddressUnavailable => "mesh_address_unavailable",
+        })?;
+
+    // A relay that will not carry us is one relay, not a reason to stop: which of them answers is
+    // not this node's to decide, and the answer arrives later either way.
+    for relay in &carried_by {
+        match listening.ask_to_be_carried_at(relay) {
+            Ok(address) => log::info!("mesh_asked_to_be_carried relay={address}"),
+            Err(why) => log::error!("mesh_relay_not_asked relay={relay} reason={why:?}"),
         }
-        almena_mesh::NotListening::AddressUnavailable => "mesh_address_unavailable",
-    })?;
+    }
 
     // Driven here only until the operating system has said where this node can be reached; that
     // is a fact the node reports, and afterwards the mesh belongs to whatever is keeping up.
@@ -345,6 +362,93 @@ pub async fn close_epoch(running: tauri::State<'_, Running>) -> Result<usize, &'
     };
     let closed = running.timekeeping.catch_up(serving, running.now()).await;
     Ok(closed)
+}
+
+/// Show a challenge for whoever contributed this node to approve.
+///
+/// **Whoever sustains the network earns the right to write on it, and that has to attach to
+/// somebody.** A node nobody claimed is a machine, and a machine cannot be credited — so the node
+/// asks, and approving it is somebody else's to do with the key their own chain authorises.
+///
+/// Good for `for_epochs` and then not: one that ended up in a screenshot or a support bundle must
+/// not bind somebody's machine a year later. Nothing but this node remembers it was shown.
+///
+/// # Errors
+///
+/// The reason there is none to show, as a stable identifier.
+#[tauri::command]
+pub async fn who_contributed_me(
+    running: tauri::State<'_, Running>,
+    for_epochs: u64,
+) -> Result<String, &'static str> {
+    let held = running.held.read().await;
+    let serving = held.as_ref().ok_or("no_network")?;
+    let until = running
+        .now()
+        .plus(almena_node::Epochs(for_epochs))
+        .ok_or("no_network")?;
+    let challenge = serving
+        .node()
+        .read()
+        .await
+        .asking_who_contributed_me(until)
+        .map_err(|_| "no_randomness")?;
+    Ok(challenge.to_text())
+}
+
+/// Write down that somebody contributed this node, from what they handed back.
+///
+/// Both halves go in: the challenge this node showed, and their approval of it. One alone binds
+/// nothing — the node saying it is the node's word about somebody, and an approval alone is
+/// somebody claiming a machine they may not hold.
+///
+/// # Errors
+///
+/// `not_a_claim` when the text is not a challenge and an approval, and `not_theirs` when it read
+/// and does not bind. **A binding that cannot be checked is not a weaker binding**: it would be
+/// this node's word about somebody who never agreed.
+#[tauri::command]
+pub async fn contributed_by(
+    running: tauri::State<'_, Running>,
+    challenge: String,
+    approval: String,
+) -> Result<(), &'static str> {
+    let held = running.held.read().await;
+    let serving = held.as_ref().ok_or("no_network")?;
+    let now = running.now();
+    match serving
+        .node()
+        .write()
+        .await
+        .contributed_by_text(&challenge, &approval, now)
+    {
+        almena_node::Claimed::Written => Ok(()),
+        almena_node::Claimed::NotAClaim => Err("not_a_claim"),
+        almena_node::Claimed::NotTheirs => Err("not_theirs"),
+    }
+}
+
+/// Say this node is no longer contributed by anybody.
+///
+/// **The node alone.** Whoever claimed it agreed to be credited for what it served, and giving that
+/// up costs them nothing anybody could hold them to. Credit stops from here and never in arrears:
+/// what was served was served.
+///
+/// # Errors
+///
+/// The reason it could not be written down, as a stable identifier.
+#[tauri::command]
+pub async fn contributed_by_nobody(running: tauri::State<'_, Running>) -> Result<(), &'static str> {
+    let held = running.held.read().await;
+    let serving = held.as_ref().ok_or("no_network")?;
+    let now = running.now();
+    serving
+        .node()
+        .write()
+        .await
+        .contributed_by_nobody(now)
+        .then_some(())
+        .ok_or("not_written_down")
 }
 
 /// Serve the interface on `address`, so clients and portals can ask.

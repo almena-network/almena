@@ -34,13 +34,43 @@
 //! over fields it did not understand well enough to tidy safely.
 
 pub mod announce;
+pub mod bind;
+pub mod capability;
+pub mod certification;
 pub mod chain;
 pub mod checkpoint;
 pub mod contradiction;
+pub mod element;
+pub mod entity;
 pub mod firm;
 pub mod genesis;
 pub mod kind;
 pub mod log;
+pub mod parameter;
+pub mod reply;
+pub mod resolution;
 pub mod root;
+pub mod share;
 pub mod summary;
 pub mod tree;
+
+/// What an act is about, when that is not its author.
+///
+/// **One place says this, because two would drift and the drift would be silent.** The log writes
+/// an entry with it and anybody checking an inclusion proof rebuilds that entry; the two computing
+/// it differently means an honest proof for an honest act is refused, with nothing to look at and
+/// nobody at fault.
+///
+/// [`None`] for everything else, which is most acts: an act about its own author says so by being
+/// on that author's chain, and saying it twice would be a hundred bytes in every copy for ever.
+#[must_use]
+pub fn subject_of(
+    operation: &almena_format::operation::Operation,
+) -> Option<almena_format::identifier::Did> {
+    // A contradiction is about the node that contradicted itself, and a certification is about the
+    // party it certifies. Both are found the same way, and it is the way that matters: **by the
+    // party affected rather than by whoever bothered to write it down.** An entity that could not
+    // ask *what has been said about me* would have to be told by somebody else, which for a seal
+    // being withdrawn means finding out because a customer mentions it.
+    contradiction::against_whom(operation).or_else(|| certification::about(operation))
+}

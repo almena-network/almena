@@ -41,10 +41,19 @@ use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 
 /// Where an act is handed over.
 ///
-/// The one path that takes a body, and the only one that is not a `GET`. Reading and writing are
-/// not two arms of one thing here: one takes the node by shared reference and the other needs it
-/// exclusively, and the types say so.
+/// Reading and writing are not two arms of one thing here: one takes the node by shared reference
+/// and the other needs it exclusively, and the types say so.
 const ACTS: &str = "/acts";
+
+/// Where a device talks to its own mediator: declaring, taking, confirming.
+///
+/// **Only on a node that runs a mailbox**, which is what the node itself answers. This layer does
+/// not decide it and does not know it — a transport that could switch a capability on would be a
+/// second place where what a node offers is decided, and the two would drift.
+const POST: &str = "/post";
+
+/// Where a message is left for somebody, under their identifier.
+const POST_TO: &str = "/post/";
 
 /// One node, answering.
 ///
@@ -176,12 +185,51 @@ impl Serving {
             return Ok(written(&deliver(&mut node, &body.to_bytes(), now)));
         }
 
+        if method == Method::POST && (path == POST || path.starts_with(POST_TO)) {
+            return Ok(written(&self.posted(request, &path, now).await));
+        }
+
         let node = self.node.read().await;
         let said = match parse(method.as_str(), &path) {
             Ok(ask) => answer(&node, &ask, now, &self.limits),
             Err(why) => unreadable(&node, now, why),
         };
         Ok(written(&said))
+    }
+}
+
+impl Serving {
+    /// One request to the mailbox, answered.
+    ///
+    /// Split out from `one` because it is the only other path with a body, and the body is read
+    /// under the same ceiling an act is: a mediator that would read any size at all is a mediator
+    /// anybody can exhaust before a quota ever gets a chance to say no.
+    async fn posted(&self, request: Request<Incoming>, path: &str, now: Epoch) -> Said {
+        let largest = usize::try_from(self.limits.largest_act).unwrap_or(usize::MAX);
+        let Ok(body) = Limited::new(request.into_body(), largest).collect().await else {
+            let node = self.node.read().await;
+            return unreadable(&node, now, Unreadable::Malformed);
+        };
+        let body = body.to_bytes();
+
+        // **Whatever the sender was given**, which is a relationship's own address rather than an
+        // account's (`SPECS.md §6.5`). This layer does not read it and does not know what it names:
+        // which of its customers answers to an address is the node's question, and a transport that
+        // decided it would be a second place the answer lives.
+        let to = path.strip_prefix(POST_TO).map(str::to_owned);
+        if to
+            .as_ref()
+            .is_some_and(|to| to.is_empty() || to.contains('/'))
+        {
+            let node = self.node.read().await;
+            return unreadable(&node, now, Unreadable::Malformed);
+        }
+
+        let mut node = self.node.write().await;
+        match to {
+            Some(to) => almena_api::post::deliver(&mut node, &to, &body, now),
+            None => almena_api::post::asked(&mut node, &body, now),
+        }
     }
 }
 
@@ -698,6 +746,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_mailbox_paths_reach_the_node_and_a_node_without_one_says_so() {
+        // **What this layer is allowed to decide about the mailbox is nothing.** It reads an
+        // identifier out of a path and hands the body over; whether there is a mailbox at all is
+        // the node's own announcement to make, and a node that has not made it answers *there is
+        // nothing at that path* — which is what comes back here, off the wire, unaltered.
+        let serving = serving();
+        let nobody = almena_format::identifier::Did::new(Network::Development, Name::of(b"nobody"));
+        for path in ["/post".to_owned(), format!("/post/{nobody}")] {
+            let (status, body) = asked(&serving, "POST", &path, b"anything at all".to_vec()).await;
+            assert_eq!(status, 404, "there is nothing at that path on this node");
+            let Ok(Value::Map(fields)) = read(&body) else {
+                panic!("a response is a canonical map");
+            };
+            assert_eq!(
+                fields.get(&3),
+                Some(&Value::Uint(State::NoSuchQuestion as u64)),
+                "{path}"
+            );
+            assert!(
+                fields.contains_key(&1) && fields.contains_key(&2),
+                "stamped"
+            );
+        }
+
+        // **And an address this layer cannot make sense of is still the node's to answer.** What a
+        // sender holds is a relationship's own address rather than an account's (`SPECS.md §6.5`),
+        // and which of its customers answers to one is a question only the node can put — so the
+        // transport carries whatever it was given and decides nothing about it.
+        let (_, body) = asked(&serving, "POST", "/post/whatever-this-is", Vec::new()).await;
+        let Ok(Value::Map(fields)) = read(&body) else {
+            panic!("a response is a canonical map");
+        };
+        assert_eq!(
+            fields.get(&3),
+            Some(&Value::Uint(State::NoSuchQuestion as u64)),
+            "this node runs no mailbox, which is what it says rather than judging the address"
+        );
+
+        // What it does refuse is a path that is not one address: two segments would be two
+        // questions, and reading the first as the whole would be answering a different one.
+        let (status, _) = asked(&serving, "POST", "/post/one/another", Vec::new()).await;
+        assert_eq!(status, 400);
+    }
+
+    #[tokio::test]
     async fn every_answer_off_the_wire_carries_its_stamp() {
         // What the transport must never be allowed to strip.
         let serving = serving();
@@ -705,6 +798,10 @@ mod tests {
             ("GET", "/limits"),
             ("GET", "/nothing-served-here"),
             ("GET", "/object/not-a-name"),
+            ("GET", "/state/did:almena:dev:nobody"),
+            ("GET", "/kept/0"),
+            ("GET", "/capacity"),
+            ("POST", "/post"),
         ] {
             let (_, body) = asked(&serving, method, path, Vec::new()).await;
             let Ok(Value::Map(fields)) = read(&body) else {

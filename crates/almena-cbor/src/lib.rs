@@ -67,6 +67,15 @@ pub enum Violation {
     /// A length that does not fit this machine's address space. Not a malformed input so much
     /// as one this build cannot hold.
     TooLarge,
+    /// Items nested deeper than the profile allows.
+    ///
+    /// **Refused because reading is a walk, and a walk goes as deep as it is told to.** Nothing
+    /// this format writes nests more than a handful of levels — an act is a map with a map of
+    /// fields in it and a list of signatures beside it — so anything past the bound below was
+    /// built to be deep rather than to say something. Without it a few kilobytes of nothing but
+    /// opening brackets would take a reader past the end of its stack, which is not an error a
+    /// program can catch: it is the process ending. A node reads whatever anybody sends it.
+    TooDeep,
 }
 
 /// Whether these bytes are exactly one canonical CBOR item under the profile.
@@ -76,7 +85,11 @@ pub enum Violation {
 /// Returns the first [`Violation`] found. First and not all of them: the caller's next move is
 /// the same either way, and a list would suggest a repair this crate does not offer.
 pub fn canonical(bytes: &[u8]) -> Result<(), Violation> {
-    let mut reader = Reader { bytes, at: 0 };
+    let mut reader = Reader {
+        bytes,
+        at: 0,
+        deep: 0,
+    };
     reader.item()?;
     if reader.at == bytes.len() {
         Ok(())
@@ -88,12 +101,25 @@ pub fn canonical(bytes: &[u8]) -> Result<(), Violation> {
 /// Major type 7, which carries simple values and floats rather than an integer argument.
 const SIMPLE_OR_FLOAT: u8 = 7;
 
+/// How deep one item may nest inside another.
+///
+/// **Far above anything this format writes and far below anything dangerous.** The deepest thing
+/// the schema has is an act — a map, whose payload is a map, whose fields may hold a list of byte
+/// strings — which is four. Thirty-two leaves room for every extension anybody has argued for and
+/// still refuses the input whose only content is depth.
+///
+/// It is part of the profile rather than a defensive afterthought: two implementations that
+/// stopped at different depths would disagree about whether a given act is readable at all.
+const DEEPEST: u32 = 32;
+
 /// A position in a byte string, and the walk over it.
 struct Reader<'a> {
     /// The bytes being read.
     bytes: &'a [u8],
     /// How far in the walk has got.
     at: usize,
+    /// How many items the walk is currently inside.
+    deep: u32,
 }
 
 impl Reader<'_> {
@@ -145,6 +171,19 @@ impl Reader<'_> {
 
     /// One item, leaving the walk just past it.
     fn item(&mut self) -> Result<(), Violation> {
+        // Counted before the walk goes any deeper, and given back after. A reader that only ever
+        // checked the depth it had reached would already have made the call that overflows.
+        self.deep = self.deep.saturating_add(1);
+        if self.deep > DEEPEST {
+            return Err(Violation::TooDeep);
+        }
+        let outcome = self.nested();
+        self.deep -= 1;
+        outcome
+    }
+
+    /// One item, with the depth already counted.
+    fn nested(&mut self) -> Result<(), Violation> {
         let (major, argument) = self.head()?;
         match major {
             0 | 1 | SIMPLE_OR_FLOAT => Ok(()),
@@ -312,6 +351,28 @@ mod tests {
     fn undefined_and_unassigned_simple_values_are_refused() {
         assert_eq!(canonical(&[0xf7]), Err(Violation::Simple), "undefined");
         assert_eq!(canonical(&[0xf0]), Err(Violation::Simple), "simple(16)");
+    }
+
+    #[test]
+    fn nothing_but_depth_is_refused_rather_than_ending_the_process() {
+        // **A node reads whatever anybody sends it**, and an act may be sixty-four kilobytes. Two
+        // of those kilobytes as nothing but opening brackets used to take this reader past the end
+        // of its stack — not an error any program can catch, but the process ending, from an
+        // unauthenticated request. Refused now, at a depth far above anything the schema writes.
+        let deep: Vec<u8> = core::iter::repeat_n(0x81, 60_000).chain([0x00]).collect();
+        assert_eq!(canonical(&deep), Err(Violation::TooDeep));
+
+        // Exactly at the bound, and one past it: the line is where it says it is.
+        let nested = |levels: usize| -> Vec<u8> {
+            core::iter::repeat_n(0x81, levels - 1)
+                .chain([0x00])
+                .collect()
+        };
+        assert_eq!(canonical(&nested(super::DEEPEST as usize)), Ok(()));
+        assert_eq!(
+            canonical(&nested(super::DEEPEST as usize + 1)),
+            Err(Violation::TooDeep)
+        );
     }
 
     #[test]

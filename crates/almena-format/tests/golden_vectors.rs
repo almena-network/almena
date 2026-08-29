@@ -63,7 +63,13 @@ const SIGNING: &str = "a601783e6469643a616c6d656e613a6465763a7a516d5061724677365
 const DID: &str = "did:almena:dev:zQmParFw6PwEoYr5gWEpTYPaepMMmeQZHWSXyKWNbg93S6d";
 
 /// The log entry a node writes for it at position zero, with the operation signed.
-const ENTRY: &str = "a6010002782f7a516d5a6b447a374866566d705a70473977564764654248467a535157544c73624a77366b73397463594a3333655703783e6469643a616c6d656e613a6465763a7a516d5061724677365077456f597235675745705459506165704d4d6d65515a48575358794b574e6267393353366404f605010601";
+///
+/// **It moved when an act stopped being named over its signatures**, and the object's name did not
+/// — which is the separation this corpus exists to hold, working. A name taken over the signatures
+/// gave one act two of them, because an ECDSA signature has two valid forms for one message: an act
+/// so named could be reprinted in the other form by anybody who saw it, and read as a second act on
+/// the same chain.
+const ENTRY: &str = "a6010002782f7a516d5667695456345736423176627a5a45377165615a7a775a4d53774733706e48736e4466394477656a6846744e03783e6469643a616c6d656e613a6465763a7a516d5061724677365077456f597235675745705459506165704d4d6d65515a48575358794b574e6267393353366404f605010601";
 
 #[test]
 fn the_operation_is_written_as_the_corpus_says() {

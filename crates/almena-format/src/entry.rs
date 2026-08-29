@@ -96,9 +96,15 @@ impl Entry {
 
     /// The entry an operation gets when a node writes it down at `sequence`.
     ///
-    /// The hash is of the **whole** operation, signatures included: this is the copy everyone
-    /// keeps, and what it pins down is the act exactly as it travelled. Only the *name* of an
-    /// object leaves the signatures out, and for a different reason.
+    /// The hash is what the act is **called**, which leaves out how it was signed. It has to: an
+    /// ECDSA signature has two valid forms for one message, so a hash taken over the signatures
+    /// would give one act two names — and anybody who merely saw it go past could reprint it in the
+    /// other form and have it read as a second act. Two nodes holding the same act in different
+    /// forms would also write different entries for it, and neither could check the other's proof
+    /// that it is in their tree.
+    ///
+    /// What the log stores and hands back is still every byte as it arrived. Only what the act is
+    /// *called* leaves out the part two honest parties can write two ways.
     #[must_use]
     pub fn of(
         operation: &crate::operation::Operation,
@@ -107,7 +113,7 @@ impl Entry {
     ) -> Self {
         Self {
             sequence,
-            hash: Name::of(&operation.to_bytes()),
+            hash: operation.called(),
             object: operation.object.clone(),
             previous: operation.previous.clone(),
             kind: operation.kind,
@@ -115,6 +121,54 @@ impl Entry {
             subject,
         }
     }
+}
+
+/// Read an entry back from the bytes it was written in.
+///
+/// **What lets a node come back to a record holding entries whose acts it does not have.** The tree
+/// over the entries is what a node has put its name to, so it has to be rebuilt exactly — and an
+/// entry that had to be derived from its act could only be rebuilt where the act was still held.
+///
+/// [`None`] when the value is not an entry: a field missing, or one of the wrong shape.
+#[must_use]
+pub fn read(value: &Value) -> Option<Entry> {
+    let Value::Map(fields) = value else {
+        return None;
+    };
+    let (&Value::Uint(sequence), Value::Text(hash), Value::Text(object)) = (
+        fields.get(&key::SEQUENCE)?,
+        fields.get(&key::HASH)?,
+        fields.get(&key::OBJECT)?,
+    ) else {
+        return None;
+    };
+    let previous = match fields.get(&key::PREVIOUS)? {
+        Value::Null => None,
+        Value::Text(name) => Some(Name::parse(name).ok()?),
+        _ => return None,
+    };
+    let (&Value::Uint(kind), &Value::Uint(version)) =
+        (fields.get(&key::KIND)?, fields.get(&key::VERSION)?)
+    else {
+        return None;
+    };
+    // Absent is absent, never null: an entry that wrote it as null would be one written by
+    // something that does not agree with this about how absence is spelled.
+    let subject = match fields.get(&key::SUBJECT) {
+        None => None,
+        Some(Value::Text(did)) => Some(Did::parse(did).ok()?),
+        Some(_) => return None,
+    };
+
+    Some(Entry {
+        sequence,
+        hash: Name::parse(hash).ok()?,
+        object: Did::parse(object).ok()?,
+        previous,
+        kind,
+        version,
+        subject,
+    })
 }
 
 #[cfg(test)]
@@ -179,19 +233,24 @@ mod tests {
     }
 
     #[test]
-    fn the_hash_covers_the_signatures() {
-        // The entry pins the act as it travelled. An operation whose signature changed is a
-        // different entry — which is what makes the log a record of what was received.
+    fn what_an_act_is_called_does_not_depend_on_how_it_was_signed() {
+        // **An ECDSA signature has two valid forms for one message.** A name taken over the
+        // signatures would give one act two of them, and anybody who merely saw it go past could
+        // reprint it in the other form and have it read as a second act on the same chain — a fork
+        // made by somebody holding nothing and forging nothing.
+        //
+        // It also lets two nodes holding one act in different forms check each other's proofs,
+        // which they could not if the entry were about the encoding.
         let signed = operation();
         let mut resigned = signed.clone();
         resigned.signatures[0].signature = [6; 64];
 
-        assert_ne!(
+        assert_eq!(
             Entry::of(&signed, 0, None).hash,
-            Entry::of(&resigned, 0, None).hash
+            Entry::of(&resigned, 0, None).hash,
+            "one act, one name"
         );
-        // And yet both are the same object, because the name never depended on the signature.
-        assert_eq!(signed.name(), resigned.name());
+        assert_eq!(signed.name(), resigned.name(), "and one object");
     }
 
     #[test]
@@ -203,5 +262,43 @@ mod tests {
         let there = Entry::of(&operation, 4_812, None);
         assert_eq!(here.hash, there.hash);
         assert_ne!(here.to_bytes(), there.to_bytes());
+    }
+
+    #[test]
+    fn an_entry_reads_back_as_what_was_written() {
+        let subject = Did::new(Network::Development, Name::of(b"somebody else"));
+        for about in [None, Some(subject)] {
+            let entry = Entry::of(&operation(), 7, about);
+            let value = read(&entry.to_bytes()).expect("canonical");
+            assert_eq!(super::read(&value), Some(entry));
+        }
+    }
+
+    #[test]
+    fn something_that_is_not_an_entry_does_not_read_as_one() {
+        let mut written = match read(&Entry::of(&operation(), 0, None).to_bytes()) {
+            Ok(Value::Map(fields)) => fields,
+            other => panic!("an entry is a map, got {other:?}"),
+        };
+        written.remove(&key::HASH);
+        assert_eq!(super::read(&Value::Map(written)), None);
+
+        assert_eq!(
+            super::read(&Value::Uint(9)),
+            None,
+            "and neither does a number"
+        );
+    }
+
+    #[test]
+    fn an_absent_subject_read_back_is_absent_and_not_null() {
+        // Two ways to write absence would be two encodings of one entry, so one of them has to be
+        // refused rather than quietly understood.
+        let mut written = match read(&Entry::of(&operation(), 0, None).to_bytes()) {
+            Ok(Value::Map(fields)) => fields,
+            other => panic!("an entry is a map, got {other:?}"),
+        };
+        written.insert(key::SUBJECT, Value::Null);
+        assert_eq!(super::read(&Value::Map(written)), None);
     }
 }

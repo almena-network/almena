@@ -27,14 +27,15 @@
 //! before it can tell one node's word from another's. Being worth listening to is earned
 //! afterwards, by being bound and by being measured.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use almena_format::cbor::Value;
-use almena_format::identifier::Did;
+use almena_format::identifier::{Did, Name};
 use almena_format::operation::{Operation, Signed, create};
 use almena_suite::ed25519;
 use almena_time::Epoch;
 
+use crate::capability::Capability;
 use crate::genesis::Which;
 use crate::kind::Kind;
 
@@ -52,6 +53,63 @@ pub struct Announced {
     pub operation: Operation,
     /// What the node is called from now on.
     pub node: Did,
+}
+
+/// Say again what a node is running, on the chain its first announcement opened.
+///
+/// **This never renames anything.** What a node offers and what version it speaks change over its
+/// life and its name must not, which is why they are here and not in the act that named it.
+#[must_use]
+pub fn offering(
+    node: &Did,
+    head: &Name,
+    offers: &BTreeSet<Capability>,
+    what: Speaking<'_>,
+) -> Operation {
+    let Speaking {
+        version,
+        reachable,
+        issued,
+        key,
+    } = what;
+    let listed = offers.iter().map(|one| Value::Uint(one.number())).collect();
+    let where_ = reachable
+        .iter()
+        .map(|address| Value::Text(address.clone()))
+        .collect();
+    let mut operation = Operation {
+        object: node.clone(),
+        previous: Some(head.clone()),
+        kind: Kind::NODE_ANNOUNCE.number(),
+        version: 1,
+        issued,
+        payload: BTreeMap::from([
+            (crate::capability::OFFERS, Value::Array(listed)),
+            (crate::capability::SPEAKS, Value::Uint(version)),
+            (crate::capability::WHERE, Value::Array(where_)),
+        ]),
+        signatures: Vec::new(),
+    };
+    let signature = key.sign(&operation.signing_bytes());
+    operation.signatures.push(Signed {
+        by: node.clone(),
+        key: key.verifying_key().bytes().to_vec(),
+        signature: signature.bytes(),
+    });
+    operation
+}
+
+/// What a node says about itself when it announces again.
+#[derive(Clone, Copy)]
+pub struct Speaking<'a> {
+    /// Which version of the protocol it speaks.
+    pub version: u64,
+    /// Where it says it can be reached.
+    pub reachable: &'a BTreeSet<String>,
+    /// When it is saying so.
+    pub issued: Epoch,
+    /// The key that is this node, which is the only one that may say it.
+    pub key: &'a ed25519::SigningKey,
 }
 
 /// Introduce a node to a network, naming it.
@@ -86,6 +144,8 @@ pub fn announce(which: Which, epoch: Epoch, key: &ed25519::SigningKey) -> Announ
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{KEY, announce};
     use crate::chain::{Answer, Objects, State};
     use crate::genesis::Which;
@@ -141,7 +201,11 @@ mod tests {
         assert_eq!(
             objects.resolve(announced.node.name()),
             Answer::Here(State::Node {
-                key: key(3).verifying_key().bytes()
+                key: key(3).verifying_key().bytes(),
+                offers: BTreeSet::new(),
+                speaks: 0,
+                claimed_by: None,
+                reachable: BTreeSet::new(),
             }),
             "and what it resolves to is the key to check its word against"
         );

@@ -203,6 +203,11 @@ impl Seed {
 }
 
 /// Somewhere the platform's interface is served.
+///
+/// **The same record whether it is published under `_api` or under `_mediator`**, and one parser
+/// for both, because they say the same thing: here is an origin, reachable securely. What differs
+/// is the name it was published at — which is the zone saying *this one also holds post* — and a
+/// second format would be a second way to get the same line wrong.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint(String);
 
@@ -237,6 +242,13 @@ pub struct Answer {
     pub seeds: Vec<Seed>,
     /// Nodes serving the interface.
     pub api: Vec<Endpoint>,
+    /// Nodes that have said they hold post.
+    ///
+    /// **A starting point and not a permission.** What the zone publishes is where to look; whether
+    /// a node actually runs a mailbox is that node's own announcement in the record, and the client
+    /// that picks one checks there. A zone that named a mediator which does not hold post costs
+    /// somebody a wasted question and nothing else (`SPECS.md §6.2`).
+    pub mediators: Vec<Endpoint>,
 }
 
 impl Answer {
@@ -246,7 +258,7 @@ impl Answer {
     /// cost everybody else their way in, and the zone is a small hand-maintained thing where a
     /// typo is a normal event rather than an attack.
     #[must_use]
-    pub fn read(seeds: &[String], api: &[String]) -> (Self, Vec<NotUsable>) {
+    pub fn read(seeds: &[String], api: &[String], mediators: &[String]) -> (Self, Vec<NotUsable>) {
         let mut refused = Vec::new();
         let mut answer = Self::default();
 
@@ -256,10 +268,12 @@ impl Answer {
                 Err(why) => refused.push(why),
             }
         }
-        for record in api {
-            match Endpoint::read(record) {
-                Ok(endpoint) => answer.api.push(endpoint),
-                Err(why) => refused.push(why),
+        for (records, into) in [(api, &mut answer.api), (mediators, &mut answer.mediators)] {
+            for record in records {
+                match Endpoint::read(record) {
+                    Ok(endpoint) => into.push(endpoint),
+                    Err(why) => refused.push(why),
+                }
             }
         }
         (answer, refused)
@@ -270,9 +284,14 @@ impl Answer {
     /// This is what decides whether a node opens a network or joins one, and it is the reason a
     /// lookup that failed must never be reported as an empty zone: **an empty zone means nobody is
     /// there, and a node that believes it opens a second network.**
+    ///
+    /// A mediator counts, even though it is not a way into the mesh. The question this answers is
+    /// *is anybody running this network*, and somebody publishing a mailbox for it is somebody
+    /// running it — so a zone with mediators and no seeds is a zone with a problem to fix rather
+    /// than an invitation to start a second network beside the first.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.seeds.is_empty() && self.api.is_empty()
+        self.seeds.is_empty() && self.api.is_empty() && self.mediators.is_empty()
     }
 }
 
@@ -428,6 +447,23 @@ mod tests {
     }
 
     #[test]
+    fn a_zone_with_a_mailbox_in_it_is_a_zone_somebody_is_running() {
+        // **Not a way into the mesh, and still somebody being there.** The question `is_empty`
+        // answers is whether anybody is running this network at all; a zone publishing a mailbox
+        // for it and no seeds is a zone with a problem to fix, and a node that read it as *nobody
+        // is here* would open a second network beside the first.
+        let (answer, refused) = Answer::read(&[], &[], &[SERVED.to_owned()]);
+        assert!(refused.is_empty());
+        assert_eq!(answer.mediators.len(), 1);
+        assert!(!answer.is_empty());
+
+        // And the record is held to the same bar as any other origin: a browser will not call it
+        // from a page it loaded securely, so publishing it is publishing something nobody can use.
+        let (_, refused) = Answer::read(&[], &[], &["v=1 url=http://madrid.example".to_owned()]);
+        assert_eq!(refused, vec![NotUsable::NotSecure]);
+    }
+
+    #[test]
     fn one_bad_record_does_not_cost_everybody_else_their_way_in() {
         // A zone is a small hand-maintained thing, and a typo in it is a normal event.
         let (answer, refused) = Answer::read(
@@ -440,6 +476,7 @@ mod tests {
                 SERVED.to_owned(),
                 "v=1 url=http://barcelona.example".to_owned(),
             ],
+            &[],
         );
 
         assert_eq!(answer.seeds.len(), 2);
@@ -450,7 +487,7 @@ mod tests {
     #[test]
     fn a_zone_that_answered_with_nothing_means_nobody_is_there() {
         // Which is what decides whether a node opens a network or joins one.
-        let (answer, refused) = Answer::read(&[], &[]);
+        let (answer, refused) = Answer::read(&[], &[], &[]);
         assert!(answer.is_empty());
         assert!(refused.is_empty());
     }
@@ -460,7 +497,7 @@ mod tests {
         // Collapsing the two is how a node opens a second network: it asks, gets no reply, reads
         // that as *nobody is here*, and opens one beside the network that was already running.
         let mut remembered = Remembered::new();
-        let (good, _) = Answer::read(&[ONE.to_owned()], &[]);
+        let (good, _) = Answer::read(&[ONE.to_owned()], &[], &[]);
 
         remembered.looked_up(Some(good.clone()));
         assert_eq!(remembered.known(), Some(&good));
@@ -472,7 +509,7 @@ mod tests {
             "the zone being down leaves what was working in place"
         );
 
-        let (empty, _) = Answer::read(&[], &[]);
+        let (empty, _) = Answer::read(&[], &[], &[]);
         remembered.looked_up(Some(empty.clone()));
         assert_eq!(
             remembered.known(),

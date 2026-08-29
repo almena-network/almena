@@ -40,6 +40,11 @@ pub enum Capability {
     JoinTheMesh,
     /// Choose the language it speaks, and have it remembered.
     Language,
+    /// Say who contributed this node, and stop saying it.
+    ///
+    /// Both halves are one capability because a face that could bind and not let go would be a face
+    /// that writes somebody's name into a record and cannot take it back.
+    SayWhoContributedIt,
 }
 
 /// One capability, and which faces have actually drawn it.
@@ -60,7 +65,7 @@ pub struct Offered {
 }
 
 /// Every capability, and where each one stands.
-pub const FACES: [Offered; 8] = [
+pub const FACES: [Offered; 9] = [
     Offered {
         // Only development, in both faces, and on somebody's word that there is nobody to join —
         // because nothing reads a zone yet. A production network is opened once, ever, and neither
@@ -108,6 +113,15 @@ pub const FACES: [Offered; 8] = [
     },
     Offered {
         capability: Capability::Language,
+        window: true,
+        terminal: true,
+        not_yet: "",
+    },
+    Offered {
+        // The node shows a challenge and whoever is claiming it approves it with the key their own
+        // chain authorises. Both faces show and both faces record, because an operator who could
+        // only do it from a terminal would be an operator who has to have one.
+        capability: Capability::SayWhoContributedIt,
         window: true,
         terminal: true,
         not_yet: "",
@@ -184,6 +198,7 @@ mod tests {
             Capability::Deliver,
             Capability::CloseEpoch,
             Capability::Serve,
+            Capability::SayWhoContributedIt,
             Capability::Language,
         ] {
             assert_eq!(

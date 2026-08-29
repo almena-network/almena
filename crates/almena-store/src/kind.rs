@@ -159,6 +159,21 @@ impl Kind {
     /// begins, and declares which network this is — and because recognising it by its being first
     /// would be deciding validity against a position, which is exactly what nothing here may do.
     pub const GENESIS: Kind = Kind(51);
+
+    // Reply
+    /// `publish` on a reply: what the party a decision was taken about has to say back.
+    ///
+    /// **An object of its own, pointing at the decision** — the same figure as a certification and a
+    /// vote, and for the same reason: nobody writes in somebody else's chain. A reply appended to
+    /// the certification's chain would mean the party affected could add to what Almena said, and a
+    /// reply Almena had to accept would be no reply at all.
+    ///
+    /// `SPECS.md §7.8` calls for it and does not number it, so this number is this build's. It
+    /// exists because there is no authority above Almena: appealing *to Almena* is asking it to
+    /// re-read itself, and what fits the rest of the design is that **the decision and the answer
+    /// are published together, and for ever** — whoever chooses their own root of trust reads both
+    /// and judges.
+    pub const REPLY_PUBLISH: Kind = Kind(52);
 }
 
 impl Kind {
@@ -188,7 +203,7 @@ impl Kind {
     }
 
     /// Every act this build knows, in the order they are numbered.
-    pub const ALL: [Self; 51] = [
+    pub const ALL: [Self; 52] = [
         Self::HOLDER_CREATE,
         Self::HOLDER_ADD_DEVICE,
         Self::HOLDER_REMOVE_DEVICE,
@@ -240,6 +255,7 @@ impl Kind {
         Self::PROPOSAL_CLOSE,
         Self::VOTE_CAST,
         Self::GENESIS,
+        Self::REPLY_PUBLISH,
     ];
 }
 
@@ -259,7 +275,7 @@ mod tests {
         // catches a number typed twice or skipped — either of which would be an act nobody could
         // name, or two acts nobody could tell apart.
         let numbers: Vec<u64> = Kind::ALL.iter().map(|kind| kind.number()).collect();
-        assert_eq!(numbers, (1..=51).collect::<Vec<u64>>());
+        assert_eq!(numbers, (1..=52).collect::<Vec<u64>>());
     }
 
     #[test]

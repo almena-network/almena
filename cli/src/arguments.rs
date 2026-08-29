@@ -48,6 +48,54 @@ pub struct Arguments {
     /// the next time it starts.
     #[arg(long, value_name = "PORT")]
     pub mesh: Option<u16>,
+
+    /// Carry other nodes' traffic, so machines that cannot be dialled can still be reached.
+    ///
+    /// **Volunteered, and it costs this machine's bandwidth.** Behind a household router there is
+    /// no address anybody outside can knock on, and without somebody carrying them such machines
+    /// could hold the record and answer nothing — so a network without permission needs nodes that
+    /// do this, and it asks rather than assumes. Turning it on says so in the record, where it is
+    /// counted like anything else a node offers.
+    #[arg(long)]
+    pub carry: bool,
+
+    /// Ask this node to carry ours, and publish where that makes us reachable.
+    ///
+    /// For a node that cannot be dialled. The address has to say **which** node the relay is —
+    /// `/p2p/<id>` at the end — because a circuit runs through somebody, and being carried by
+    /// whoever happens to answer at a host and port is being carried by whoever took them.
+    ///
+    /// Asking is not being carried: whether a slot is granted is theirs to decide, and the address
+    /// is published if and when one is.
+    #[arg(long = "carried-by", value_name = "ADDRESS")]
+    pub carried_by: Vec<String>,
+
+    /// Show a challenge for whoever contributed this node to approve, good for this many epochs.
+    ///
+    /// **Whoever sustains the network earns the right to write on it, and that has to attach to
+    /// somebody** — a node nobody claimed is a machine, and a machine cannot be credited. This is
+    /// the node asking. Approving it is somebody else's to do, with the key their own chain
+    /// authorises, and it happens where that key is.
+    ///
+    /// Short on purpose: one that ended up in a screenshot, a support bundle or this node's own log
+    /// must not bind somebody's machine a year later.
+    #[arg(long, value_name = "EPOCHS")]
+    pub who_contributed_me: Option<u64>,
+
+    /// Write down that somebody contributed this node: the challenge shown, then their approval.
+    ///
+    /// Both halves, because one of them alone binds nothing — the node saying it is the node's word
+    /// about somebody, and their approval alone is somebody claiming a machine they may not hold.
+    #[arg(long, value_names = ["CHALLENGE", "APPROVAL"], num_args = 2)]
+    pub contributed_by: Option<Vec<String>>,
+
+    /// Say this node is no longer contributed by anybody.
+    ///
+    /// **The node alone.** Whoever claimed it agreed to be credited for what it served, and giving
+    /// that up costs them nothing anybody could hold them to. Credit stops from here and never in
+    /// arrears: what was served was served.
+    #[arg(long)]
+    pub contributed_by_nobody: bool,
     /// Be the node in this directory instead of the usual one.
     ///
     /// **A node is a directory with a key in it**, so this is how a machine runs more than one —

@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 almena-cbor = { workspace = true }
 almena-format = { workspace = true }
+almena-mailbox = { workspace = true }
 almena-node = { workspace = true }
 almena-store = { workspace = true }
 almena-suite = { workspace = true }

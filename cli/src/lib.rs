@@ -83,9 +83,60 @@ fn bring_up(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
     }
 
     if let Some(port) = arguments.mesh
-        && let Err(why) = node.join_the_mesh(port)
+        && let Err(why) = node.join_the_mesh(&crate::node::Joining {
+            port,
+            carrying: if arguments.carry {
+                almena_mesh::Carrying::ForOthers
+            } else {
+                almena_mesh::Carrying::ForNobody
+            },
+            carried_by: &arguments.carried_by,
+        })
     {
         error!("mesh_not_joined reason={why:?}");
+        return Err(1);
+    }
+    Ok(())
+}
+
+/// Show a challenge, record a claim, or let go of one, as far as this run asked for.
+///
+/// **Whoever sustains the network earns the right to write on it, and that has to attach to
+/// somebody.** A node nobody claimed is a machine, and a machine cannot be credited — so a node and
+/// whoever contributed it say so together, in the node's own chain, where anybody can read it.
+///
+/// The challenge is printed rather than logged. It is a thing shown to a person and gone: it never
+/// reaches the record, and the one place it is worth having is in front of whoever is about to
+/// approve it.
+///
+/// # Errors
+///
+/// The code to leave with. A claim that did not go in is a refusal rather than something to carry
+/// on past — the node came up, and what somebody asked it to say about who contributed it is not
+/// what it says.
+fn saying_who_contributed_it(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
+    if let Some(epochs) = arguments.who_contributed_me {
+        match node.asking_who_contributed_me(epochs) {
+            Ok(challenge) => println!("{challenge}"),
+            Err(why) => {
+                error!("challenge_not_shown reason={why:?}");
+                return Err(1);
+            }
+        }
+    }
+
+    if let Some(both) = arguments.contributed_by.as_deref()
+        && let [challenge, approval] = both
+        && let Err(why) = node.contributed_by(challenge, approval)
+    {
+        error!("not_claimed reason={why:?}");
+        return Err(1);
+    }
+
+    if arguments.contributed_by_nobody
+        && let Err(why) = node.contributed_by_nobody()
+    {
+        error!("not_let_go reason={why:?}");
         return Err(1);
     }
     Ok(())
@@ -137,6 +188,10 @@ pub fn run() -> u8 {
     let mut code = 0;
 
     if let Err(code) = bring_up(&arguments, &mut node) {
+        return code;
+    }
+
+    if let Err(code) = saying_who_contributed_it(&arguments, &mut node) {
         return code;
     }
 

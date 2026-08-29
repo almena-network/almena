@@ -197,7 +197,11 @@ pub fn base58(bytes: &[u8]) -> String {
 }
 
 /// Base58 back to bytes. [`None`] when a character is not one of the fifty-eight.
-fn unbase58(text: &str) -> Option<Vec<u8>> {
+///
+/// Public because it is the other half of [`base58`], and anything written in the alphabet
+/// everything here is named in has to be readable by whoever has to read it back.
+#[must_use]
+pub fn unbase58(text: &str) -> Option<Vec<u8>> {
     let mut bytes: Vec<u8> = Vec::with_capacity(text.len());
     for character in text.bytes() {
         let mut carry = ALPHABET.iter().position(|&d| d == character)? as u32;

@@ -38,6 +38,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
+use almena_format::entry::Entry;
 use almena_format::identifier::Name;
 use almena_store::root::Root;
 
@@ -46,6 +47,14 @@ const ACTS: &str = "record.acts";
 
 /// What the roots this node has published are kept in.
 const ROOTS: &str = "record.roots";
+
+/// What the log entries are kept in.
+///
+/// **Separate from the acts, because they are not kept for the same reason.** Every node holds
+/// every entry and only the nodes a thing was dealt to hold what its acts said — so a node that
+/// kept only the acts would come back from a restart with fewer entries than it had, build a
+/// different tree, and contradict roots it had already signed.
+const ENTRIES: &str = "record.entries";
 
 /// What every one of these files starts with, so that a file that is not one is not read as one.
 const MAGIC: &[u8; 14] = b"almena.record\0";
@@ -117,6 +126,12 @@ pub fn acts_at(directory: &Path) -> PathBuf {
     directory.join(ACTS)
 }
 
+/// Where the log entries of a node in `directory` live.
+#[must_use]
+pub fn entries_at(directory: &Path) -> PathBuf {
+    directory.join(ENTRIES)
+}
+
 /// Where the roots of a node in `directory` live.
 #[must_use]
 pub fn roots_at(directory: &Path) -> PathBuf {
@@ -161,6 +176,8 @@ pub fn holding(directory: &Path) -> Holding {
 pub struct Record {
     /// Where the acts go.
     acts: File,
+    /// Where the log entries go.
+    entries: File,
     /// Where the roots go.
     roots: File,
 }
@@ -176,6 +193,7 @@ impl Record {
         std::fs::create_dir_all(directory).map_err(|_| NotReadable::NotWritable)?;
         Ok(Self {
             acts: opened(&acts_at(directory))?,
+            entries: opened(&entries_at(directory))?,
             roots: opened(&roots_at(directory))?,
         })
     }
@@ -188,6 +206,19 @@ impl Record {
     /// act it did not manage to keep has told somebody something that is not true.
     pub fn wrote(&mut self, act: &[u8]) -> Result<(), NotReadable> {
         frame(&mut self.acts, act)
+    }
+
+    /// Write a log entry down.
+    ///
+    /// **Every entry, whether or not this node holds what the act said.** The tree over the entries
+    /// is what this node has put its name to; one that came back from a restart missing any of them
+    /// would build a different tree and contradict a root it had already published.
+    ///
+    /// # Errors
+    ///
+    /// [`NotReadable::NotWritable`].
+    pub fn noted(&mut self, entry: &Entry) -> Result<(), NotReadable> {
+        frame(&mut self.entries, &entry.to_bytes())
     }
 
     /// Write a root down.
@@ -206,6 +237,23 @@ impl Record {
     /// [`NotReadable::Unreadable`].
     pub fn acts(directory: &Path) -> Result<Vec<Vec<u8>>, NotReadable> {
         read_frames(&acts_at(directory))
+    }
+
+    /// The log entries in this record, in order.
+    ///
+    /// Empty for a record written before entries were kept — which is a record whose entries are
+    /// all derivable from its acts, because letting go of one was not yet possible.
+    ///
+    /// # Errors
+    ///
+    /// [`NotReadable::Unreadable`].
+    pub fn entries(directory: &Path) -> Result<Vec<Vec<u8>>, NotReadable> {
+        let path = entries_at(directory);
+        if path.exists() {
+            read_frames(&path)
+        } else {
+            Ok(Vec::new())
+        }
     }
 
     /// The roots this node has already published, in order.

@@ -150,7 +150,7 @@ fn adding(
 ) -> Operation {
     let mut act = Operation {
         object: identity.object.clone(),
-        previous: Some(Name::of(&identity.to_bytes())),
+        previous: Some(identity.called()),
         kind: Kind::HOLDER_ADD_DEVICE.number(),
         version: 1,
         issued: Epoch::GENESIS,
@@ -242,9 +242,10 @@ async fn fetch(serving: &Serving, name: &Name) -> Vec<Operation> {
         let Some(Value::Bytes(bytes)) = fetched.payload() else {
             panic!("an act comes back as the bytes its author signed");
         };
-        assert_eq!(Name::of(bytes), at, "what came back is what was asked for");
-
         let act = almena_format::operation::read(&read(bytes).expect("canonical")).expect("an act");
+        // Named by what it says and not by how it was signed, which is the only reading under
+        // which one act has one name.
+        assert_eq!(act.called(), at, "what came back is what was asked for");
         let previous = act.previous.clone();
         chain.push(act);
 
@@ -406,7 +407,7 @@ async fn an_identity_whose_history_this_build_cannot_read_stops_resolving() {
 
     let mut newer = Operation {
         object: identity.object.clone(),
-        previous: Some(Name::of(&identity.to_bytes())),
+        previous: Some(identity.called()),
         kind: 9_999,
         version: 1,
         issued: Epoch::GENESIS,

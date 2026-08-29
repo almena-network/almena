@@ -117,6 +117,24 @@ impl Operation {
         Name::of(&self.naming_bytes())
     }
 
+    /// What this act is called: on its object's chain, in the log, and to anybody citing it.
+    ///
+    /// **It does not depend on how the act was signed**, and it must not. A signature covers
+    /// everything but `firmas`, so the signature bytes are outside what any signature protects —
+    /// while a name computed over them would be inside what anybody can change. And they *can* be
+    /// changed without a key: an ECDSA signature has two valid forms for one message, either of
+    /// which verifies, so anybody who merely saw an act go past could reprint it in the other form.
+    /// Named over the signatures, that would be a second act claiming one predecessor: a fork on
+    /// somebody else's chain, made by somebody holding nothing and forging nothing.
+    ///
+    /// This is the same argument [`Self::naming_bytes`] already makes for the name of an **object**,
+    /// carried to where an act is named. What travels and what is stored is still all of it — only
+    /// what it is *called* leaves out the part that two honest parties can write two ways.
+    #[must_use]
+    pub fn called(&self) -> Name {
+        Name::of(&self.signing_bytes())
+    }
+
     /// Whether this creation's `objeto` is the name its own bytes give it.
     ///
     /// This is the whole promise made checkable: *whoever holds the creation recomputes the

@@ -175,6 +175,38 @@ mod tests {
     }
 
     #[test]
+    fn the_example_phrase_pins_the_whole_path_from_words_to_key() {
+        // **The cross-implementation vector.** The published SLIP-0010 vector pins the derivation
+        // from a seed; this pins everything above it too — words to seed to control key — against
+        // values computed independently of this code. The twin of this test lives in the client,
+        // holding the same constants: if either side drifts, the same words open two different
+        // accounts, with an empty account and no error to explain it.
+        let seed = Seed::from_words(PHRASE).expect("a valid phrase");
+        assert_eq!(
+            hex(&seed.0),
+            "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1\
+             9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4"
+                .replace(char::is_whitespace, ""),
+            "the seed those words give"
+        );
+        assert_eq!(
+            hex(&super::derive_from(&seed.0, super::CONTROL)),
+            "56d8f4c43bce7186c171808633ba5ce4712b51cedffaa426611c8d7362a82a0c",
+            "the control secret at its path"
+        );
+        assert_eq!(
+            hex(&seed.backup_key()),
+            "ab61f037fd9ec11180567ff060fa3499189e06fc03ad1b16b93fc747855cffdf",
+            "the backup key at its own path, so a leaked backup never governs the account"
+        );
+        assert_eq!(
+            hex(&seed.control_key().verifying_key().bytes()),
+            "b26871edccf7db469c5812977df531ad2f6174dd435f381e6ed2a0556f896fa7",
+            "and the public key the network will meet"
+        );
+    }
+
+    #[test]
     fn the_two_keys_are_not_the_same_key() {
         // What the separate path is for: a leaked backup key must not be the key that governs
         // the account.

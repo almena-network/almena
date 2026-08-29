@@ -25,7 +25,26 @@
 //! and without a second mechanism an old reader would take `ciego` for `abierto`, the value it does
 //! know, and count a vote it never understood. So a field whose vocabulary will grow is declared
 //! **closed**: a value the reader has no meaning for is refused rather than mistaken for a
-//! neighbour.
+//! neighbour. Where such a field carries a list, each of its entries is one of its values and each
+//! is checked — a field naming the four things a node offers is carrying four values, not one.
+//!
+//! # Numbers belong to the kind, except above a line
+//!
+//! Which field is which is settled per kind of act: whoever opens a payload already knows the
+//! `tipo`, because it travels in the same envelope, so two kinds may spend the number `1` on
+//! entirely different things and nobody is confused.
+//!
+//! That leaves nowhere to put a field that means the same thing **whatever kind carries it**, and
+//! there is at least one — a summary of the state an act leaves behind can ride on any act there
+//! is. Writing it as an exception per kind would make it as many coincidences as there are kinds,
+//! which every future kind would then have to keep repeating. So the space is split instead:
+//! **below [`COMMON`] a number belongs to the kind; from it upwards a number means one thing
+//! everywhere.**
+//!
+//! The line sits far above any per-kind space that will ever exist — an act with fifty fields is
+//! not an act, it is a document — so a kind cannot collide with what is above it by growing. And it
+//! is a line rather than a list of reserved numbers: reserving numbers ahead of time would fix the
+//! shape of fields whose contents nobody has designed.
 //!
 //! # This governs the payload, not the envelope
 //!
@@ -35,6 +54,13 @@
 
 use crate::cbor::Value;
 use std::collections::BTreeMap;
+
+/// The first field number that means the same thing whatever kind of act carries it.
+///
+/// Below it a number belongs to the kind, and two kinds may spend one number on different things
+/// because a reader always knows the kind before it opens the payload. From here upwards a number
+/// means one thing everywhere, so a reader that knows the number needs to know nothing else.
+pub const COMMON: u64 = 100;
 
 /// A field number inside a payload, which carries its own criticality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -85,6 +111,12 @@ impl Field {
     #[must_use]
     pub const fn is_critical(self) -> bool {
         self.0 % 2 == 1
+    }
+
+    /// Whether this number means the same thing whatever kind of act carries it.
+    #[must_use]
+    pub const fn is_common(self) -> bool {
+        self.0 >= COMMON
     }
 }
 
@@ -144,14 +176,30 @@ pub fn understood(
             continue;
         }
 
-        if vocabulary
-            .values(field)
-            .is_some_and(|values| !values.contains(value))
+        if let Some(known) = vocabulary.values(field)
+            && !all_known(value, known)
         {
             return Err(Unintelligible::Value(field));
         }
     }
     Ok(())
+}
+
+/// Whether every value a closed field carries is one this reader knows.
+///
+/// **A closed field that carries a list is carrying several of its own values**, and each is one the
+/// reader either knows or does not — a node saying which four things it offers, say. Checking only
+/// the list as a whole would mean no list ever matched, so the mechanism would either reject
+/// everything or be quietly switched off for exactly the fields that most need it.
+///
+/// A map is not walked, and that is a different case on purpose: the keys of a map inside a field
+/// are shaped by that field's own schema and may well be data — an epoch, a position, a count — so
+/// reading them as values of this vocabulary would refuse perfectly good acts.
+fn all_known(value: &Value, known: &[Value]) -> bool {
+    match value {
+        Value::Array(several) => several.iter().all(|one| known.contains(one)),
+        one => known.contains(one),
+    }
 }
 
 #[cfg(test)]
@@ -166,6 +214,17 @@ mod tests {
 
     const OPEN: Value = Value::Uint(0);
     const BLIND: Value = Value::Uint(1);
+
+    #[test]
+    fn a_number_below_the_line_belongs_to_its_kind_and_one_above_it_to_everybody() {
+        // Two kinds may both spend `1`, because a reader knows the kind before it opens the
+        // payload. A field that means the same thing on every kind has nowhere to live below the
+        // line, and every kind would otherwise have to remember to avoid it for ever.
+        assert!(!Field::new(1).is_common());
+        assert!(!Field::new(99).is_common());
+        assert!(Field::new(super::COMMON).is_common());
+        assert!(Field::new(1_000).is_common());
+    }
 
     #[test]
     fn odd_is_critical_and_even_is_not() {
@@ -281,5 +340,32 @@ mod tests {
         let fields = [Field::new(1)];
         let nested = BTreeMap::from([(1, Value::Map(BTreeMap::from([(7, Value::Uint(0))])))]);
         assert_eq!(understood(&nested, Vocabulary::of(&fields)), Ok(()));
+    }
+
+    #[test]
+    fn every_entry_of_a_closed_list_is_one_of_its_values() {
+        // A closed field carrying a list is carrying several of its own values. Checking only the
+        // list as a whole would mean no list ever matched, and the mechanism would be switched off
+        // for exactly the fields that most need it.
+        const FIELDS: &[Field] = &[Field::new(3)];
+        const KNOWN: &[(Field, &[Value])] = &[(Field::new(3), &[OPEN, BLIND])];
+        let closed = Vocabulary::with_closed(FIELDS, KNOWN);
+
+        let all_known = BTreeMap::from([(3, Value::Array(vec![OPEN, BLIND]))]);
+        assert_eq!(understood(&all_known, closed), Ok(()));
+
+        let one_is_not = BTreeMap::from([(3, Value::Array(vec![OPEN, Value::Uint(9_999)]))]);
+        assert_eq!(
+            understood(&one_is_not, closed),
+            Err(Unintelligible::Value(Field::new(3))),
+            "and one unknown among known ones is still unknown"
+        );
+
+        let empty = BTreeMap::from([(3, Value::Array(Vec::new()))]);
+        assert_eq!(
+            understood(&empty, closed),
+            Ok(()),
+            "nothing said is nothing this reader failed to understand"
+        );
     }
 }

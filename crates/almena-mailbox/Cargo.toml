@@ -1,0 +1,16 @@
+[package]
+name = "almena-mailbox"
+description = "What a mediator holds for somebody whose device is off, and the rules that decide what it takes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+almena-format = { workspace = true }
+almena-suite = { workspace = true }
+almena-time = { workspace = true }

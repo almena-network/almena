@@ -64,6 +64,9 @@ const SAYS = {
   mesh_address_unavailable: "meshAddressUnavailable",
   no_network: "noNetwork",
   address_unavailable: "addressUnavailable",
+  not_a_claim: "notAClaim",
+  not_theirs: "notTheirs",
+  not_written_down: "notWrittenDown",
 } as const;
 
 /** The catalogue key for one refusal, or the general one where this build has never heard of it. */
@@ -84,22 +87,43 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
   const [address, setAddress] = useState("127.0.0.1:8791");
   const [zone, setZone] = useState("");
   const [mesh, setMesh] = useState("4002");
+  const [carry, setCarry] = useState(false);
+  const [carriedBy, setCarriedBy] = useState("");
   const [certificate, setCertificate] = useState("");
   const [privateKey, setPrivateKey] = useState("");
+  const [challenge, setChallenge] = useState("");
+  const [approval, setApproval] = useState("");
   const [failed, setFailed] = useState<string | null>(null);
 
-  /** Run one command, keeping whatever identifier it came back with. */
+  /** Run one command, saying whether it worked and keeping whatever identifier came back. */
   async function run(
     command: string,
-    argument?: Record<string, string | number | undefined>,
+    argument?: Record<string, string | number | boolean | string[] | undefined>,
   ) {
     setFailed(null);
     try {
       await invoke(command, argument);
       onChanged();
+      return true;
     } catch (reason) {
       // An identifier the node chose, or — if something unforeseen surfaced — nothing this can
       // claim to explain, which is drawn as the unrecognised case rather than as raw text.
+      setFailed(typeof reason === "string" ? reason : "");
+      return false;
+    }
+  }
+
+  /** Ask the node for a challenge, and keep it on screen until it is used or replaced. */
+  async function showChallenge() {
+    setFailed(null);
+    try {
+      // A day, in epochs. Long enough to walk to another machine and short enough that one left
+      // in a screenshot does not bind anybody's machine a year later.
+      const shown = await invoke<string>("who_contributed_me", {
+        forEpochs: 24,
+      });
+      setChallenge(shown);
+    } catch (reason) {
       setFailed(typeof reason === "string" ? reason : "");
     }
   }
@@ -193,12 +217,47 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
           <Button
             disabled={!onNetwork}
             onClick={() =>
-              void run("join_the_mesh", { port: Number(mesh) || 0 })
+              void run("join_the_mesh", {
+                port: Number(mesh) || 0,
+                carry,
+                // Empty means nobody to ask, which is right for a node that can be dialled.
+                carriedBy: carriedBy.trim() ? [carriedBy.trim()] : [],
+              })
             }
           >
             {t("network.control.joinTheMesh")}
           </Button>
         </div>
+
+        <div className="flex items-center gap-2">
+          {/* Volunteered, never assumed: it spends this machine's bandwidth on somebody else's
+              conversation, and turning it on says so in the record where it is counted. */}
+          <input
+            id="carry"
+            type="checkbox"
+            checked={carry}
+            onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+              setCarry(event.target.checked)
+            }
+          />
+          <label htmlFor="carry" className="text-sm">
+            {t("network.control.carry")}
+          </label>
+        </div>
+
+        {/* For a node that cannot be dialled: behind a household router there is no door anybody
+            outside can knock on, and somebody carrying it is what turns it back into a node. The
+            address has to name the relay — being carried by whoever answers at a host and port is
+            being carried by whoever took them. */}
+        <input
+          className="border-input bg-transparent h-9 rounded-md border px-3 text-sm"
+          aria-label={t("network.control.carriedBy")}
+          placeholder={t("network.control.carriedBy")}
+          value={carriedBy}
+          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+            setCarriedBy(event.target.value)
+          }
+        />
 
         <div className="flex gap-2">
           <input
@@ -219,6 +278,73 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
               setPrivateKey(event.target.value)
             }
           />
+        </div>
+
+        {/* Whoever sustains the network earns the right to write on it, and that has to attach to
+            somebody: a node nobody claimed is a machine, and a machine cannot be credited. The node
+            can only ask — approving is done by whoever contributed it, with their own key, wherever
+            that key lives. */}
+        <div className="flex flex-col gap-2 border-t pt-4">
+          <p className="text-sm font-medium">
+            {t("network.control.claimHeading")}
+          </p>
+          <p className="text-muted-foreground text-sm">
+            {t("network.control.claimBody")}
+          </p>
+          <Button
+            variant="secondary"
+            disabled={!onNetwork}
+            onClick={() => void showChallenge()}
+          >
+            {t("network.control.showChallenge")}
+          </Button>
+          {challenge !== "" && (
+            <>
+              <p className="text-muted-foreground text-sm">
+                {t("network.control.challengeShown")}
+              </p>
+              {/* Selectable text and never an input: it is the node's to show, not anybody's to
+                  edit, and what gets approved has to be what was shown. */}
+              <p className="bg-muted rounded-md p-2 font-mono text-xs break-all select-all">
+                {challenge}
+              </p>
+              <input
+                className="border-input bg-transparent h-9 rounded-md border px-3 font-mono text-sm"
+                aria-label={t("network.control.approval")}
+                placeholder={t("network.control.approval")}
+                value={approval}
+                onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                  setApproval(event.target.value)
+                }
+              />
+              <Button
+                disabled={approval.trim() === ""}
+                onClick={() =>
+                  void run("contributed_by", {
+                    challenge,
+                    approval: approval.trim(),
+                  }).then((written) => {
+                    // Shown once and gone, like the challenge itself: what is worth reading now
+                    // lives in the record, where anybody can. A refusal keeps both on screen,
+                    // because the fix is usually pasting again.
+                    if (written) {
+                      setChallenge("");
+                      setApproval("");
+                    }
+                  })
+                }
+              >
+                {t("network.control.recordClaim")}
+              </Button>
+            </>
+          )}
+          <Button
+            variant="secondary"
+            disabled={!onNetwork}
+            onClick={() => void run("contributed_by_nobody")}
+          >
+            {t("network.control.letGo")}
+          </Button>
         </div>
 
         {failed !== null && (

@@ -122,6 +122,21 @@ pub fn against(operation: &Operation) -> Option<[u8; ed25519::PUBLIC_KEY_WIDTH]>
     crate::root::contradict(&one.root, &other.root).then_some(one.key)
 }
 
+/// Which node a contradiction is against, if it really is one.
+///
+/// **Out of the act and nothing else.** Two roots are only a contradiction when they name the same
+/// node, so there is exactly one answer and it is in the bytes — no census, no resolving, and no
+/// dependence on what the node reading it happens to know. An index that turned on that would put
+/// the same act under two different names on two honest nodes.
+#[must_use]
+pub fn against_whom(operation: &Operation) -> Option<Did> {
+    against(operation)?;
+    let Some(Value::Bytes(one)) = operation.payload.get(&ONE) else {
+        return None;
+    };
+    Some(Published::read(one)?.root.node)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{against, publish};
@@ -296,5 +311,48 @@ mod tests {
             almena_format::cbor::Value::Bytes(b"not a root at all".to_vec()),
         );
         assert_eq!(against(&published.operation), None);
+    }
+
+    #[test]
+    fn a_contradiction_says_which_node_it_is_against() {
+        // **How anybody finds it.** It is looked for by the party affected, not by whoever bothered
+        // to write it down — and it comes out of the act itself, so two honest nodes reading the
+        // same bytes file it under the same name whatever else they know.
+        let published = publish(
+            &root(3, 7, b"one history"),
+            &root(3, 7, b"another history"),
+            Epoch::GENESIS,
+            &key(9),
+        );
+
+        assert_eq!(
+            super::against_whom(&published.operation),
+            Some(Did::new(Network::Development, Name::of(&[3])))
+        );
+    }
+
+    #[test]
+    fn the_same_pair_found_in_either_order_is_against_the_same_node() {
+        // The two are put in the order their own bytes sort, so which of them is read for the name
+        // must not change the answer.
+        let one = root(3, 7, b"one history");
+        let other = root(3, 7, b"another history");
+
+        assert_eq!(
+            super::against_whom(&publish(&one, &other, Epoch::GENESIS, &key(9)).operation),
+            super::against_whom(&publish(&other, &one, Epoch::GENESIS, &key(10)).operation)
+        );
+    }
+
+    #[test]
+    fn something_that_is_not_a_contradiction_is_against_nobody() {
+        // Otherwise anything at all could be filed against anybody.
+        let published = publish(
+            &root(3, 7, b"what one saw"),
+            &root(4, 7, b"what the other saw"),
+            Epoch::GENESIS,
+            &key(9),
+        );
+        assert_eq!(super::against_whom(&published.operation), None);
     }
 }

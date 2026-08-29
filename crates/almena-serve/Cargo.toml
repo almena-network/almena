@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 almena-api = { workspace = true }
+# One identifier read out of a path, so that a mailbox route names whose mailbox it is.
+almena-format = { workspace = true }
 almena-node = { workspace = true }
 almena-time = { workspace = true }
 hyper = { workspace = true }

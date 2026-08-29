@@ -100,11 +100,11 @@ async fn exchange(serving: &mut Listening, asking: &mut Listening, ahead: &Node)
                 }
             }
             happened = asking.next() => match happened {
-                Happened::Met(peer) if !asked => {
+                Happened::Met(peer, _) if !asked => {
                     asked = true;
                     asking.ask(&peer, Ask::Since(0));
                 }
-                Happened::Answered(_, said) => return said,
+                Happened::Answered(_, _, said) => return said,
                 _ => {}
             },
         }

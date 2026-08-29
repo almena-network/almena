@@ -39,6 +39,13 @@ const SEED: &str = "_seed";
 /// Where nodes serving the interface are published, under the zone.
 const API: &str = "_api";
 
+/// Where nodes that hold post are published, under the zone.
+///
+/// **Separate from `_api` because they are not the same offer.** Every node serves the interface;
+/// holding somebody's post is a thing an operator switches on, and a client looking for a mediator
+/// would otherwise have to ask every node in the zone whether it was one.
+const MEDIATOR: &str = "_mediator";
+
 /// The zone did not answer.
 ///
 /// **Not the same as answering with nothing**, and the two must never be collapsed: one is *nobody
@@ -182,7 +189,8 @@ pub const PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
 pub async fn look(records: &impl Records, zone: &str) -> Option<Looked> {
     let seeds = records.text(&under(SEED, zone)).await;
     let api = records.text(&under(API, zone)).await;
-    looked(seeds, api)
+    let mediators = records.text(&under(MEDIATOR, zone)).await;
+    looked(seeds, api, mediators)
 }
 
 /// The same, given up on if it takes longer than [`PATIENCE`].
@@ -197,15 +205,19 @@ pub async fn look_patiently(records: &impl Records, zone: &str) -> Option<Looked
 }
 
 /// What to make of the two answers.
-fn looked(seeds: Result<Vec<String>, Silent>, api: Result<Vec<String>, Silent>) -> Option<Looked> {
-    // Either half going quiet makes the whole look a silence. A zone half of which is unreachable
-    // has not told this node that nobody is there, and half an answer is the shape a node would
-    // most easily mistake for one.
-    let (Ok(seeds), Ok(api)) = (seeds, api) else {
+fn looked(
+    seeds: Result<Vec<String>, Silent>,
+    api: Result<Vec<String>, Silent>,
+    mediators: Result<Vec<String>, Silent>,
+) -> Option<Looked> {
+    // Any part going quiet makes the whole look a silence. A zone part of which is unreachable has
+    // not told this node that nobody is there, and part of an answer is the shape a node would most
+    // easily mistake for one.
+    let (Ok(seeds), Ok(api), Ok(mediators)) = (seeds, api, mediators) else {
         return None;
     };
 
-    let (answer, refused) = Answer::read(&seeds, &api);
+    let (answer, refused) = Answer::read(&seeds, &api, &mediators);
     Some(Looked {
         seeds,
         answer,
@@ -331,6 +343,39 @@ mod tests {
             .await
             .is_none()
         );
+
+        // Every part, including the newest one. A part added later that did not make the whole
+        // look a silence would be a part through which the distinction quietly stopped holding.
+        assert!(
+            look(
+                &zone(&[
+                    ("_seed.dev.almena.network.", Ok(vec![SEED.to_owned()])),
+                    ("_api.dev.almena.network.", Ok(vec![SERVED.to_owned()])),
+                    ("_mediator.dev.almena.network.", Err(Silent)),
+                ]),
+                "dev.almena.network",
+            )
+            .await
+            .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mailbox_published_in_the_zone_is_read_as_one() {
+        let looked = look(
+            &zone(&[
+                ("_seed.dev.almena.network.", Ok(vec![SEED.to_owned()])),
+                ("_mediator.dev.almena.network.", Ok(vec![SERVED.to_owned()])),
+            ]),
+            "dev.almena.network",
+        )
+        .await
+        .expect("answered");
+        assert_eq!(looked.answer.mediators.len(), 1);
+        assert!(
+            looked.answer.api.is_empty(),
+            "and it is not mistaken for the interface, which is a different offer"
+        );
     }
 
     #[tokio::test]
@@ -402,5 +447,189 @@ mod tests {
             2,
             "but somebody published two things, and that is what decides whether anybody is there"
         );
+    }
+}
+
+/// Proving that a domain is an entity's, which is a different question from finding a node.
+///
+/// **The two uses of DNS in this platform must not be confused** (`SPECS.md §4.5`). One is
+/// discovery — where to knock to join a mesh — and it is what everything above answers. This is the
+/// other: a **bidirectional link** in which the domain points at an entity and the entity's own
+/// record names the domain, so that neither half alone proves anything.
+///
+/// # Nothing here decides whether an act is valid, and that is deliberate
+///
+/// A node cannot make admitting an act depend on a DNS lookup. Validity is settled against the act
+/// and the record, so that any node replaying the same history reaches the same answer at any hour
+/// — and a rule that asked the network would make two honest nodes disagree because one of them was
+/// asked while a resolver was down. So the record carries **the claim and the date it was last
+/// proved**, and checking it is done by whoever is about to rely on it: the entity's own app when
+/// it revalidates, and a reader when it matters (`SPECS.md §7.4`).
+pub mod domain {
+    use super::{Records, Silent};
+
+    /// Where an entity's claim on a domain is published, under that domain.
+    ///
+    /// Underscore-prefixed, like every other record this platform reads, so that it cannot collide
+    /// with a host somebody owns.
+    const AT: &str = "_almena";
+
+    /// The version the shape opens with, as every record here does.
+    const SHAPE: &str = "v=1";
+
+    /// Where the identifier sits inside the record.
+    const DID: &str = "did=";
+
+    /// What a domain says about itself.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Says {
+        /// It names that entity, so the domain's half of the link holds.
+        Names,
+        /// It answered and names somebody else, or nobody.
+        ///
+        /// **An answer and not a failure**, and the difference is the same one this whole module
+        /// turns on: a domain that says nothing has said *nobody here claims this*, which is a fact
+        /// worth acting on, and a domain that could not be asked has said nothing at all.
+        DoesNot,
+    }
+
+    /// Whether that domain names that entity.
+    ///
+    /// **A domain may name more than one**, because DNS takes several records at one name — so what
+    /// is asked here is whether *this* entity is among them and never which of them wins. The
+    /// tie-break belongs to whoever controls the domain, by removing the record they did not mean
+    /// to publish, and never to a register choosing (`SPECS.md §7.5`).
+    ///
+    /// # Errors
+    ///
+    /// [`Silent`] when the domain did not answer, which is *nobody knows* and must never be read as
+    /// *nobody is there*.
+    pub async fn asked(records: &impl Records, domain: &str, entity: &str) -> Result<Says, Silent> {
+        let published = records
+            .text(&format!("{AT}.{}.", domain.trim_end_matches('.')))
+            .await?;
+        Ok(
+            match published.iter().any(|record| claims(record, entity)) {
+                true => Says::Names,
+                false => Says::DoesNot,
+            },
+        )
+    }
+
+    /// Whether one record claims that entity.
+    fn claims(record: &str, entity: &str) -> bool {
+        let mut parts = record.split_whitespace();
+        if parts.next() != Some(SHAPE) {
+            // A shape this build does not read. Passed over rather than guessed at: reading a later
+            // version as if it were this one is how a record ends up meaning what nobody wrote.
+            return false;
+        }
+        parts
+            .filter_map(|part| part.strip_prefix(DID))
+            .any(|named| named == entity)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{Says, asked};
+        use crate::{Records, Silent};
+        use std::collections::BTreeMap;
+
+        struct Wrote(BTreeMap<String, Result<Vec<String>, Silent>>);
+
+        impl Records for Wrote {
+            async fn text(&self, name: &str) -> Result<Vec<String>, Silent> {
+                self.0.get(name).cloned().unwrap_or(Ok(Vec::new()))
+            }
+        }
+
+        fn zone(entries: &[(&str, Result<Vec<String>, Silent>)]) -> Wrote {
+            Wrote(
+                entries
+                    .iter()
+                    .map(|(name, answer)| ((*name).to_owned(), answer.clone()))
+                    .collect(),
+            )
+        }
+
+        const ENTITY: &str = "did:almena:dev:zAnEntity";
+
+        #[tokio::test]
+        async fn a_domain_that_names_the_entity_proves_its_half_of_the_link() {
+            let published = zone(&[(
+                "_almena.almena.network.",
+                Ok(vec![format!("v=1 did={ENTITY}")]),
+            )]);
+            assert_eq!(
+                asked(&published, "almena.network", ENTITY).await,
+                Ok(Says::Names)
+            );
+        }
+
+        #[tokio::test]
+        async fn a_domain_may_name_more_than_one_and_this_asks_only_about_ours() {
+            // DNS takes several records at one name, so an administrator can publish two. The
+            // tie-break belongs to whoever controls the domain and never to a register choosing.
+            let published = zone(&[(
+                "_almena.almena.network.",
+                Ok(vec![
+                    "v=1 did=did:almena:dev:zSomebodyElse".to_owned(),
+                    format!("v=1 did={ENTITY}"),
+                ]),
+            )]);
+            assert_eq!(
+                asked(&published, "almena.network", ENTITY).await,
+                Ok(Says::Names)
+            );
+        }
+
+        #[tokio::test]
+        async fn a_domain_that_names_somebody_else_has_answered() {
+            // *Nobody here claims this* is a fact worth acting on, and is not the same as silence.
+            let published = zone(&[(
+                "_almena.almena.network.",
+                Ok(vec!["v=1 did=did:almena:dev:zSomebodyElse".to_owned()]),
+            )]);
+            assert_eq!(
+                asked(&published, "almena.network", ENTITY).await,
+                Ok(Says::DoesNot)
+            );
+            assert_eq!(
+                asked(&zone(&[]), "almena.network", ENTITY).await,
+                Ok(Says::DoesNot),
+                "and so has one that publishes nothing"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_domain_that_did_not_answer_is_not_a_domain_that_denied_it() {
+            assert_eq!(
+                asked(
+                    &zone(&[("_almena.almena.network.", Err(Silent))]),
+                    "almena.network",
+                    ENTITY
+                )
+                .await,
+                Err(Silent)
+            );
+        }
+
+        #[tokio::test]
+        async fn a_record_in_a_shape_this_build_does_not_read_is_passed_over() {
+            // Reading a later version as if it were this one is how a record ends up meaning
+            // something nobody wrote.
+            let published = zone(&[(
+                "_almena.almena.network.",
+                Ok(vec![
+                    format!("v=2 did={ENTITY}"),
+                    format!("did={ENTITY}"),
+                    format!("v=1 owner={ENTITY}"),
+                ]),
+            )]);
+            assert_eq!(
+                asked(&published, "almena.network", ENTITY).await,
+                Ok(Says::DoesNot)
+            );
+        }
     }
 }

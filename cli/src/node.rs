@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use log::info;
+use log::{error, info};
 
 use crate::IDENTIFIER;
 
@@ -131,6 +131,24 @@ pub enum Opening {
     ZoneSilent,
     /// There is no network to do this on.
     NoNetwork,
+    /// What was handed over is not a challenge and an approval of it.
+    ///
+    /// A typo, a half-copied line, or the two the wrong way round. Nothing was written down and
+    /// nothing is wrong with the node — it is worth telling apart from an approval that read
+    /// perfectly and turned out not to be theirs.
+    NotAClaim,
+    /// It read, and it does not bind.
+    ///
+    /// The approval is not signed by the key that claimant's own chain authorises, or the challenge
+    /// had stopped being good by the time it came back. **A binding that cannot be checked is not a
+    /// weaker binding**: it would be this node's word about somebody who never agreed.
+    NotTheirs,
+    /// The record would not take it.
+    ///
+    /// It must not be reachable — there is a network, so there is a chain to add to. It is here so
+    /// that if it ever happens it is said, rather than reported as one of the reasons above and
+    /// sending somebody to look at whoever they were claiming for.
+    NotWrittenDown,
     /// The mesh port could not be listened on — usually because somebody else has it.
     ///
     /// Not worked around by taking another: a node whose port moved is a node whose published
@@ -186,6 +204,35 @@ impl From<almena_node::identity::NoIdentity> for Opening {
             almena_node::identity::NoIdentity::NoRandomness => Self::NoRandomness,
             almena_node::identity::NoIdentity::Unreadable => Self::UnreadableIdentity,
             almena_node::identity::NoIdentity::NotWritable => Self::NoDirectory,
+        }
+    }
+}
+
+/// What a face was told about taking a place on the mesh.
+///
+/// Grouped because the three are one decision: where this node listens, whether it carries other
+/// nodes, and who it asks to carry it. The two faces take the same one, which is what keeps them
+/// two faces rather than two programs.
+#[derive(Debug, Clone, Copy)]
+pub struct Joining<'a> {
+    /// The port to listen on, which is the one somebody publishes.
+    pub port: u16,
+    /// Whether this node carries other nodes' traffic.
+    pub carrying: almena_mesh::Carrying,
+    /// Relays to ask to carry this one, for a node that cannot be dialled.
+    pub carried_by: &'a [String],
+}
+
+/// Ask each of those relays to carry this node.
+///
+/// **One that will not is one relay and not a reason to stop.** Which of them answers is not this
+/// node's to decide, and the answer arrives later either way — asking is not being carried, and
+/// what a slot makes reachable is published when one is granted.
+fn asking_to_be_carried(listening: &mut almena_mesh::Listening, relays: &[String]) {
+    for relay in relays {
+        match listening.ask_to_be_carried_at(relay) {
+            Ok(address) => info!("mesh_asked_to_be_carried relay={address}"),
+            Err(why) => error!("mesh_relay_not_asked relay={relay} reason={why:?}"),
         }
     }
 }
@@ -534,7 +581,12 @@ impl Node {
     /// # Errors
     ///
     /// [`Opening::NoNetwork`] when there is none to be on, and whatever stopped it listening.
-    pub fn join_the_mesh(&mut self, port: u16) -> Result<(), Opening> {
+    pub fn join_the_mesh(&mut self, joining: &Joining<'_>) -> Result<(), Opening> {
+        let Joining {
+            port,
+            carrying,
+            carried_by,
+        } = *joining;
         let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
         let runtime = self.runtime.as_ref().ok_or(Opening::NoNetwork)?;
         let network =
@@ -549,12 +601,15 @@ impl Node {
         // socket the moment it is made, and one made outside would be a node that came up and then
         // fell over on its first connection.
         let _inside = runtime.enter();
-        let mut listening = almena_mesh::listen(&key, &network, port).map_err(|why| match why {
-            almena_mesh::NotListening::NoIdentity | almena_mesh::NotListening::NoTransport => {
-                Opening::NoRuntime
-            }
-            almena_mesh::NotListening::AddressUnavailable => Opening::MeshAddressUnavailable,
-        })?;
+        let mut listening =
+            almena_mesh::listening(&key, &network, port, carrying).map_err(|why| match why {
+                almena_mesh::NotListening::NoIdentity
+                | almena_mesh::NotListening::NoTransport
+                | almena_mesh::NotListening::Anonymous => Opening::NoRuntime,
+                almena_mesh::NotListening::AddressUnavailable => Opening::MeshAddressUnavailable,
+            })?;
+
+        asking_to_be_carried(&mut listening, carried_by);
 
         // Driven here only until the operating system has said where this node can be reached.
         // That is a fact the node has to report, and afterwards it belongs to whatever is keeping
@@ -681,6 +736,82 @@ impl Node {
     #[must_use]
     pub fn records(&self) -> Option<&Path> {
         self.records.as_deref()
+    }
+
+    /// Show a challenge for whoever contributed this node to approve.
+    ///
+    /// **The node asks and decides nothing.** Approving it is somebody putting their name beside a
+    /// machine in a record that does not forget, and the only thing this node can do about that is
+    /// ask. It is good for `for_epochs` and then it is not: one that ended up in a screenshot or a
+    /// support bundle must not bind somebody's machine a year later.
+    ///
+    /// **Nothing but this node remembers it was shown.** The record never saw it and could not tell
+    /// one shown twice from one shown once — but the same act arriving twice is one act, so a
+    /// replay changes nothing either way.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening::NoNetwork`] when there is no node to be claimed, and [`Opening::NoRandomness`]
+    /// when the operating system will not produce any — a challenge somebody could guess is one an
+    /// approval could be collected for in advance.
+    pub fn asking_who_contributed_me(&self, for_epochs: u64) -> Result<String, Opening> {
+        let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
+        let now = self.now().ok_or(Opening::NoNetwork)?;
+        let until = now
+            .plus(almena_node::Epochs(for_epochs))
+            .ok_or(Opening::NoNetwork)?;
+        let challenge = serving
+            .node()
+            .blocking_read()
+            .asking_who_contributed_me(until)
+            .map_err(|_| Opening::NoRandomness)?;
+        Ok(challenge.to_text())
+    }
+
+    /// Write down that somebody contributed this node, from what they handed back.
+    ///
+    /// Both halves go in: the challenge this node showed, and their approval of it. The approval is
+    /// checked against the key **their own** chain authorises, so one that reads is not one that
+    /// binds.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening::NoNetwork`] when there is no node to claim, [`Opening::NotAClaim`] when the text
+    /// is not a challenge and an approval, and [`Opening::NotTheirs`] when it read and does not
+    /// bind.
+    pub fn contributed_by(&mut self, challenge: &str, approval: &str) -> Result<(), Opening> {
+        let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
+        let now = self.now().ok_or(Opening::NoNetwork)?;
+        match serving
+            .node()
+            .blocking_write()
+            .contributed_by_text(challenge, approval, now)
+        {
+            almena_node::Claimed::Written => Ok(()),
+            almena_node::Claimed::NotAClaim => Err(Opening::NotAClaim),
+            almena_node::Claimed::NotTheirs => Err(Opening::NotTheirs),
+        }
+    }
+
+    /// Say this node is no longer contributed by anybody.
+    ///
+    /// **The node alone**, because whoever claimed it gave up something they were owed and nobody
+    /// has to agree to that. Credit stops from here and never in arrears: what was served was
+    /// served.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening::NoNetwork`] when there is no node, and [`Opening::NotWrittenDown`] when the
+    /// record would not take it.
+    pub fn contributed_by_nobody(&mut self) -> Result<(), Opening> {
+        let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
+        let now = self.now().ok_or(Opening::NoNetwork)?;
+        serving
+            .node()
+            .blocking_write()
+            .contributed_by_nobody(now)
+            .then_some(())
+            .ok_or(Opening::NotWrittenDown)
     }
 
     /// Takes the node down, saying so.

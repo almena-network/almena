@@ -164,6 +164,64 @@ impl Day {
     }
 }
 
+/// How many epochs a period is.
+///
+/// **Thirty days**, which falls out of a day being twenty-four epochs. It is how long a share of
+/// the record stays where it is before it moves, and the length is a compromise nobody can settle
+/// from a desk: short enough that camping on one object costs a fresh attempt every time, long
+/// enough that the network is not perpetually moving data it already had.
+pub const EPOCHS_PER_PERIOD: u64 = 30 * EPOCHS_PER_DAY;
+
+/// A stretch of thirty days, counted from the one this network began in.
+///
+/// What it is for is having a number everybody reaches without asking: the share of the record a
+/// node is expected to keep depends on which period it is, and two nodes that disagreed about that
+/// would expect different things of each other while both being honest.
+///
+/// Like [`Day`], it is not a date. It is counted from the instant the network began, which is the
+/// only one anybody wrote down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Period(u64);
+
+impl Period {
+    /// The period an epoch falls in.
+    #[must_use]
+    pub const fn of(epoch: Epoch) -> Self {
+        Self(epoch.number() / EPOCHS_PER_PERIOD)
+    }
+
+    /// A period by its number.
+    #[must_use]
+    pub const fn new(number: u64) -> Self {
+        Self(number)
+    }
+
+    /// Which period it is, counting from the network's first.
+    #[must_use]
+    pub const fn number(self) -> u64 {
+        self.0
+    }
+
+    /// The first epoch of this period.
+    #[must_use]
+    pub const fn begins(self) -> Epoch {
+        Epoch::new(self.0 * EPOCHS_PER_PERIOD)
+    }
+
+    /// The one after this.
+    ///
+    /// **What a node works out in advance.** The share it will be expected to hold is computable
+    /// long before it is due, and a node that waits until the moment it changes hands is one that
+    /// is briefly missing everything it just acquired.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(number) => Some(Self(number)),
+            None => None,
+        }
+    }
+}
+
 /// A position on the network's clock: the number of whole hours since its genesis instant.
 ///
 /// Two nodes reach the same number for the same moment without exchanging anything, which is
@@ -286,7 +344,7 @@ impl Clock {
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, Epoch, Epochs, deadline};
+    use super::{Clock, Epoch, Epochs, Period, deadline};
     use time::OffsetDateTime;
 
     /// An arbitrary genesis instant. Nothing depends on which one it is — that is the point of
@@ -410,5 +468,46 @@ mod tests {
         assert_eq!(deadline::ALIAS_QUARANTINE.count(), 2_160);
         assert_eq!(deadline::PUSH_HANDLE_ROTATION.count(), 2_160);
         assert_eq!(deadline::RELATION_KEY_LIFETIME.count(), 8_760);
+    }
+
+    #[test]
+    fn a_period_is_thirty_days_of_epochs() {
+        // It falls out of an epoch being an hour and a day being twenty-four of them. Nobody has to
+        // remember seven hundred and twenty.
+        assert_eq!(super::EPOCHS_PER_PERIOD, 720);
+        assert_eq!(super::EPOCHS_PER_PERIOD, 30 * super::EPOCHS_PER_DAY);
+    }
+
+    #[test]
+    fn every_epoch_falls_in_exactly_one_period() {
+        assert_eq!(Period::of(Epoch::GENESIS), Period::new(0));
+        assert_eq!(Period::of(Epoch::new(719)), Period::new(0));
+        assert_eq!(Period::of(Epoch::new(720)), Period::new(1));
+        assert_eq!(Period::of(Epoch::new(1_439)), Period::new(1));
+        assert_eq!(Period::of(Epoch::new(1_440)), Period::new(2));
+    }
+
+    #[test]
+    fn a_period_begins_where_the_one_before_it_ended() {
+        // Two nodes that disagreed about where a period starts would expect different things of
+        // each other while both being honest.
+        for number in [0u64, 1, 7, 1_000] {
+            let period = Period::new(number);
+            assert_eq!(Period::of(period.begins()), period);
+        }
+        // The first period starts where the clock does, so there is nothing before it to check.
+        for number in [1u64, 7, 1_000] {
+            let period = Period::new(number);
+            let before = Epoch::new(period.begins().number() - 1);
+            assert_eq!(Period::of(before), Period::new(number - 1), "{number}");
+        }
+    }
+
+    #[test]
+    fn the_next_period_is_knowable_in_advance_and_runs_out_at_the_end_of_the_clock() {
+        // A node works out the share it will be expected to hold before it is due, or it is briefly
+        // missing everything it just acquired.
+        assert_eq!(Period::new(4).next(), Some(Period::new(5)));
+        assert_eq!(Period::new(u64::MAX).next(), None);
     }
 }

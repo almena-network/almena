@@ -17,6 +17,7 @@ members = [
   "crates/almena-cbor",
   "crates/almena-format",
   "crates/almena-log",
+  "crates/almena-mailbox",
   "crates/almena-mesh",
   "crates/almena-lookup",
   "crates/almena-node",
@@ -70,6 +71,11 @@ libp2p = { version = "0.56", default-features = false, features = [
   "macros",
   "identify",
   "request-response",
+  # **What lets a node behind a household router be part of the network at all.** Without it only a
+  # machine with an address anybody can dial may join, which would make *open and without
+  # permission* true only for people who have one. Carrying somebody else's traffic is a capability
+  # and not a duty: a node says whether it does it, and is measured on it like anything else.
+  "relay",
 ] }
 almena-mesh = { path = "crates/almena-mesh" }
 # Already in the tree by way of libp2p; named here because the codec trait it defines is one this
@@ -96,6 +102,7 @@ almena-cbor = { path = "crates/almena-cbor" }
 # The log entry, the operation, and the identifier an object takes from the operation that
 # creates it. Replicated in `client`, held to the same golden vectors.
 almena-format = { path = "crates/almena-format" }
+almena-mailbox = { path = "crates/almena-mailbox" }
 almena-log = { path = "crates/almena-log" }
 # Everything a node does. Both faces of the node call this and neither holds logic of its own.
 almena-node = { path = "crates/almena-node" }
