@@ -177,7 +177,7 @@ pub enum Ask {
     /// **Not what it is** — that would be a finished answer somebody had to believe. What comes
     /// back is the last summary this node could read and everything after it, in the bytes their
     /// authors signed, so that whoever asked works out the state and checks it on the way.
-    State(Did),
+    State(Did, Option<Name>),
     /// What has been said about somebody by somebody else.
     About(Did),
     /// Where an act sits in this node's tree, and the path that proves it.
@@ -196,6 +196,14 @@ pub enum Ask {
     /// **Counted, never declared**, so that what is missing is visible before it is a problem. It
     /// is what nodes *say*; what they do is measured by asking, and the two are kept apart.
     Capacity,
+    /// The bytes of one status list version, by the hash of those bytes.
+    ///
+    /// **Any node will do, because the hash decides** (`SPECS.md §10.2`). Whoever asks already
+    /// holds the version the record names; what a node adds is a copy of the bytes, and either they
+    /// match it or they do not. That is what lets a verifier ask a replica first and go to the
+    /// issuer's own node only when the replica comes back stale — asking the source every time
+    /// would tell an issuer when and how often its credentials are verified.
+    List(Vec<u8>),
     /// What is in the catalogue, by what each object is.
     ///
     /// **The whole of it, because it is the whole of it that is comparable.** `SPECS.md §9.4` has
@@ -205,6 +213,21 @@ pub enum Ask {
     /// reading. What bounds it is governance: sources and tags are Almena Government's and
     /// attributes and templates need the seal.
     Catalogue,
+    /// How the network's trust anchor stands against what `SPECS.md §7.1` asks of it.
+    ///
+    /// **Because it has to be said.** A network opens with its anchor self-signed by one key
+    /// (`SPECS.md §7.9`), and there is nothing wrong with that — what would be wrong is leaving it
+    /// that way with nobody able to find out. So the numbers are served like every other figure
+    /// here: as facts, with no verdict attached, for whoever is deciding whether to rely on that
+    /// seal.
+    Anchor,
+    /// What one node saw on a day, asking by asking — the observations a summary's hash pins.
+    ///
+    /// **Without this the hash is a promise that could be kept rather than one that is.** A summary
+    /// carries the hash of what it was drawn from so that, having published it, an observer cannot
+    /// later produce a different account of what it saw. That is worth nothing if nobody can get
+    /// the account.
+    Watching(u64),
     /// What the network went looking for on a day, and how much of it it found.
     ///
     /// **Nobody's assertion about themselves.** It is a sum over signed acts in a record everybody
@@ -256,8 +279,15 @@ pub fn parse(method: &str, path: &str) -> Result<Ask, Unreadable> {
         ("object", Some(name), None) => named(name).map(Ask::Object),
         ("act", Some(name), None) => named(name).map(Ask::Act),
         ("state", Some(did), None) => Did::parse(did)
-            .map(Ask::State)
+            .map(|object| Ask::State(object, None))
             .map_err(|_| Unreadable::Malformed),
+        // **Where the last page stopped.** A caller that folded a page and could not tell it from
+        // the whole chain would land on a state from earlier with nothing saying so, so every
+        // paged answer here carries a cursor and this is how the next page is asked for.
+        ("state", Some(did), Some(after)) => {
+            let object = Did::parse(did).map_err(|_| Unreadable::Malformed)?;
+            named(after).map(|cursor| Ask::State(object, Some(cursor)))
+        }
         // Two segments and both required: a proof is against a root, and the epoch is which root.
         ("inclusion", Some(epoch), Some(name)) => {
             let at = numbered(epoch)?;
@@ -268,7 +298,13 @@ pub fn parse(method: &str, path: &str) -> Result<Ask, Unreadable> {
             .map_err(|_| Unreadable::Malformed),
         ("root", Some(epoch), None) => numbered(epoch).map(Ask::Root),
         ("capacity", None, None) => Ok(Ask::Capacity),
+        ("anchor", None, None) => Ok(Ask::Anchor),
         ("catalogue", None, None) => Ok(Ask::Catalogue),
+        ("list", Some(version), None) => written_out(version).map(Ask::List),
+        ("watching", Some(day), None) => day
+            .parse::<u64>()
+            .map(Ask::Watching)
+            .map_err(|_| Unreadable::Malformed),
         ("kept", Some(day), None) => day
             .parse::<u64>()
             .map(Ask::Kept)
@@ -289,6 +325,23 @@ fn named(text: &str) -> Result<Name, Unreadable> {
     Name::parse(text).map_err(|_| Unreadable::Malformed)
 }
 
+/// Bytes from a path segment, written the way a person pastes them: lower-case hexadecimal.
+///
+/// **One spelling and no other.** Two spellings of one hash would be two addresses for one version,
+/// and a cache that treated them as different would serve one of them stale for ever.
+fn written_out(text: &str) -> Result<Vec<u8>, Unreadable> {
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(Unreadable::Malformed);
+    }
+    if text.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return Err(Unreadable::Malformed);
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).map_err(|_| Unreadable::Malformed))
+        .collect()
+}
+
 /// Answer a question.
 ///
 /// Takes the node by shared reference, which is what makes it obvious that reading changes
@@ -302,10 +355,19 @@ pub fn answer(node: &Node, ask: &Ask, now: Epoch, limits: &Limits) -> Said {
             Some(bytes) => said(node, now, State::Here, Some(Value::Bytes(bytes)), None),
             None => said(node, now, State::DoesNotExist, None, None),
         },
-        Ask::State(object) => composing(node, object, now),
+        Ask::State(object, after) => composing(node, object, after.as_ref(), now),
         Ask::Kept(day) => measured(node, *day, now),
+        Ask::Watching(day) => watching(node, almena_time::Day::new(*day), now),
         Ask::Capacity => running(node, now),
+        Ask::Anchor => anchoring(node, now),
         Ask::Catalogue => listed(node, now),
+        Ask::List(version) => match node.list(version) {
+            Some(bytes) => said(node, now, State::Here, Some(Value::Bytes(bytes)), None),
+            // **Not here, never *does not exist*.** A node that does not hold a copy of a public
+            // list is saying something about itself; saying the list is not there would be a claim
+            // about the issuer, made out of this node's own share of the work.
+            None => said(node, now, State::NotHere, None, None),
+        },
         Ask::About(subject) => match node.about(subject, now).answer {
             Some(hashes) => {
                 let listed = hashes
@@ -497,6 +559,24 @@ fn running(node: &Node, now: Epoch) -> Said {
         .map(|(version, count)| (version, Value::Uint(count as u64)))
         .collect();
 
+    // How much of each capability falls to one declared operator, and how much of it nobody has
+    // claimed. **Numbers and never a name**: who holds the largest share, served on request, would
+    // be a list of where to attack assembled by the network about itself.
+    let concentrated = counted
+        .concentration
+        .into_iter()
+        .map(|(what, held)| {
+            (
+                what.number(),
+                Value::Array(vec![
+                    Value::Uint(held.offering as u64),
+                    Value::Uint(held.most as u64),
+                    Value::Uint(held.unclaimed as u64),
+                ]),
+            )
+        })
+        .collect();
+
     // **Nought is said rather than left out** for a capability nobody offers: a figure that
     // omitted it would read as a capability nobody had thought of, and the whole point is that
     // what is missing is visible. The nodes this record cannot read travel with it for the same
@@ -505,8 +585,83 @@ fn running(node: &Node, now: Epoch) -> Said {
         (1, Value::Map(offered)),
         (2, Value::Map(spoken)),
         (3, Value::Uint(counted.unreadable as u64)),
+        (4, Value::Map(concentrated)),
+        (5, Value::Uint(counted.operators as u64)),
+        (6, Value::Uint(counted.unclaimed as u64)),
     ]));
     said(node, now, State::Here, Some(figure), None)
+}
+
+/// How the trust anchor stands, as an answer.
+///
+/// **Codes and never sentences** (`SPECS.md §13.9`): what is missing travels as an identifier with
+/// its numbers, and whoever received it draws it in their own reader's language. A node has no idea
+/// what language anybody reads in, and asking it to would be asking it the wrong question.
+fn anchoring(node: &Node, now: Epoch) -> Said {
+    let Some(anchor) = node.anchor(now).answer else {
+        // This node cannot resolve its own government, which is its own ignorance and not an
+        // answer about the anchor — so it declines rather than reporting an anchor of nobody.
+        return said(node, now, State::CannotResolve, None, None);
+    };
+
+    let wanting = anchor
+        .wanting
+        .iter()
+        .map(|one| Value::Map(missing(one)))
+        .collect();
+    let figure = Value::Map(BTreeMap::from([
+        (1, Value::Text(node.government().to_string())),
+        (2, Value::Uint(anchor.owners as u64)),
+        (3, Value::Uint(anchor.thresholds.routine)),
+        (4, Value::Uint(anchor.thresholds.sealing)),
+        (5, Value::Uint(anchor.thresholds.governance)),
+        (6, Value::Uint(u64::from(anchor.one_pair_of_hands))),
+        (7, Value::Array(wanting)),
+    ]));
+    said(node, now, State::Here, Some(figure), None)
+}
+
+/// One thing `SPECS.md §7.1` asks that the record does not show, as a code and its numbers.
+fn missing(one: &almena_store::government::Wanting) -> BTreeMap<u64, Value> {
+    use almena_store::government::Wanting;
+    let (code, numbers) = match one {
+        Wanting::NobodyIsAnOwnerYet => (1, Vec::new()),
+        Wanting::TooFewOwners { has } => (2, vec![*has]),
+        Wanting::SealingTooLow { is } => (3, vec![*is]),
+        Wanting::GovernanceIsNotAMajority { is, of } => (4, vec![*is, *of]),
+        // **The one that never reaches here**, because it is a declaration and not something in the
+        // record — an owner's organisation is not a thing a node can read. It is answered for so
+        // that adding it later is an addition rather than a shape somebody has to guess at.
+        Wanting::TooManyInOne { has, of, .. } => (5, vec![*has, *of]),
+    };
+    BTreeMap::from([
+        (1, Value::Uint(code)),
+        (
+            2,
+            Value::Array(numbers.into_iter().map(Value::Uint).collect()),
+        ),
+    ])
+}
+
+/// What this node saw on a day, as an answer.
+///
+/// **The bytes it hashed, and not a rendering of them.** A hash over one encoding and an answer in
+/// another would be a promise nobody could check, which is the state this exists to leave.
+///
+/// A day it no longer keeps is *not here* rather than an absence: the observations existed, this
+/// node has aged them out, and saying they never did would be telling somebody the summary was
+/// drawn from nothing.
+fn watching(node: &Node, day: almena_time::Day, now: Epoch) -> Said {
+    match node.watching(day) {
+        Some(watching) => said(
+            node,
+            now,
+            State::Here,
+            Some(Value::Bytes(watching.to_bytes())),
+            None,
+        ),
+        None => said(node, now, State::NotHere, None, None),
+    }
 }
 
 /// What the network went looking for on a day, as an answer.
@@ -524,23 +679,31 @@ fn measured(node: &Node, day: u64, now: Epoch) -> Said {
 }
 
 /// The acts somebody needs to work out what an object is, as an answer.
-fn composing(node: &Node, object: &Did, now: Epoch) -> Said {
+fn composing(node: &Node, object: &Did, after: Option<&Name>, now: Epoch) -> Said {
     // A page, because a chain that never summarised can be as long as it likes, and an answer with
     // no bound is one a node cannot promise to give.
-    let acts = node
-        .state_of(object, PAGE, now)
-        .answer
-        .into_iter()
-        .map(Value::Bytes)
-        .collect::<Vec<Value>>();
+    let Some(composing) = node.state_of(object, after, PAGE, now).answer else {
+        // A cursor this node cannot place on that object's branch. Answered as an absence about
+        // the cursor rather than by starting again, because handing back the first page to
+        // somebody who asked for the fourth would look like an answer and be a different one.
+        return said(node, now, State::DoesNotExist, None, None);
+    };
+    let acts: Vec<Value> = composing.acts.into_iter().map(Value::Bytes).collect();
 
     // **Empty is not the same as absent.** Saying *here, nothing* about an object that exists would
     // be telling somebody it does not, which is the one thing a node may never do.
     if acts.is_empty() {
-        said(node, now, State::DoesNotExist, None, None)
-    } else {
-        said(node, now, State::Here, Some(Value::Array(acts)), None)
+        return said(node, now, State::DoesNotExist, None, None);
     }
+
+    // **Where it stopped, beside what it handed over.** A page and the whole of a chain look
+    // identical without it, and a caller that folded the first thinking it was the second would
+    // land on a state from earlier and have nothing to tell it so.
+    let mut body = BTreeMap::from([(1, Value::Array(acts))]);
+    if let Some(more) = composing.more {
+        body.insert(3, Value::Text(more.as_str().to_owned()));
+    }
+    said(node, now, State::Here, Some(Value::Map(body)), None)
 }
 
 /// What the limits look like as an answer.
@@ -776,6 +939,30 @@ mod tests {
         let signature = control.sign(&operation.signing_bytes());
         operation.signatures.push(Signed {
             by: operation.object.clone(),
+            key: public.to_vec(),
+            signature: signature.bytes(),
+        });
+        operation
+    }
+
+    /// One more device on that account, so that its chain has two acts to page over.
+    fn a_device_on(
+        account: &almena_format::operation::Operation,
+        control: &ed25519::SigningKey,
+    ) -> almena_format::operation::Operation {
+        let public = control.verifying_key().bytes();
+        let mut operation = almena_format::operation::Operation {
+            object: account.object.clone(),
+            previous: Some(account.called()),
+            kind: Kind::HOLDER_ADD_DEVICE.number(),
+            version: 1,
+            issued: Epoch::GENESIS,
+            payload: BTreeMap::from([(1, Value::Bytes(vec![2; 33]))]),
+            signatures: Vec::new(),
+        };
+        let signature = control.sign(&operation.signing_bytes());
+        operation.signatures.push(Signed {
+            by: account.object.clone(),
             key: public.to_vec(),
             signature: signature.bytes(),
         });
@@ -1070,16 +1257,153 @@ mod tests {
         let object = account.object.clone();
         node.submit(&account, Epoch::GENESIS).expect("taken");
 
-        let said = answer(&node, &Ask::State(object), Epoch::GENESIS, &limits());
+        let said = answer(&node, &Ask::State(object, None), Epoch::GENESIS, &limits());
         assert_eq!(said.state, State::Here);
 
         let Ok(Value::Map(fields)) = almena_format::cbor::read(&said.body) else {
             panic!("a response is a canonical map");
         };
-        let Some(Value::Array(acts)) = fields.get(&4) else {
+        let Some(Value::Map(carried)) = fields.get(&4) else {
             panic!("it carries the acts, got {fields:?}");
         };
-        assert_eq!(acts, &vec![Value::Bytes(account.to_bytes())]);
+        assert_eq!(
+            carried.get(&1),
+            Some(&Value::Array(vec![Value::Bytes(account.to_bytes())]))
+        );
+        assert_eq!(
+            carried.get(&3),
+            None,
+            "and says nothing about carrying on, because there is nothing after it"
+        );
+    }
+
+    #[test]
+    fn carrying_on_from_where_a_page_stopped_hands_over_what_came_after_it() {
+        // **What the cursor is for.** How big a page is belongs to the node; that a caller can say
+        // *I have up to here, go on* belongs to the interface, and without it a page and the whole
+        // of a chain are the same answer.
+        let mut node = a_node();
+        let control = ed25519::SigningKey::from_secret([9; 32]);
+        let account = an_account(&control, Epoch::GENESIS);
+        let object = account.object.clone();
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+        let device = a_device_on(&account, &control);
+        node.submit(&device, Epoch::GENESIS).expect("taken");
+
+        let next = carried(&answer(
+            &node,
+            &Ask::State(object.clone(), Some(account.called())),
+            Epoch::GENESIS,
+            &limits(),
+        ));
+        assert_eq!(
+            next.get(&1),
+            Some(&Value::Array(vec![Value::Bytes(device.to_bytes())])),
+            "everything after the act the cursor named"
+        );
+        assert_eq!(next.get(&3), None, "and nothing left after that");
+
+        // A cursor this node cannot place on that branch is an absence about the cursor, never the
+        // first page again: handing back the beginning to somebody who asked for the middle would
+        // look like an answer and be a different one.
+        let said = answer(
+            &node,
+            &Ask::State(object, Some(Name::of(b"an act nobody wrote"))),
+            Epoch::GENESIS,
+            &limits(),
+        );
+        assert_eq!(said.state, State::DoesNotExist);
+    }
+
+    /// What an answer about an object's history carried.
+    fn carried(said: &Said) -> std::collections::BTreeMap<u64, Value> {
+        assert_eq!(said.state, State::Here);
+        let Ok(Value::Map(fields)) = almena_format::cbor::read(&said.body) else {
+            panic!("a response is a canonical map");
+        };
+        match fields.get(&4) {
+            Some(Value::Map(carried)) => carried.clone(),
+            other => panic!("it carries the acts, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_observations_a_summary_was_drawn_from_can_be_asked_for() {
+        // **What turns the hash into a promise that is kept.** A summary carries the hash of what
+        // it was drawn from so that, having published it, an observer cannot later produce a
+        // different account of what it saw — which is worth nothing if nobody can get the account.
+        let mut node = a_node();
+        let day = almena_time::Day::new(1);
+        let during = Epoch::new(almena_time::EPOCHS_PER_DAY);
+        let key = ed25519::SigningKey::from_secret([7; 32]);
+        let announced = almena_store::announce::announce(
+            almena_store::genesis::Which::Development,
+            during,
+            &key,
+        );
+        node.submit(&announced.operation, during)
+            .expect("announced");
+        node.watched(
+            day,
+            almena_store::watching::Noted {
+                of: key.verifying_key().bytes().to_vec(),
+                at: during,
+                saw: almena_store::watching::Saw::Asked,
+            },
+        );
+
+        let said = answer(&node, &Ask::Watching(day.number()), during, &limits());
+        assert_eq!(said.state, State::Here);
+        let Some(Value::Bytes(bytes)) = body(&said).get(&field::PAYLOAD).cloned() else {
+            panic!("it hands over the bytes it hashed")
+        };
+        assert_eq!(
+            almena_suite::digest::Digest::of(&bytes),
+            node.watching(day).expect("it kept them").digest(),
+            "and they are the bytes the hash is over, not a rendering of them"
+        );
+
+        // A day it no longer keeps is *not here*: the observations existed and this node has aged
+        // them out. Saying they never did would be telling somebody the summary came from nothing.
+        let said = answer(&node, &Ask::Watching(9), during, &limits());
+        assert_eq!(said.state, State::NotHere);
+    }
+
+    #[test]
+    fn a_network_that_has_just_opened_says_its_anchor_is_in_one_pair_of_hands() {
+        // **The answer that has to exist** (`SPECS.md §7.1`). It is the true state of a network on
+        // its first day and there is nothing wrong with it — what would be wrong is there being no
+        // way to find out, which is what this question is for.
+        let node = a_node();
+        let said = answer(&node, &Ask::Anchor, Epoch::GENESIS, &limits());
+        assert_eq!(said.state, State::Here);
+
+        let Value::Map(body) = read(&said.body).expect("readable") else {
+            panic!("an answer is a map")
+        };
+        let Some(Value::Map(figure)) = body.get(&field::PAYLOAD) else {
+            panic!("it carried the figure")
+        };
+        assert_eq!(
+            figure.get(&1),
+            Some(&Value::Text(node.government().to_string()))
+        );
+        assert_eq!(figure.get(&2), Some(&Value::Uint(0)), "nobody yet");
+        assert_eq!(figure.get(&6), Some(&Value::Uint(1)), "one pair of hands");
+
+        // And what is missing travels as a code with its numbers, never as a sentence: a node has
+        // no idea what language whoever asked reads in.
+        let Some(Value::Array(wanting)) = figure.get(&7) else {
+            panic!("it said what is missing")
+        };
+        assert_eq!(
+            wanting,
+            &vec![Value::Map(BTreeMap::from([
+                (1, Value::Uint(1)),
+                (2, Value::Array(Vec::new())),
+            ]))],
+            "one thing to say, and it is the one worth saying"
+        );
     }
 
     #[test]
@@ -1091,7 +1415,7 @@ mod tests {
             almena_format::identifier::Network::Development,
             Name::of(b"never happened"),
         );
-        let said = answer(&node, &Ask::State(nobody), Epoch::GENESIS, &limits());
+        let said = answer(&node, &Ask::State(nobody, None), Epoch::GENESIS, &limits());
         assert_eq!(said.state, State::DoesNotExist);
     }
 
@@ -1103,7 +1427,12 @@ mod tests {
         );
         assert_eq!(
             parse("GET", &format!("/state/{object}")),
-            Ok(Ask::State(object))
+            Ok(Ask::State(object.clone(), None))
+        );
+        let after = Name::of(b"where the last page stopped");
+        assert_eq!(
+            parse("GET", &format!("/state/{object}/{}", after.as_str())),
+            Ok(Ask::State(object, Some(after)))
         );
         assert_eq!(
             parse("GET", "/state/not-a-name"),

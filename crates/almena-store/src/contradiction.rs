@@ -262,12 +262,15 @@ mod tests {
                 Epoch::GENESIS,
             )
             .expect("the first");
+        // **The same object, so the same act**: what names it is the pair of roots it carries, and
+        // a name covers everything but the signatures — so two people writing down one
+        // contradiction have written one act between them, whichever of them signed it.
         assert_eq!(
             objects.admit(
                 &publish(&other, &one, Epoch::GENESIS, &key(10)).operation,
                 Epoch::GENESIS
             ),
-            Err(crate::chain::Refused::AlreadyExists)
+            Ok(crate::chain::Admitted::AlreadyHere)
         );
     }
 

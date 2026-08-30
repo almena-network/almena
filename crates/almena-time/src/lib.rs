@@ -35,64 +35,101 @@
 
 use time::OffsetDateTime;
 
+pub mod cohort;
+pub mod parameter;
+
 /// How many epochs make up each deadline the protocol fixes.
 ///
-/// Every one of these is a **versioned protocol parameter** and not a constant buried in code:
-/// changing one is adding a rule, never reinterpreting what is already written. They are
-/// gathered here so that a change is one edit rather than a search.
+/// Every one of these is a **versioned protocol parameter and not a constant**, and here that is
+/// the type rather than a claim: each is a [`Parameter`](crate::parameter::Parameter) — a list of
+/// what the number has been, each from the epoch it took effect. Changing one appends a setting,
+/// so an act is judged by the deadline that was in force when it was issued and something good
+/// when it was written stays good.
+///
+/// **Which is what makes a change possible at all after a network opens.** A record is
+/// append-only: a deadline edited in place would silently re-decide what every act already written
+/// meant, and there would be no way to tell which reading a node had used.
+///
+/// Each carries one setting today, from the epoch its network opened. A change is a second entry —
+/// `&[(Epoch::GENESIS, 72), (Epoch::new(…), 48)]` — and everything issued before it goes on being
+/// judged by the first.
+///
+/// They are gathered here so that a change is one edit rather than a search, and so that the same
+/// figure is never written down twice.
 pub mod deadline {
-    use super::Epochs;
+    use crate::{Epoch, parameter::Parameter};
 
     /// How long an operation signed by the control key alone waits before taking effect, and
     /// during which any live device can cancel it.
-    pub const CONTROL_KEY_WAIT: Epochs = Epochs(72);
+    pub const CONTROL_KEY_WAIT: Parameter = Parameter::from(&[(Epoch::GENESIS, 72)]);
 
     /// The shortest expiry a pending signature over a destructive operation may be given, so
     /// that nobody opens one with a thirty-minute window at four in the morning. Three days is
     /// what it takes for an owner who is away to find out.
-    pub const DESTRUCTIVE_PENDING_MINIMUM: Epochs = Epochs(72);
+    pub const DESTRUCTIVE_PENDING_MINIMUM: Parameter = Parameter::from(&[(Epoch::GENESIS, 72)]);
 
     /// How often the seed that places each node in the replication assignment rotates, so that
     /// nobody camps on one object.
-    pub const ASSIGNMENT_SEED_ROTATION: Epochs = Epochs(720);
+    pub const ASSIGNMENT_SEED_ROTATION: Parameter = Parameter::from(&[(Epoch::GENESIS, 720)]);
 
     /// The longest a sender may ask a mediator to hold a message. The sender declares the
     /// expiry and this is the ceiling on it, because a copy waits at every mediator the
     /// recipient declared and the storage is paid for by all of them.
-    pub const MESSAGE_MAXIMUM_LIFETIME: Epochs = Epochs(720);
+    pub const MESSAGE_MAXIMUM_LIFETIME: Parameter = Parameter::from(&[(Epoch::GENESIS, 720)]);
 
     /// How often a verified domain is checked again. A month bounds how long a domain that has
     /// already changed hands can go on passing for verified, and is frequent enough that a
     /// passing DNS failure reads differently from an abandonment.
-    pub const DOMAIN_REVALIDATION: Epochs = Epochs(720);
+    pub const DOMAIN_REVALIDATION: Parameter = Parameter::from(&[(Epoch::GENESIS, 720)]);
 
     /// The notice given before a certification grade is lowered — a month being ample time to
     /// update a node and too little to get used to ignoring the warning.
-    pub const GRADE_LOWERING_NOTICE: Epochs = Epochs(720);
+    pub const GRADE_LOWERING_NOTICE: Parameter = Parameter::from(&[(Epoch::GENESIS, 720)]);
 
     /// The shortest term a public vote may be open for, because the electorate is the whole
     /// network and nobody opens the app daily.
-    pub const PUBLIC_VOTE_MINIMUM_TERM: Epochs = Epochs(720);
+    pub const PUBLIC_VOTE_MINIMUM_TERM: Parameter = Parameter::from(&[(Epoch::GENESIS, 720)]);
 
     /// How long an emergency continuity operation stays open for any surviving owner to veto.
-    pub const EMERGENCY_CONTINUITY: Epochs = Epochs(1_440);
+    pub const EMERGENCY_CONTINUITY: Parameter = Parameter::from(&[(Epoch::GENESIS, 1_440)]);
 
     /// How long a mailbox goes uncollected before it is considered inactive and its contents
     /// discarded.
-    pub const MAILBOX_INACTIVE: Epochs = Epochs(2_160);
+    pub const MAILBOX_INACTIVE: Parameter = Parameter::from(&[(Epoch::GENESIS, 2_160)]);
 
     /// How long an alias is held before it can be taken by anybody else, so that no one
     /// inherits the reputation of whoever left.
-    pub const ALIAS_QUARANTINE: Epochs = Epochs(2_160);
+    pub const ALIAS_QUARANTINE: Parameter = Parameter::from(&[(Epoch::GENESIS, 2_160)]);
 
     /// How often the opaque wake-up handle a device gives its mediators rotates, which bounds
     /// how long one handle can be used to follow a device about and is how a mediator that
     /// abuses it gets cut off.
-    pub const PUSH_HANDLE_ROTATION: Epochs = Epochs(2_160);
+    pub const PUSH_HANDLE_ROTATION: Parameter = Parameter::from(&[(Epoch::GENESIS, 2_160)]);
 
     /// How long the key of a relationship lasts before it lapses, which is what makes an
     /// unprocessed rotation heal itself.
-    pub const RELATION_KEY_LIFETIME: Epochs = Epochs(8_760);
+    pub const RELATION_KEY_LIFETIME: Parameter = Parameter::from(&[(Epoch::GENESIS, 8_760)]);
+
+    /// Every deadline the protocol fixes, under the name it is known by.
+    ///
+    /// **So that the family can be checked rather than the members.** A deadline added tomorrow
+    /// belongs on this list, and what walks it — the rule that each starts at the genesis and runs
+    /// forwards, and the freezing of the format before a network opens for good — then covers it
+    /// without anybody remembering to say so.
+    pub const ALL: [(&str, Parameter); 12] = [
+        ("control key wait", CONTROL_KEY_WAIT),
+        ("destructive pending minimum", DESTRUCTIVE_PENDING_MINIMUM),
+        ("assignment seed rotation", ASSIGNMENT_SEED_ROTATION),
+        ("message maximum lifetime", MESSAGE_MAXIMUM_LIFETIME),
+        ("domain revalidation", DOMAIN_REVALIDATION),
+        ("grade lowering notice", GRADE_LOWERING_NOTICE),
+        ("public vote minimum term", PUBLIC_VOTE_MINIMUM_TERM),
+        ("emergency continuity", EMERGENCY_CONTINUITY),
+        ("mailbox inactive", MAILBOX_INACTIVE),
+        ("alias quarantine", ALIAS_QUARANTINE),
+        ("push handle rotation", PUSH_HANDLE_ROTATION),
+        ("relation key lifetime", RELATION_KEY_LIFETIME),
+    ];
 }
 
 /// A count of epochs — a duration, never a position on the clock.
@@ -296,6 +333,20 @@ impl Clock {
         Self { genesis }
     }
 
+    /// A clock counting from an instant given in seconds since the Unix epoch.
+    ///
+    /// **The form the record carries it in**, so that whoever holds a node's own genesis figure can
+    /// build a clock from it without reaching for a calendar library. None for a figure no instant
+    /// corresponds to, which is not the same as the Unix epoch: a clock counting from a moment
+    /// nobody fixed would put every act in the wrong window and say nothing about it.
+    #[must_use]
+    pub fn from_unix(seconds: u64) -> Option<Self> {
+        let seconds = i64::try_from(seconds).ok()?;
+        OffsetDateTime::from_unix_timestamp(seconds)
+            .ok()
+            .map(Self::from_genesis)
+    }
+
     /// The instant this clock counts from.
     #[must_use]
     pub const fn genesis(&self) -> OffsetDateTime {
@@ -449,25 +500,48 @@ mod tests {
     #[test]
     fn a_position_minus_a_position_is_a_duration() {
         let start = Epoch::GENESIS.plus(Epochs(10)).expect("no overflow");
-        let later = start.plus(deadline::CONTROL_KEY_WAIT).expect("no overflow");
-        assert_eq!(later.since(start), Some(deadline::CONTROL_KEY_WAIT));
+        let wait = deadline::CONTROL_KEY_WAIT.epochs_now();
+        let later = start.plus(wait).expect("no overflow");
+        assert_eq!(later.since(start), Some(wait));
         assert_eq!(start.since(later), None, "time does not run backwards");
     }
 
     #[test]
     fn the_deadlines_are_the_ones_that_were_settled_on() {
-        assert_eq!(deadline::CONTROL_KEY_WAIT.count(), 72);
-        assert_eq!(deadline::DESTRUCTIVE_PENDING_MINIMUM.count(), 72);
-        assert_eq!(deadline::ASSIGNMENT_SEED_ROTATION.count(), 720);
-        assert_eq!(deadline::MESSAGE_MAXIMUM_LIFETIME.count(), 720);
-        assert_eq!(deadline::DOMAIN_REVALIDATION.count(), 720);
-        assert_eq!(deadline::GRADE_LOWERING_NOTICE.count(), 720);
-        assert_eq!(deadline::PUBLIC_VOTE_MINIMUM_TERM.count(), 720);
-        assert_eq!(deadline::EMERGENCY_CONTINUITY.count(), 1_440);
-        assert_eq!(deadline::MAILBOX_INACTIVE.count(), 2_160);
-        assert_eq!(deadline::ALIAS_QUARANTINE.count(), 2_160);
-        assert_eq!(deadline::PUSH_HANDLE_ROTATION.count(), 2_160);
-        assert_eq!(deadline::RELATION_KEY_LIFETIME.count(), 8_760);
+        assert_eq!(deadline::CONTROL_KEY_WAIT.now(), 72);
+        assert_eq!(deadline::DESTRUCTIVE_PENDING_MINIMUM.now(), 72);
+        assert_eq!(deadline::ASSIGNMENT_SEED_ROTATION.now(), 720);
+        assert_eq!(deadline::MESSAGE_MAXIMUM_LIFETIME.now(), 720);
+        assert_eq!(deadline::DOMAIN_REVALIDATION.now(), 720);
+        assert_eq!(deadline::GRADE_LOWERING_NOTICE.now(), 720);
+        assert_eq!(deadline::PUBLIC_VOTE_MINIMUM_TERM.now(), 720);
+        assert_eq!(deadline::EMERGENCY_CONTINUITY.now(), 1_440);
+        assert_eq!(deadline::MAILBOX_INACTIVE.now(), 2_160);
+        assert_eq!(deadline::ALIAS_QUARANTINE.now(), 2_160);
+        assert_eq!(deadline::PUSH_HANDLE_ROTATION.now(), 2_160);
+        assert_eq!(deadline::RELATION_KEY_LIFETIME.now(), 8_760);
+    }
+
+    #[test]
+    fn every_deadline_is_a_history_and_the_roster_holds_all_of_them() {
+        // **What makes the module's claim checkable instead of a sentence.** Each is a list of
+        // what the number has been rather than one number, so a change appends and nothing already
+        // written is re-decided — and the roster is what a check of the family walks, so a
+        // deadline added tomorrow is covered without anybody remembering to add it anywhere else.
+        assert_eq!(deadline::ALL.len(), 12);
+        for (called, parameter) in deadline::ALL {
+            let settings = parameter.settings();
+            assert_eq!(
+                settings[0].0,
+                Epoch::GENESIS,
+                "{called} has to have an answer for every epoch"
+            );
+            assert!(
+                settings.windows(2).all(|pair| pair[0].0 < pair[1].0),
+                "{called} runs forwards and never twice at one epoch"
+            );
+            assert_ne!(parameter.now(), 0, "{called} is a deadline and not nothing");
+        }
     }
 
     #[test]

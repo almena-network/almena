@@ -29,7 +29,7 @@ use almena_time::Epoch;
 
 /// After everything the words alone asked for has landed (`SPECS.md §11.12`).
 fn settled() -> Epoch {
-    Epoch::new(almena_time::deadline::CONTROL_KEY_WAIT.count() + 1)
+    Epoch::new(almena_time::deadline::CONTROL_KEY_WAIT.now() + 1)
 }
 
 /// The key Almena Government was opened with. Its composition under `SPECS.md §7.1` is F10's.

@@ -12,8 +12,12 @@ workspace = true
 
 [dependencies]
 almena-format = { workspace = true }
+almena-frozen = { workspace = true }
 almena-mailbox = { workspace = true }
 almena-store = { workspace = true }
 almena-suite = { workspace = true }
 almena-time = { workspace = true }
 getrandom = { workspace = true }
+
+[dev-dependencies]
+almena-status = { workspace = true }

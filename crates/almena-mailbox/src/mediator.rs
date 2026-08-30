@@ -163,6 +163,30 @@ impl Mediator {
         })
     }
 
+    /// Say where to wake one of an account's devices.
+    ///
+    /// **Given here and nowhere else** (`SPECS.md §6.3`). It does not go in the root identifier,
+    /// which is public and enumerable — waking somebody's telephone is exactly the abuse that
+    /// section is defended against, and the two could not both be true.
+    ///
+    /// False for an account this mediator does not carry, or a device it holds no mailbox for.
+    pub fn wakes_at(&mut self, whose: &Did, device: &[u8], endpoint: &str) -> bool {
+        self.accounts
+            .get_mut(whose)
+            .is_some_and(|account| account.wakes_at(device, endpoint))
+    }
+
+    /// Where to wake that device, if it has said.
+    ///
+    /// **What the mediator holds is somewhere to deliver a signal to**, and nothing about how it
+    /// gets there: that is what keeps the notification path from becoming a dependency.
+    #[must_use]
+    pub fn wake(&self, whose: &Did, device: &[u8]) -> Option<&str> {
+        self.accounts
+            .get(whose)
+            .and_then(|account| account.wake(device))
+    }
+
     /// Say those messages were collected, so that they stop being held.
     pub fn confirm(&mut self, whose: &Did, to: &[u8], names: &[Name], at: Epoch) {
         if let Some(account) = self.accounts.get_mut(whose) {
@@ -386,7 +410,7 @@ mod tests {
             .deliver(&whose(), &message(1, "zIssuer", 400), Epoch::GENESIS)
             .expect("room");
 
-        let long_after = Epoch::new(quota::UNCOLLECTED_UNTIL_INACTIVE.0);
+        let long_after = Epoch::new(quota::UNCOLLECTED_UNTIL_INACTIVE.now());
         let collected = mediator
             .collect(&whose(), &device(1), long_after)
             .expect("a mailbox");

@@ -49,7 +49,7 @@ impl Held {
     /// message is still worth delivering and the sender is not the one being protected against.
     #[must_use]
     pub fn new(relation: String, sealed: Vec<u8>, asked: Epochs, at: Epoch) -> Self {
-        let asked = Epochs(asked.count().min(crate::quota::HELD_AT_MOST.count()));
+        let asked = Epochs(asked.count().min(crate::quota::HELD_AT_MOST.at(at)));
         Self {
             called: Name::of(&sealed),
             relation,

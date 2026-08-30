@@ -59,6 +59,29 @@ fn clock(began: u64) -> impl Fn() -> almena_node::Epoch + Clone + Send + Sync + 
 /// nobody is there** — is worth nothing if the zone it asked about was not the network's.
 pub const DEVELOPMENT_ZONE: &str = "dev.almena.network";
 
+/// How long one look at a zone is given before it is called a silence.
+///
+/// **Ten seconds is a long time to answer a question `dig` answers in ten milliseconds**, and it is
+/// what the resolver in use here needs on a bad minute. Whoever is watching a node start is waiting
+/// on this, so it is the shortest span that does not turn an answer into a silence.
+const ASKING_FOR: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How many times a zone is asked before a node concludes nobody answered.
+///
+/// **Three, and the reason is which way the mistake falls.** A zone read as silent when it would
+/// have answered is a node refusing to open a network nobody is on — recoverable by running it
+/// again, and infuriating. A zone read as empty when it is not would be a second network, which is
+/// the thing that cannot be undone. Asking again only ever costs time: the answer that opens
+/// anything is *nobody is here*, and no number of attempts can invent a seed.
+const ASK_AT_MOST: u32 = 3;
+
+/// The zone a node looks in for somebody to join on the production network.
+///
+/// **The other one, and there are only two** (`SPECS.md §4.5`). Which zone was read is the weak
+/// proof of which network a node is on — the strong one is inside the act that opened it and inside
+/// the name of the protocol nodes speak — but it is where a node that has nothing yet starts.
+pub const PRODUCTION_ZONE: &str = "almena.network";
+
 /// What this node will and will not do for whoever asks.
 ///
 /// Announced as an answer like any other, so that what it said and what it did are two facts a
@@ -80,6 +103,8 @@ pub fn limits() -> almena_api::Limits {
 /// a network on their own say-so.
 #[derive(Debug, Clone, Copy)]
 struct Looking<'a> {
+    /// Which network is being opened, if it turns out nobody is there.
+    which: almena_node::Which,
     /// The zone to ask, when nobody was named.
     zone: &'a str,
     /// Seeds given by hand. Not empty means the zone is not asked at all.
@@ -108,6 +133,12 @@ pub enum Opening {
     /// It must not be reachable. It is here so that if it ever happens it is said, rather than
     /// reported as one of the reasons above and sending somebody to look at their directory.
     RecordWouldNotStart,
+    /// The format this build writes is not one a network may be opened on for good.
+    ///
+    /// Only production is asked, and what is opened from here is development — so this too must not
+    /// be reachable, and is named rather than folded into another so that the day it does arise it
+    /// is said.
+    FormatIsNotFrozen,
     /// There is nowhere for the node's own work to run, so it would be on a network it could not
     /// keep the clock on.
     NoRuntime,
@@ -250,6 +281,8 @@ pub struct Node {
     directory: Option<PathBuf>,
     /// Where this node keeps things, resolved once at start.
     directories: almena_paths::Paths,
+    /// The DNS servers an operator named, or nothing to use the machine's own.
+    resolvers: Vec<std::net::IpAddr>,
     /// The file its records are going to, when they are going to one at all.
     records: Option<PathBuf>,
     /// When this network's epoch zero began, so that this face can say what epoch it is.
@@ -297,19 +330,24 @@ impl Node {
     /// the destination happens before there is a node to install it for.
     #[must_use]
     pub fn start(records: Option<PathBuf>) -> Self {
-        Self::in_directory(records, None)
+        Self::in_directory(records, None, Vec::new())
     }
 
     /// The same, being the node in a directory somebody named.
     ///
     /// A node is a directory with a key in it, so naming one is how a machine runs more than one.
     #[must_use]
-    pub fn in_directory(records: Option<PathBuf>, directory: Option<PathBuf>) -> Self {
+    pub fn in_directory(
+        records: Option<PathBuf>,
+        directory: Option<PathBuf>,
+        resolvers: Vec<std::net::IpAddr>,
+    ) -> Self {
         info!("node_started identifier={IDENTIFIER}");
 
         Self {
             directory,
             directories: almena_paths::Paths::for_application(IDENTIFIER),
+            resolvers,
             records,
             holds: None,
             began: None,
@@ -334,6 +372,36 @@ impl Node {
     /// naming is [`Opening::NoRandomness`]: it is a refusal to start rather than something to work
     /// around, because a node with a guessable key is worse than one that did not come up.
     pub fn open_development(&mut self, zone: &str, told: &[String]) -> Result<(), Opening> {
+        self.opening(almena_node::Which::Development, zone, told)
+    }
+
+    /// Open the production network, on the caller's word that there is nobody to join.
+    ///
+    /// **Once, ever.** A record is append-only, so what this act settles is settled for as long as
+    /// that network exists — which is why the node holds the format to the checklist of
+    /// `almena_frozen` before it will do it, and refuses with
+    /// [`Opening::FormatIsNotFrozen`] rather than opening a network on a format that is still
+    /// moving. Development takes no such check, because development is opened again as often as the
+    /// format changes; that is the whole of why they are two networks.
+    ///
+    /// What it does not check is who is doing it. Nothing here can: a network is opened by whoever
+    /// holds a machine and finds the zone empty, and the defence against opening a second one is
+    /// that finding anybody at all stops it.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening`], and each of them is a different thing to go and do about it.
+    pub fn open_production(&mut self, zone: &str, told: &[String]) -> Result<(), Opening> {
+        self.opening(almena_node::Which::Production, zone, told)
+    }
+
+    /// Open a network of that kind, or come back to the one this directory already holds.
+    fn opening(
+        &mut self,
+        which: almena_node::Which,
+        zone: &str,
+        told: &[String],
+    ) -> Result<(), Opening> {
         if self.holds.is_some() {
             return Err(Opening::AlreadyOnOne);
         }
@@ -367,7 +435,7 @@ impl Node {
                 almena_node::Node::rejoin(&directory, key).map_err(Opening::from)?
             }
             almena_node::record::Holding::Nothing => {
-                self.first_time(&directory, Looking { zone, told }, government, key)?
+                self.first_time(&directory, Looking { which, zone, told }, government, key)?
             }
         };
 
@@ -392,7 +460,7 @@ impl Node {
         government: almena_node::SigningKey,
         key: almena_node::SigningKey,
     ) -> Result<almena_node::Node, Opening> {
-        let Looking { zone, told } = looking;
+        let Looking { which, zone, told } = looking;
         // Being told who is there and finding out are the same answer, and only one of them can
         // say *nobody*: a seed given by hand always means somebody is, which is why it can stand in
         // for a zone without letting anybody open a network on their own say-so.
@@ -417,7 +485,7 @@ impl Node {
             .as_secs();
 
         let opening = almena_node::Opening {
-            which: almena_node::Which::Development,
+            which,
             beginning: almena_node::Epoch::GENESIS,
             began,
         };
@@ -430,6 +498,10 @@ impl Node {
                 almena_node::NotOpened::ThisNodeAlreadyHasOne => Opening::AlreadyOnOne,
                 almena_node::NotOpened::ThereIsAlreadyANetwork(_) => Opening::ThereIsANetwork,
                 almena_node::NotOpened::TheRecordWouldNotStart => Opening::RecordWouldNotStart,
+                // **Production only.** Development is re-opened whenever the format moves, so it is
+                // never asked the question; production is opened once and is asked it before
+                // anything is built.
+                almena_node::NotOpened::TheFormatIsNotFrozen(_) => Opening::FormatIsNotFrozen,
             }
         })
     }
@@ -468,29 +540,71 @@ impl Node {
     /// The one thing this does refuse is silence: a zone that did not answer has not said nobody is
     /// there, and passing an empty list on would be saying it on its behalf.
     fn who_is_there(&mut self, zone: &str) -> Result<Vec<String>, Opening> {
-        // On work of its own, and given up on if it takes too long. A resolver that never came
-        // back would leave a node with no answer and no way to say so — and *nobody knows* is an
-        // answer this node already has a name for.
-        // A whole runtime, and not a thread of it. A resolver keeps its connections on work of
-        // their own and has to make progress while the question waits — pared down to a single
-        // worker it answers nothing, which looks exactly like a zone that is down.
-        let looking = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
+        // **Asked more than once before it is called a silence.** The resolver's own answers vary
+        // from tens of milliseconds to several seconds against the very servers `dig` answers from
+        // at once, so one attempt against one budget is a coin toss — and the side it lands on
+        // matters: reading a zone that would have answered as one that did not is a node refusing
+        // to open a network that nobody is on. It is the safe side of the mistake and it is still a
+        // mistake. Nothing is risked by asking again, because the answer that opens anything is
+        // *nobody is here*, and asking twice cannot invent a seed.
+        for attempt in 1..=ASK_AT_MOST {
+            match self.asking_once(zone) {
+                Ok(seeds) => return Ok(seeds),
+                Err(why) if attempt == ASK_AT_MOST => return Err(why),
+                Err(_) => info!("zone_silent_asking_again zone={zone} attempt={attempt}"),
+            }
+        }
+        Err(Opening::ZoneSilent)
+    }
+
+    /// One look at the zone, given up on after [`ASKING_FOR`].
+    fn asking_once(&mut self, zone: &str) -> Result<Vec<String>, Opening> {
+        // **On a thread of its own, and given up on from outside it.** A limit that lives inside
+        // the work it is limiting is a limit the work can defeat: measured, a resolver wedged for
+        // twenty-three seconds sailed past a ten-second `timeout` without it ever firing, because
+        // nothing inside yielded and a timer nothing polls does not go off. Whatever the resolver
+        // is doing in there, it is doing it to its own runtime on its own thread — and this side
+        // stops waiting when it said it would.
+        //
+        // The thread is left to finish or not. It holds nothing this node needs and it goes when
+        // the process does; joining it would be waiting for the very thing that was given up on.
+        let asking = self.resolvers.clone();
+        let zone = zone.to_owned();
+        let (tell, hear) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("almena-zone".to_owned())
+            .spawn(move || {
+                // A whole runtime, and not a thread of it. A resolver keeps its connections on work
+                // of their own and has to make progress while the question waits — pared down to a
+                // single worker it answers nothing, which looks exactly like a zone that is down.
+                let Ok(looking) = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    let _ = tell.send(None);
+                    return;
+                };
+                let found = looking.block_on(async move {
+                    // Named servers where the operator named some, and the machine's own otherwise.
+                    // A machine whose resolver is not usable is a real state, and without a way to
+                    // say so it is a machine that cannot take part at all.
+                    let dns = match asking.is_empty() {
+                        true => almena_lookup::Dns::of_this_machine().ok()?,
+                        false => almena_lookup::Dns::asking(&asking).ok()?,
+                    };
+                    almena_lookup::look(&dns, &zone).await
+                });
+                let _ = tell.send(found);
+            })
             .map_err(|_| Opening::NoRuntime)?;
 
-        let looked = looking.block_on(async {
-            let dns = almena_lookup::Dns::of_this_machine().ok()?;
-            almena_lookup::look_patiently(&dns, zone).await
-        });
-
-        let Some(looked) = looked else {
+        let Ok(Some(looked)) = hear.recv_timeout(ASKING_FOR) else {
             return Err(Opening::ZoneSilent);
         };
         for why in &looked.refused {
-            info!("zone_record_unusable zone={zone} reason={why:?}");
+            info!("zone_record_unusable reason={why:?}");
         }
-        info!("zone_answered zone={zone} seeds={}", looked.seeds.len());
+        info!("zone_answered seeds={}", looked.seeds.len());
         self.take_note_of(&looked.seeds);
         Ok(looked.seeds)
     }
@@ -810,6 +924,27 @@ impl Node {
             .node()
             .blocking_write()
             .contributed_by_nobody(now)
+            .then_some(())
+            .ok_or(Opening::NotWrittenDown)
+    }
+
+    /// Close this node, so that it stops counting.
+    ///
+    /// **The one way out of a node whose key is somebody else's** (`SPECS.md §4.1`). It is not a
+    /// way of taking a node down for the afternoon: a closed node does not come back, and coming
+    /// back means announcing a new one with a new key and a new name.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening::NoNetwork`] when there is no node, and [`Opening::NotWrittenDown`] when the
+    /// record would not take it.
+    pub fn close_this_node(&mut self) -> Result<(), Opening> {
+        let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
+        let now = self.now().ok_or(Opening::NoNetwork)?;
+        serving
+            .node()
+            .blocking_write()
+            .close_itself(now)
             .then_some(())
             .ok_or(Opening::NotWrittenDown)
     }

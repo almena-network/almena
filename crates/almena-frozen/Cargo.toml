@@ -1,0 +1,18 @@
+[package]
+name = "almena-frozen"
+description = "The checklist a format has to pass before a network opens for good"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+almena-credential = { workspace = true }
+almena-format = { workspace = true }
+almena-store = { workspace = true }
+almena-suite = { workspace = true }
+almena-time = { workspace = true }

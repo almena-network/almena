@@ -690,7 +690,7 @@ impl Replayed {
 fn due_from(act: &Operation) -> Result<Epoch, Verdict> {
     act.issued
         .plus(almena_time::Epochs(
-            crate::parameter::CONTROL_WAITS.at(act.issued),
+            almena_time::deadline::CONTROL_KEY_WAIT.at(act.issued),
         ))
         .ok_or_else(|| Verdict::CannotSay(act.called()))
 }

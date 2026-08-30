@@ -80,6 +80,13 @@ pub enum Refused {
     /// This node has already opened or joined one. A node is a directory with a key in it, and a
     /// second genesis over the same directory would be a second history for one identity.
     ThisNodeAlreadyHasOne,
+    /// The format this build writes is not one a network may be opened on for good.
+    ///
+    /// **Only production is stopped by it.** A record is append-only (`SPECS.md §4.3`): a
+    /// development network is re-opened whenever the format moves, and production is opened once,
+    /// so what is missing when it opens is missing for ever. Each string is one item of the
+    /// checklist that did not hold.
+    TheFormatIsNotFrozen(Vec<String>),
     /// An act built here to start the record was not accepted into it.
     ///
     /// **It must not be reachable**, since the acts in question are built a few lines away to be
@@ -380,8 +387,13 @@ mod tests {
         assert_eq!(log.len(), 1);
 
         match objects.resolve(network.government.name()) {
-            Answer::Here(State::Government { key }) => {
+            Answer::Here(State::Government { key, body }) => {
                 assert_eq!(key, government().verifying_key().bytes());
+                // **With nobody named yet, which is the honest starting state** and the whole of
+                // what the bootstrap is: the three classes are declared from the start, and until
+                // somebody is an owner it is the genesis key that signs.
+                assert!(body.owners.is_empty());
+                assert_eq!(body.thresholds.sealing, 1);
             }
             other => panic!("the trust anchor has to resolve, got {other:?}"),
         }

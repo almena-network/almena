@@ -187,9 +187,16 @@ pub const PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
 /// *nobody is there*. A zone that answered and holds nothing comes back as a [`Looked`] with
 /// nothing in it, which is a different thing and the one a node may act on.
 pub async fn look(records: &impl Records, zone: &str) -> Option<Looked> {
-    let seeds = records.text(&under(SEED, zone)).await;
-    let api = records.text(&under(API, zone)).await;
-    let mediators = records.text(&under(MEDIATOR, zone)).await;
+    // **All three at once, because they are three independent questions.** Asked one after another
+    // they share one budget and spend the sum of three round trips — which is how a zone that
+    // answers every one of them in milliseconds still comes back as a silence when the resolver is
+    // having a slow minute. Nothing here reads one answer to decide the next.
+    let (seed, api, mediator) = (under(SEED, zone), under(API, zone), under(MEDIATOR, zone));
+    let (seeds, api, mediators) = tokio::join!(
+        records.text(&seed),
+        records.text(&api),
+        records.text(&mediator),
+    );
     looked(seeds, api, mediators)
 }
 

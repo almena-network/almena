@@ -119,6 +119,7 @@
         "noDirectory": "This computer would not say where the node keeps things, so it has nowhere to be a node.",
         "unreadableIdentity": "There is a key in the node's directory and it cannot be read. It has been left alone: writing over it would be quietly becoming a different node.",
         "recordWouldNotStart": "The record would not take the acts that start it, so the network was not opened. Nothing is half-open: this node is as it was.",
+        "formatIsNotFrozen": "The format this build writes is not one a network may be opened on for good, so nothing was opened. Only the production network is asked this, and what is opened here is development — so if you are reading it, say so.",
         "unreadableRecord": "There is a record in the node's directory and it cannot be read. It has been left alone: opening a network on top of it would put this node on a second one.",
         "recordDoesNotAddUp": "The record no longer holds everything this node has already signed for. It has not come up, rather than serve a history that contradicts what it has told other people.",
         "directoryHeld": "Another node is already running on this directory. A node is a directory with a key in it, and two of them over one would be a single identity with two histories.",

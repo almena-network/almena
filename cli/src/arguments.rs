@@ -8,10 +8,10 @@ use clap::Parser;
 
 /// The command line, parsed.
 ///
-/// There is no argument naming a peer, a network or an address. This build joins no network,
-/// so one would be accepted, used for nothing and refused by nothing — and Almena being
-/// IPv6-only means accepting an address also means refusing every IPv4 one, which is a refusal
-/// there is nowhere to write yet. The flag arrives with the code that can honour both halves.
+/// **Nothing here names a peer by address.** A node is reached through the zone it reads or through
+/// a `_seed` record given by hand, and both carry the identity of who answers — which is the whole
+/// of what makes a redirected address a failed connection rather than a wrong node. An address on
+/// its own says where to call and not who picks up, so there is nothing to give one to.
 #[derive(Debug, Parser)]
 #[command(
     name = "almena",
@@ -33,6 +33,26 @@ pub struct Arguments {
     /// nobody is going to do that on the strength of a promise typed at a terminal.
     #[arg(long)]
     pub open_development: bool,
+
+    /// Open the production network, on the word that there is nobody to join.
+    ///
+    /// **Once, ever.** A record is append-only, so what this settles is settled for as long as that
+    /// network exists — and the node holds the format to its own freeze checklist before it will do
+    /// it, refusing rather than opening a network on a format that is still moving. That is the
+    /// difference between the two networks and the reason there are two: development is re-opened
+    /// whenever the format changes, and production is not re-opened at all.
+    ///
+    /// Read `--freeze-checklist` first. It answers the same question without opening anything.
+    #[arg(long, conflicts_with = "open_development")]
+    pub open_production: bool,
+
+    /// Say whether the format this build writes is one a network may be opened on for good.
+    ///
+    /// **The question, without the act.** Every item is a probe against this build rather than a
+    /// line somebody ticked, and reading it is how whoever is about to open a production network
+    /// finds out what would happen before it happens. Nothing is opened, joined or written.
+    #[arg(long)]
+    pub freeze_checklist: bool,
 
     /// Serve the interface on this address, so clients and portals can ask.
     ///
@@ -96,6 +116,19 @@ pub struct Arguments {
     /// arrears: what was served was served.
     #[arg(long)]
     pub contributed_by_nobody: bool,
+
+    /// Close this node: say it stops counting, from now and for good.
+    ///
+    /// **The one way out of a node whose key is somebody else's** (`SPECS.md §4.1`). A node does not
+    /// rotate — the only thing that governs it is the key that was lost — so it closes, and whoever
+    /// operated it announces another. What it said stays said: its roots and its summaries are in
+    /// the record for ever, and closing takes none of it back.
+    ///
+    /// **It does not come back.** This is not how a node is taken down for the afternoon; that is
+    /// stopping the program. Coming back after this means a new node, with a new key and a new
+    /// name, because one that returned would bring whoever took its key with it.
+    #[arg(long)]
+    pub close_this_node: bool,
     /// Be the node in this directory instead of the usual one.
     ///
     /// **A node is a directory with a key in it**, so this is how a machine runs more than one —
@@ -113,6 +146,19 @@ pub struct Arguments {
     /// network it has not established is missing.
     #[arg(long = "seed", value_name = "RECORD")]
     pub seeds: Vec<String>,
+    /// Ask these servers for DNS instead of whatever this machine uses.
+    ///
+    /// **For a machine whose own resolver is not usable**, which is a real state and not a rare
+    /// one: a resolver behind a VPN, one configured with servers it cannot reach, or one that
+    /// answers every other tool on the machine in milliseconds and this one not at all. A node
+    /// that cannot look up a zone cannot open a network, because reading silence as an empty zone
+    /// is how a second network gets started — so being able to name a resolver is the difference
+    /// between a machine that can take part and one that cannot.
+    ///
+    /// Addresses, not names: a resolver named by a name would need a resolver.
+    #[arg(long = "resolver", value_name = "ADDRESS")]
+    pub resolvers: Vec<std::net::IpAddr>,
+
     /// Look for somebody to join in this zone instead of the usual one.
     ///
     /// For an operator running a network of their own. What it is for is the check that makes
@@ -239,13 +285,39 @@ mod tests {
         // consequential is the default.
         assert!(!Arguments::parse_from(["almena"]).open_development);
         assert!(Arguments::parse_from(["almena", "--open-development"]).open_development);
+        assert!(!Arguments::parse_from(["almena"]).open_production);
+        assert!(Arguments::parse_from(["almena", "--open-production"]).open_production);
     }
 
     #[test]
-    fn only_development_can_be_opened_this_way() {
-        // There is no flag for the other one, and that is the point: a production network is
-        // opened on the strength of having read a zone, never on somebody's word at a terminal.
-        assert!(Arguments::try_parse_from(["almena", "--open-production"]).is_err());
+    fn a_run_cannot_ask_for_both_networks() {
+        // Two networks over one directory would be a second history for one identity, and the two
+        // flags mean opposite things about how often a network may be opened at all.
+        assert!(
+            Arguments::try_parse_from(["almena", "--open-development", "--open-production"])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn the_checklist_can_be_read_without_opening_anything() {
+        // The whole point of it being a flag of its own: whoever is about to open a production
+        // network finds out what would happen before it happens.
+        let asked = Arguments::parse_from(["almena", "--freeze-checklist"]);
+        assert!(asked.freeze_checklist);
+        assert!(!asked.open_production);
+        assert!(!asked.open_development);
+    }
+
+    #[test]
+    fn each_network_is_opened_by_the_flag_that_names_it() {
+        // **Named rather than switched**, because the two are not the same act done twice.
+        // Development is opened again whenever the format moves; production is opened once and is
+        // held to the freeze checklist before it is. A single flag with an argument would make them
+        // look like one thing with a setting.
+        assert!(Arguments::parse_from(["almena", "--open-development"]).open_development);
+        assert!(Arguments::parse_from(["almena", "--open-production"]).open_production);
+        assert!(!Arguments::parse_from(["almena", "--open-production"]).open_development);
     }
 
     #[test]

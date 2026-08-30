@@ -60,6 +60,16 @@ impl Path {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// A path read back from the hashes an act carries.
+    ///
+    /// **Not every list of hashes is a path**, and this does not pretend otherwise: what makes one
+    /// a proof is climbing to the root somebody else published, which [`included`] is what answers.
+    /// This is only the shape.
+    #[must_use]
+    pub fn of(hashes: Vec<Digest>) -> Self {
+        Self(hashes)
+    }
 }
 
 impl Tree {

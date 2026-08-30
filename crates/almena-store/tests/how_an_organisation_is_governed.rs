@@ -24,7 +24,7 @@ use almena_time::Epoch;
 
 /// After everything the words alone asked for has landed (`SPECS.md §11.12`).
 fn settled() -> Epoch {
-    Epoch::new(almena_time::deadline::CONTROL_KEY_WAIT.count() + 1)
+    Epoch::new(almena_time::deadline::CONTROL_KEY_WAIT.now() + 1)
 }
 
 fn words(seed: u8) -> ed25519::SigningKey {
@@ -353,7 +353,7 @@ fn an_entity_founded_above_its_own_reach_is_born_without_a_quorum() {
         Ok(Admitted::Extended)
     );
 
-    let waited = Epoch::new(settled().number() + almena_store::entity::CONTINUITY_WAITS.count());
+    let waited = Epoch::new(settled().number() + almena_store::entity::CONTINUITY_WAITS.now());
     assert!(
         entity_at(&objects, &entity).come_due(waited).has_quorum(),
         "and the way back was there"

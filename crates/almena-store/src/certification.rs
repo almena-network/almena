@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use almena_format::cbor::Value;
 use almena_format::identifier::Did;
 use almena_format::operation::Operation;
-use almena_time::{Epoch, Epochs};
+use almena_time::Epoch;
 
 use crate::chain::Refused;
 use crate::kind::Kind;
@@ -42,7 +42,7 @@ use crate::kind::Kind;
 /// Thirty days (`SPECS.md §7.8`). **Not an urgency, and treating it as one turns a formality into
 /// the end of somebody's business.** Risk is the other case and gets no notice at all, because an
 /// issuer that has been compromised is doing harm now.
-pub const NOTICE: Epochs = almena_time::deadline::GRADE_LOWERING_NOTICE;
+pub const NOTICE: almena_time::parameter::Parameter = almena_time::deadline::GRADE_LOWERING_NOTICE;
 
 /// Where each part of a certification act sits.
 ///
@@ -144,7 +144,7 @@ impl Cause {
     pub fn takes_effect(self, at: Epoch) -> Epoch {
         match self {
             Self::Risk => at,
-            Self::NonCompliance => at.plus(NOTICE).unwrap_or(Epoch::new(u64::MAX)),
+            Self::NonCompliance => at.plus(NOTICE.epochs(at)).unwrap_or(Epoch::new(u64::MAX)),
         }
     }
 }
@@ -569,7 +569,7 @@ mod tests {
         )
         .expect("signed");
         assert!(noticed.stands(now()), "not yet");
-        assert!(!noticed.stands(Epoch::new(now().number() + NOTICE.count())));
+        assert!(!noticed.stands(Epoch::new(now().number() + NOTICE.now())));
     }
 
     #[test]

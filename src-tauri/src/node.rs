@@ -275,6 +275,10 @@ fn first_time(
         almena_node::NotOpened::ThisNodeAlreadyHasOne => "already_on_a_network",
         almena_node::NotOpened::ThereIsAlreadyANetwork(_) => "there_is_a_network",
         almena_node::NotOpened::TheRecordWouldNotStart => "record_would_not_start",
+        // What is opened from here is development, which is re-opened whenever the format moves and
+        // so is never asked whether the format may be frozen. Named rather than folded in, so that
+        // the day it does arise nobody is sent looking in the wrong place.
+        almena_node::NotOpened::TheFormatIsNotFrozen(_) => "format_is_not_frozen",
     })
 }
 

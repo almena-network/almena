@@ -163,7 +163,7 @@ async fn settled(nodes: &[Arc<RwLock<Node>>]) {
         "both should end up holding the same record"
     );
     assert!(
-        until(|| async { nodes[0].read().await.share_out().1.len() == 2 }).await,
+        until(|| async { nodes[0].read().await.share_out(Epoch::GENESIS).1.len() == 2 }).await,
         "and the record should name both of them"
     );
 }

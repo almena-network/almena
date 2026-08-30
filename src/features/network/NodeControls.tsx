@@ -50,6 +50,7 @@ const SAYS = {
   no_directory: "noDirectory",
   unreadable_identity: "unreadableIdentity",
   record_would_not_start: "recordWouldNotStart",
+  format_is_not_frozen: "formatIsNotFrozen",
   unreadable_record: "unreadableRecord",
   record_does_not_add_up: "recordDoesNotAddUp",
   directory_held: "directoryHeld",

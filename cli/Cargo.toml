@@ -23,6 +23,7 @@ crossterm = { workspace = true }
 # The record format, shared with the windowed application because it is one decision and not
 # two. This crate reaching `tauri` is what `task isolation` refuses.
 # Everything a node does. This face draws it and holds no logic of its own.
+almena-frozen = { workspace = true }
 almena-node = { workspace = true }
 # What carries the interface, when this node is asked to serve it.
 almena-lookup = { workspace = true }

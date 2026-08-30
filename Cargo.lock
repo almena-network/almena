@@ -134,6 +134,7 @@ name = "almena-cli"
 version = "0.1.0"
 dependencies = [
  "almena-api",
+ "almena-frozen",
  "almena-log",
  "almena-lookup",
  "almena-mesh",
@@ -154,10 +155,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "almena-credential"
+version = "0.1.0"
+dependencies = [
+ "almena-suite",
+ "almena-time",
+ "getrandom 0.3.4",
+ "serde_json",
+]
+
+[[package]]
 name = "almena-format"
 version = "0.1.0"
 dependencies = [
  "almena-cbor",
+ "almena-suite",
+ "almena-time",
+]
+
+[[package]]
+name = "almena-frozen"
+version = "0.1.0"
+dependencies = [
+ "almena-credential",
+ "almena-format",
+ "almena-store",
  "almena-suite",
  "almena-time",
 ]
@@ -210,7 +232,9 @@ name = "almena-node"
 version = "0.1.0"
 dependencies = [
  "almena-format",
+ "almena-frozen",
  "almena-mailbox",
+ "almena-status",
  "almena-store",
  "almena-suite",
  "almena-time",
@@ -222,6 +246,19 @@ name = "almena-paths"
 version = "0.1.0"
 dependencies = [
  "dirs 6.0.0",
+]
+
+[[package]]
+name = "almena-sdk"
+version = "0.1.0"
+dependencies = [
+ "almena-credential",
+ "almena-format",
+ "almena-status",
+ "almena-store",
+ "almena-suite",
+ "almena-time",
+ "serde_json",
 ]
 
 [[package]]
@@ -238,6 +275,16 @@ dependencies = [
  "hyper",
  "hyper-util",
  "tokio",
+]
+
+[[package]]
+name = "almena-status"
+version = "0.1.0"
+dependencies = [
+ "almena-credential",
+ "almena-suite",
+ "flate2",
+ "getrandom 0.3.4",
 ]
 
 [[package]]

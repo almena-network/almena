@@ -94,6 +94,16 @@ pub struct Account {
     collected: Epoch,
     /// Since when it has been turning deliveries away, and how many.
     turned_away: Option<TurnedAway>,
+    /// Where to wake each device, as that device told this mediator and nobody else.
+    ///
+    /// **Opaque** (`SPECS.md §6.3`). What is held is somewhere to deliver a signal to; how the
+    /// signal actually reaches a telephone — a relay translating a handle, somebody's own push
+    /// distributor — is not this mediator's business and is deliberately not written down here. That
+    /// is what stops the notification path becoming a dependency.
+    ///
+    /// **By device key**, which is what makes taking a device off an account turn its notice off:
+    /// the key that authorises the delivery is the one the record no longer carries.
+    wake: BTreeMap<Vec<u8>, String>,
 }
 
 /// What the recipient is owed about deliveries made in their name and refused.
@@ -122,6 +132,7 @@ impl Account {
             doorbell: Vec::new(),
             collected: at,
             turned_away: None,
+            wake: BTreeMap::new(),
         }
     }
 
@@ -169,9 +180,43 @@ impl Account {
     /// account — and it goes because there is nobody left who could collect it.
     pub fn devices(&mut self, devices: Vec<Vec<u8>>) {
         self.mailboxes.retain(|key, _| devices.contains(key));
+        // **And the notice goes with the device** (`SPECS.md §6.3`). The device key is what
+        // authorises the delivery, so a key the record no longer carries is a wake-up nobody may
+        // send — which is how taking a device off an account turns its notice off without anybody
+        // having published where it was going.
+        self.wake.retain(|key, _| devices.contains(key));
         for key in devices {
             self.mailboxes.entry(key).or_default();
         }
+    }
+
+    /// Say where to wake one of this account's devices.
+    ///
+    /// **Only a device this mediator holds a mailbox for.** A wake-up for a device the account does
+    /// not have is somewhere to send a signal on somebody else's say-so, which is the abuse
+    /// `SPECS.md §6.3` is defended against.
+    ///
+    /// An empty endpoint clears it, which is a device saying *stop waking me* — different from
+    /// never having said anything, and both are states somebody may want.
+    pub fn wakes_at(&mut self, device: &[u8], endpoint: &str) -> bool {
+        if !self.mailboxes.contains_key(device) {
+            return false;
+        }
+        if endpoint.is_empty() {
+            self.wake.remove(device);
+        } else {
+            self.wake.insert(device.to_vec(), endpoint.to_owned());
+        }
+        true
+    }
+
+    /// Where to wake that device, if it has said.
+    ///
+    /// **Opaque to this mediator**: it is somewhere to deliver a signal to, and how the signal
+    /// reaches a telephone is deliberately not something written down here.
+    #[must_use]
+    pub fn wake(&self, device: &[u8]) -> Option<&str> {
+        self.wake.get(device).map(String::as_str)
     }
 
     /// Whether nobody has been for the post for long enough that this is not a mailbox any more.
@@ -181,7 +226,7 @@ impl Account {
     #[must_use]
     pub fn inactive(&self, at: Epoch) -> bool {
         at.since(self.collected)
-            .is_some_and(|gone| gone.0 >= quota::UNCOLLECTED_UNTIL_INACTIVE.0)
+            .is_some_and(|gone| gone >= quota::UNCOLLECTED_UNTIL_INACTIVE.epochs(at))
     }
 
     /// What has been turned away in this account's name, and since when.
@@ -562,7 +607,7 @@ mod tests {
         );
         assert_eq!(
             long.until.number(),
-            quota::HELD_AT_MOST.0,
+            quota::HELD_AT_MOST.now(),
             "asked for longer, held to the ceiling"
         );
 
@@ -585,7 +630,7 @@ mod tests {
         // Ninety days (`SPECS.md §6.2`). The warning is the app's to give when it reconnects,
         // because a mediator has nobody to tell.
         let mut account = an_account();
-        let long_after = Epoch::new(quota::UNCOLLECTED_UNTIL_INACTIVE.0);
+        let long_after = Epoch::new(quota::UNCOLLECTED_UNTIL_INACTIVE.now());
         assert!(account.inactive(long_after));
         assert_eq!(
             account.deliver(&device(1), message(1, "zRelation", 10), long_after),
@@ -621,5 +666,68 @@ mod tests {
             account.deliver(&device(9), message(1, "zRelation", 10), Epoch::GENESIS),
             Err(Refused::NoSuchMailbox)
         );
+    }
+}
+
+#[cfg(test)]
+mod where_to_wake {
+    use super::Account;
+    use almena_time::Epoch;
+
+    fn account() -> Account {
+        Account::of([vec![1; 33], vec![2; 33]], Epoch::new(100))
+    }
+
+    #[test]
+    fn a_device_says_where_to_wake_it_and_the_mediator_holds_it_opaquely() {
+        // **Given here and nowhere else** (`SPECS.md §6.3`). It does not go in the root identifier,
+        // which is public and enumerable — and waking somebody's telephone is exactly the abuse
+        // that section is defended against.
+        let mut held = account();
+        assert!(held.wakes_at(&[1; 33], "https://relay.example/wake/opaque-handle"));
+        assert_eq!(
+            held.wake(&[1; 33]),
+            Some("https://relay.example/wake/opaque-handle")
+        );
+        assert_eq!(
+            held.wake(&[2; 33]),
+            None,
+            "and another device is another one"
+        );
+    }
+
+    #[test]
+    fn a_wake_up_for_a_device_this_account_does_not_have_is_refused() {
+        // Otherwise it would be somewhere to send a signal on somebody else's say-so.
+        let mut held = account();
+        assert!(!held.wakes_at(&[9; 33], "https://relay.example/wake/x"));
+        assert_eq!(held.wake(&[9; 33]), None);
+    }
+
+    #[test]
+    fn taking_the_device_off_the_account_turns_its_notice_off() {
+        // **The device key is what authorises the delivery** (`SPECS.md §6.3`), so a key the record
+        // no longer carries is a wake-up nobody may send — and that happens without anybody having
+        // published where it was going.
+        let mut held = account();
+        held.wakes_at(&[1; 33], "https://relay.example/wake/x");
+        held.wakes_at(&[2; 33], "https://push.example/y");
+
+        held.devices(vec![vec![2; 33]]);
+        assert_eq!(held.wake(&[1; 33]), None);
+        assert_eq!(
+            held.wake(&[2; 33]),
+            Some("https://push.example/y"),
+            "and the one still on the account keeps its own"
+        );
+    }
+
+    #[test]
+    fn naming_nothing_is_a_device_saying_stop_waking_me() {
+        // Which is different from never having said anything, and both are states somebody wants.
+        let mut held = account();
+        held.wakes_at(&[1; 33], "https://relay.example/wake/x");
+        assert!(held.wakes_at(&[1; 33], ""));
+        assert_eq!(held.wake(&[1; 33]), None);
     }
 }

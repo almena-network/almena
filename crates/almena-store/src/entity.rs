@@ -42,7 +42,7 @@ use almena_format::cbor::Value;
 use almena_format::identifier::Did;
 use almena_format::operation::Operation;
 use almena_suite::{ed25519, p256};
-use almena_time::{Epoch, Epochs};
+use almena_time::Epoch;
 
 use crate::chain::Refused;
 use crate::kind::Kind;
@@ -52,21 +52,24 @@ use crate::kind::Kind;
 /// Sixty days, published (`SPECS.md §8.3`). Long enough that an owner on holiday finds out, which
 /// is the whole of what the wait is for: replenishing owners **concedes** trust, and concessions
 /// wait (`SPECS.md §1.8`).
-pub const CONTINUITY_WAITS: Epochs = almena_time::deadline::EMERGENCY_CONTINUITY;
+pub const CONTINUITY_WAITS: almena_time::parameter::Parameter =
+    almena_time::deadline::EMERGENCY_CONTINUITY;
 
 /// How long an alias is held before anybody else may take it.
 ///
 /// Ninety days (`SPECS.md §7.5`), and the same span whether the seal was lost or the domain stopped
 /// validating — **because the harm is the same either way**: somebody arriving looking for one party
 /// and finding another. Three months is what it takes for a name people had in their heads to cool.
-pub const ALIAS_QUARANTINE: Epochs = almena_time::deadline::ALIAS_QUARANTINE;
+pub const ALIAS_QUARANTINE: almena_time::parameter::Parameter =
+    almena_time::deadline::ALIAS_QUARANTINE;
 
 /// How long a verified domain stands before it has to prove itself again.
 ///
 /// Thirty days (`SPECS.md §7.4`). It bounds how long a domain that has already changed hands can
 /// keep saying it belongs here, and it is frequent enough that a passing DNS failure is
 /// distinguishable from an abandonment.
-pub const DOMAIN_STANDS: Epochs = almena_time::deadline::DOMAIN_REVALIDATION;
+pub const DOMAIN_STANDS: almena_time::parameter::Parameter =
+    almena_time::deadline::DOMAIN_REVALIDATION;
 
 /// Where each part of an entity operation sits.
 ///
@@ -187,7 +190,7 @@ impl Domain {
     #[must_use]
     pub fn stands(&self, at: Epoch) -> bool {
         self.proved
-            .plus(DOMAIN_STANDS)
+            .plus(DOMAIN_STANDS.epochs(self.proved))
             .is_none_or(|until| at.number() < until.number())
     }
 }
@@ -406,6 +409,39 @@ pub fn born(operation: &Operation, speaking: &Speaking, at: Epoch) -> Result<Ent
     })
 }
 
+/// An organisation as it stands with one key and nobody named yet.
+///
+/// **What Almena Government is the moment the genesis creates it** (`SPECS.md §7.1`, `§7.9`): it
+/// uses the same mechanism as any other organisation — owners and a threshold per class of act —
+/// and on the day a network opens it has neither, because there is nobody yet to be one. The three
+/// classes are declared from the start at one owner each, which is what `SPECS.md §8.2` asks of
+/// every organisation: raising one later is then a change of configuration and not of shape.
+///
+/// It is not [`born`] because nobody vouches for it. `born` counts the signature of the owner an
+/// act names, and the act that opens a network has no earlier owner to count — that is the whole of
+/// what makes it a bootstrap.
+#[must_use]
+pub fn alone(key: [u8; ed25519::PUBLIC_KEY_WIDTH], at: Epoch) -> Entity {
+    Entity {
+        owners: BTreeSet::new(),
+        managers: BTreeSet::new(),
+        thresholds: Thresholds {
+            routine: 1,
+            sealing: 1,
+            governance: 1,
+        },
+        key,
+        domains: BTreeMap::new(),
+        closed: None,
+        revoked_on_closing: false,
+        continuity: None,
+        alias: None,
+        cooling: None,
+        email: None,
+        acted: at,
+    }
+}
+
 /// What an act does to an entity, once it has been established that enough owners signed it.
 ///
 /// # Errors
@@ -478,7 +514,7 @@ fn replenishing(operation: &Operation, entity: &Entity) -> Result<Continuity, Re
         owners: BTreeSet::from([named(operation, field::WHO)?]),
         due: operation
             .issued
-            .plus(CONTINUITY_WAITS)
+            .plus(CONTINUITY_WAITS.epochs(operation.issued))
             .ok_or(Refused::Malformed)?,
         act: operation.called(),
     })
@@ -584,7 +620,9 @@ fn cool(next: &mut Entity, at: Epoch) {
     if let Some(alias) = next.alias.take() {
         next.cooling = Some(Cooling {
             name: alias.name,
-            until: at.plus(ALIAS_QUARANTINE).unwrap_or(Epoch::new(u64::MAX)),
+            until: at
+                .plus(ALIAS_QUARANTINE.epochs(at))
+                .unwrap_or(Epoch::new(u64::MAX)),
         });
     }
 }
@@ -703,11 +741,13 @@ mod tests {
     use almena_format::identifier::{Did, Name, Network};
     use almena_format::operation::{Operation, Signed, create};
     use almena_suite::p256;
-    use almena_time::{Epoch, Epochs};
+    use almena_time::Epoch;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn now() -> Epoch {
-        Epoch::GENESIS.plus(Epochs(100)).expect("no overflow")
+        Epoch::GENESIS
+            .plus(almena_time::Epochs(100))
+            .expect("no overflow")
     }
 
     fn key(seed: u8) -> p256::SigningKey {
@@ -963,10 +1003,7 @@ mod tests {
 
         assert_eq!(asked.owners, BTreeSet::from([owner(1)]), "not yet");
         let due = asked.continuity.as_ref().expect("waiting").due;
-        assert_eq!(
-            due.number(),
-            now().number() + super::CONTINUITY_WAITS.count()
-        );
+        assert_eq!(due.number(), now().number() + super::CONTINUITY_WAITS.now());
         assert_eq!(
             asked.come_due(due).owners,
             BTreeSet::from([owner(1), owner(3)])
@@ -1044,7 +1081,7 @@ mod tests {
         let domain = after.domains.get("almena.network").expect("added");
         assert!(domain.principal, "the first one is the one a screen shows");
         assert!(domain.stands(now()));
-        assert!(!domain.stands(Epoch::new(now().number() + super::DOMAIN_STANDS.count())));
+        assert!(!domain.stands(Epoch::new(now().number() + super::DOMAIN_STANDS.now())));
     }
 
     #[test]

@@ -149,6 +149,11 @@ tasks:
       - task: catalogs
       - task: isolation
       - task: parity
+      # **Last, because it is the most expensive, and inside because the description says so.**
+      # A task called *every check a change has to pass* that left the suites out would be one
+      # a change could run in full and still be half done — and `client` and `web` both run
+      # theirs here. Running it twice, from here and from `task test`, costs a warm rebuild.
+      - task: test
 
   agent:build:
     desc: Build the agent from its own repository, so that there is something to stage

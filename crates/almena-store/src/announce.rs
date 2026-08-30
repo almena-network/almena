@@ -142,11 +142,45 @@ pub fn announce(which: Which, epoch: Epoch, key: &ed25519::SigningKey) -> Announ
     Announced { operation, node }
 }
 
+/// The act that closes a node, signed by the node's own key.
+///
+/// **A node closes; it does not rotate** (`SPECS.md §4.1`). What a rotation preserves is an identity
+/// with something behind it — credentials in that name, a seal, open relationships — and a node has
+/// none of it: its name is in its own roots and in the census the share-out is drawn from, and the
+/// roots it signed stay where they are, true and signed by the key that signed them. A new node
+/// starts with no history and has lost none.
+///
+/// And it could not rotate the way an organisation does: the only thing that governs a node is its
+/// own key, so a rotation would have to be signed by the key that was lost.
+///
+/// **Somebody holding the stolen key can write this, and that is the right way round.** Closing
+/// denies and concedes nothing, so the worst they achieve is that the node stops counting — which
+/// is what its operator was about to do. It is `SPECS.md §1.8` again.
+#[must_use]
+pub fn close(node: &Did, head: &Name, at: Epoch, by: &ed25519::SigningKey) -> Operation {
+    let mut operation = Operation {
+        object: node.clone(),
+        previous: Some(head.clone()),
+        kind: Kind::NODE_CLOSE.number(),
+        version: 1,
+        issued: at,
+        payload: BTreeMap::new(),
+        signatures: Vec::new(),
+    };
+    let signature = by.sign(&operation.signing_bytes());
+    operation.signatures.push(Signed {
+        by: node.clone(),
+        key: by.verifying_key().bytes().to_vec(),
+        signature: signature.bytes(),
+    });
+    operation
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{KEY, announce};
+    use super::{KEY, Speaking, announce, offering};
     use crate::chain::{Answer, Objects, State};
     use crate::genesis::Which;
     use almena_format::cbor::Value;
@@ -206,9 +240,61 @@ mod tests {
                 speaks: 0,
                 claimed_by: None,
                 reachable: BTreeSet::new(),
+                closed: None,
             }),
             "and what it resolves to is the key to check its word against"
         );
+    }
+
+    #[test]
+    fn a_node_closes_and_stops_being_counted_without_anything_it_said_being_taken_back() {
+        // **The one way out of a node whose key is somebody else's** (`SPECS.md §4.1`). A node does
+        // not rotate: what a rotation preserves is an identity with something behind it, and a node
+        // has none — its roots stay where they are, signed by the key that signed them, and a new
+        // node starts with no history and has lost none.
+        let mut objects = crate::chain::Objects::new();
+        let its_key = key(3);
+        let announced = announce(crate::genesis::Which::Development, Epoch::GENESIS, &its_key);
+        objects
+            .admit(&announced.operation, Epoch::GENESIS)
+            .expect("taken");
+        let at = Epoch::new(100);
+        assert_eq!(objects.nodes_at(at).count(), 1, "it counts while it is up");
+
+        let head = objects.head(announced.node.name()).expect("a head").clone();
+        let shut = super::close(&announced.node, &head, at, &its_key);
+        objects.admit(&shut, at).expect("a node may close itself");
+
+        // Out of the census from the epoch it said, and not before it: a share-out drawn for an
+        // earlier epoch has to be the same share-out afterwards, or the past would move.
+        assert_eq!(objects.nodes_at(at).count(), 0);
+        assert_eq!(
+            objects.nodes_at(Epoch::new(99)).count(),
+            1,
+            "and it was still counting the epoch before"
+        );
+        assert_eq!(
+            objects.nodes().count(),
+            1,
+            "everything it said stays in the record — closing is a state and never a deletion"
+        );
+
+        // Announcing again does not bring it back: coming back means a new node, with a new key
+        // and a new name. One that returned would bring whoever took its key with it.
+        let head = objects.head(announced.node.name()).expect("a head").clone();
+        let again = offering(
+            &announced.node,
+            &head,
+            &BTreeSet::from([crate::capability::Capability::Interface]),
+            Speaking {
+                version: 1,
+                reachable: &BTreeSet::new(),
+                issued: at,
+                key: &its_key,
+            },
+        );
+        objects.admit(&again, at).expect("taken");
+        assert_eq!(objects.nodes_at(at).count(), 0, "still closed");
     }
 
     #[test]

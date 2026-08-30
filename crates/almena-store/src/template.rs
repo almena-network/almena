@@ -103,7 +103,7 @@ impl Shape {
 }
 
 /// How one attribute is asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum How {
     /// The value itself — *give me the date of birth*.
     Value,
@@ -141,7 +141,7 @@ pub struct Asked {
     /// Which attribute, by the name of the object that published it.
     pub attribute: Name,
     /// Whether the value is asked for or an answer about it.
-    pub how: u64,
+    pub how: How,
     /// Whether refusing it means refusing the whole request.
     ///
     /// **Optional is what a holder may say no to** (`SPECS.md §9.2`), and a template where
@@ -243,7 +243,7 @@ pub fn asks(operation: &Operation) -> Result<Vec<Asked>, Refused> {
         let attribute = Did::parse(attribute)
             .map(|named| named.name().clone())
             .map_err(|_| Refused::Malformed)?;
-        if How::of(*how).is_none() || *required > 1 {
+        if *required > 1 {
             return Err(Refused::Malformed);
         }
         if asks
@@ -254,7 +254,7 @@ pub fn asks(operation: &Operation) -> Result<Vec<Asked>, Refused> {
         }
         asks.push(Asked {
             attribute,
-            how: *how,
+            how: How::of(*how).ok_or(Refused::Malformed)?,
             required: *required == 1,
         });
     }
@@ -406,7 +406,7 @@ pub fn beyond<'a>(version: &'a Version, baseline: &Version) -> Vec<&'a Asked> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Asked, How, Shape, TAGS_AT_MOST, asks, beyond, born, does, field, tags};
+    use super::{How, Shape, TAGS_AT_MOST, asks, beyond, born, does, field, tags};
     use crate::chain::Refused;
     use crate::kind::Kind;
     use almena_format::cbor::Value;
@@ -663,7 +663,7 @@ mod tests {
             baseline.latest().expect("one"),
         );
         assert_eq!(more.len(), 1, "the same attribute, asked for differently");
-        assert_eq!(more[0].how, How::Value.number());
+        assert_eq!(more[0].how, How::Value);
     }
 
     #[test]
@@ -679,14 +679,8 @@ mod tests {
         );
         assert_eq!(How::of(9), None);
         assert_eq!(Shape::of(9), None);
-        assert_eq!(
-            Asked {
-                attribute: named(1).name().clone(),
-                how: How::Value.number(),
-                required: true
-            }
-            .how,
-            1
-        );
+        // **Read into the closed vocabulary and not carried as a number**, so that nothing
+        // downstream has to remember to check it a second time.
+        assert_eq!(How::of(How::Value.number()), Some(How::Value));
     }
 }

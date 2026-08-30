@@ -33,7 +33,7 @@ use almena_time::{Clock, Epoch};
 
 use crate::checkpoint::{Claim, Governs, Stated};
 use crate::kind::Kind;
-use crate::parameter::{CONTROL_PENDING_MOST, CONTROL_WAITS, SUMMARISE_EVERY};
+use crate::parameter::{CONTROL_PENDING_MOST, SUMMARISE_EVERY};
 
 /// Where an operation carries the key it is about — a holder's control key, a node's own.
 ///
@@ -71,9 +71,8 @@ pub enum Answer {
 
 /// What an object is, once its history has been read.
 ///
-/// Two kinds so far. Every other object arrives with the work that builds it, and until then a
-/// creation this build cannot apply is refused rather than stored as an object nobody could say
-/// anything about — which would be worse than never having taken it.
+/// Every class this build models has a variant, and one variant stands for all the classes it does
+/// not: [`State::Beyond`], which is what a creation of a kind from a newer version becomes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
     /// A person's account.
@@ -86,6 +85,12 @@ pub enum State {
     Tag(Box<crate::tag::Tag>),
     /// The shape of what is issued or of what is asked for.
     Template(Box<crate::template::Template>),
+    /// Where an issuer writes down which of its credentials it has revoked.
+    ///
+    /// **Only the hash of each version** (`SPECS.md §10.2`). The bytes live on the network,
+    /// addressed by hash and served by anybody — either they match what the record names or they
+    /// do not, which is what makes *any source will do* true.
+    StatusList(Box<crate::status::StatusList>),
     /// What the party a decision was taken about has to say back.
     ///
     /// **Its own object, pointing at the decision** (`SPECS.md §7.8`). Appended to the decision's
@@ -116,15 +121,40 @@ pub enum State {
     ///
     /// Boxed, for the reason the one above is.
     Entity(Box<crate::entity::Entity>),
-    /// Almena Government, as the act that opened the network created it.
+    /// Almena Government, as the act that opened the network created it and as its owners have
+    /// changed it since.
     ///
-    /// It holds one key here and it will hold much more: owners, a threshold, the things an entity
-    /// is governed by. Those arrive with entities, and putting a guess in their place now would be
-    /// inventing state nobody decided.
+    /// **It is governed by the same mechanism as any other organisation** (`SPECS.md §7.1`): owners
+    /// who are root identifiers, and a threshold per class of act, changed by governance exactly as
+    /// anywhere else. What it has that no other organisation has is the key the genesis gave it,
+    /// and one rule about that key — it speaks alone **only while there is nobody else to speak**.
+    /// The day an owner is named, the threshold decides and the key stops being a way round it.
+    ///
+    /// That is `SPECS.md §7.9`'s bootstrap said in a type: a self-signed root is how a trust anchor
+    /// starts, and the whole of the plan is to stop being one.
     Government {
         /// The key the genesis established it with.
         key: [u8; ed25519::PUBLIC_KEY_WIDTH],
+        /// Its composition: owners, managers, and what each class of act costs them.
+        ///
+        /// Boxed for the reason an organisation is: every answer a node gives carries a state.
+        body: Box<crate::entity::Entity>,
     },
+    /// An object of a class this build has never heard of.
+    ///
+    /// **Kept rather than refused** (`SPECS.md §4.8`, rule 1): a node stores and propagates every
+    /// act whether it understands it or not, and that is what keeps one record instead of one per
+    /// version — a fork detector cannot tell an out-of-date node from a hostile one, so it must
+    /// never be given the chance. Refusing the creation of a new class would leave every node that
+    /// predates it holding a different history from every node that does not.
+    ///
+    /// **And it resolves to nothing** (rule 2): the object is opaque from its first act, so what
+    /// this node answers about it is *cannot resolve*, for ever, rather than a state it invented.
+    ///
+    /// It is what `SPECS.md §18` leans on for the hole it protects with an unknown type — the
+    /// annotation that lets one entry refer to another, which is a class of its own and not a field
+    /// on an existing one.
+    Beyond,
     /// Two things one key signed that cannot both be true.
     ///
     /// The only thing that can be proved against a node, and it is proved by what the act carries
@@ -163,6 +193,16 @@ pub enum State {
         /// published is reachable; a node that published one nobody can reach is not. Which of
         /// those is true is measured by asking, and mixing the two here would make this neither.
         reachable: BTreeSet<String>,
+        /// The epoch it stopped counting from, once it has been closed.
+        ///
+        /// **A state and never a deletion** (`SPECS.md §4.1`, and `§12.1` for the same shape on an
+        /// organisation). What a closed node said stays said: its roots, its summaries and
+        /// everything it replicated are still in the record. What changes is that no work is
+        /// assigned to it and it is not counted as absent, because it is not there.
+        ///
+        /// [`None`] is a node that is running, or one that never came up. The two are told apart by
+        /// measuring, not by this.
+        closed: Option<Epoch>,
     },
 }
 
@@ -190,6 +230,16 @@ pub struct Holder {
     /// presented or signed, and the one act that still lands is a cancellation, because a
     /// cancellation is itself a *no*.
     pub frozen: bool,
+    /// Who may freeze this account, and who may authorise handing it back.
+    ///
+    /// **A commitment and two numbers, never a list** (`SPECS.md §11.4`). A public list of the
+    /// people who can freeze somebody is a list of the people to go after, so the record carries a
+    /// root and a guardian who acts proves their own leaf against it.
+    ///
+    /// [`None`] is an account with none, which is the ordinary state and not a fault — and it is
+    /// what the sovereignty screen exists to say out loud, because somebody with no guardians has
+    /// no way back from losing every device.
+    pub guardians: Option<crate::guardian::Guardians>,
     /// What the control key has asked for that has not yet taken effect, oldest first.
     ///
     /// **The control key signing alone always waits.** It comes from words, and words can be
@@ -231,6 +281,18 @@ impl Holder {
                 }
                 Does::Rotate(key) => settled.control = *key,
                 Does::Unfreeze => settled.frozen = false,
+                Does::SetGuardians(guardians) => settled.guardians = Some(*guardians),
+                // **All three at once, or it is not a recovery.** The account comes out of it
+                // operating: a new key governing, nothing of the old devices left, and the one the
+                // asker brought on it.
+                Does::Recover { control, device } => {
+                    settled.control = *control;
+                    settled.devices.clear();
+                    settled.devices.insert(device.clone());
+                    // And it comes out **thawed**: a recovery that left the account frozen would
+                    // be one where the way back is to ask the guardians who just handed it over.
+                    settled.frozen = false;
+                }
             }
         }
         settled
@@ -263,6 +325,20 @@ pub enum Does {
     /// everything the freeze stopped, so it is the words asking for trust back, and the devices
     /// get the same window to say no that they get over anything else the words ask alone.
     Unfreeze,
+    /// Who may freeze the account, and who may authorise handing it back.
+    SetGuardians(crate::guardian::Guardians),
+    /// The account changes hands: a new control key, no old devices, and the asker's on it.
+    ///
+    /// **Atomic, and that is the whole of it** (`SPECS.md §11.4`). Rotating without emptying would
+    /// leave whoever has the old devices operating an account they no longer govern; emptying
+    /// without adding would leave the holder with an identity and nothing to use it from. It comes
+    /// out **operative, not empty**.
+    Recover {
+        /// The control key the account is left governed by.
+        control: [u8; ed25519::PUBLIC_KEY_WIDTH],
+        /// The device key it is left operating with, which is the asker's.
+        device: Vec<u8>,
+    },
 }
 
 /// Why an operation was not admitted.
@@ -372,6 +448,24 @@ struct Chain {
     dated: Epoch,
 }
 
+/// One status list, as the record names it.
+///
+/// **The hash and never the bytes** (`SPECS.md §10.2`): what a node replicating one needs is
+/// whether what it was handed is the version the record names, and a digest answers that. Nothing
+/// here requires understanding a bitstring, which is rule one of `SPECS.md §4.8` where it happens
+/// to be easiest to break.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kept {
+    /// The list object.
+    pub list: Name,
+    /// The issuer whose list it is.
+    pub by: Did,
+    /// The hash of the version in force.
+    pub version: Vec<u8>,
+    /// Which window of expiries it covers, which is when it may be let go of.
+    pub cohort: almena_time::cohort::Cohort,
+}
+
 /// What is in the catalogue, by what each object is.
 ///
 /// **Names and not states.** Whoever asked composes each object from its own acts and checks the
@@ -409,6 +503,67 @@ pub struct Running {
     /// dropping it silently would make both figures look tidier than the network is, which is the
     /// one thing a measurement must not do.
     pub unreadable: usize,
+    /// How much of each capability falls to one declared operator (`SPECS.md §5.2`).
+    ///
+    /// **Numbers and never a name.** *Who* holds the largest share, published per capability in a
+    /// record nobody deletes, would be a list of where to attack assembled by the network about
+    /// itself — the same reason `SPECS.md §5.1` keeps a column naming who was short out of a
+    /// summary. Whether one operator holds too much is a question anybody can answer from these
+    /// figures; who they are is not this record's to announce.
+    pub concentration: BTreeMap<crate::capability::Capability, Concentrated>,
+    /// How many distinct operators have said a node is theirs.
+    ///
+    /// The other half of `SPECS.md §5.2`'s root-signer diversity: many nodes signed by one operator
+    /// are, for the purpose that figure exists for, one signer.
+    pub operators: usize,
+    /// How many nodes nobody has claimed.
+    ///
+    /// **Not counted as diversity and not counted against it.** A node nobody claimed is a machine,
+    /// and whether it stands apart from the rest is a question the record cannot answer either way —
+    /// so it is its own figure rather than folded into one of the two above.
+    pub unclaimed: usize,
+}
+
+/// How much of one capability falls to one operator.
+///
+/// **The denominator travels with it.** Two of three is a different situation from two of forty,
+/// and a share without the count it is a share of is a number that reads as whatever the reader
+/// already believed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Concentrated {
+    /// How many nodes say they offer it.
+    pub offering: usize,
+    /// The most of them any one declared operator has.
+    ///
+    /// Nought where nobody offering it has been claimed, which is a different thing from nobody
+    /// holding more than one.
+    pub most: usize,
+    /// How many of them nobody has claimed.
+    pub unclaimed: usize,
+}
+
+/// One node offering one capability, counted into the concentration figures.
+///
+/// Split out because the count and the share-out are two questions asked of one node, and a loop
+/// that did both inline is one nobody reads twice.
+fn offered(
+    running: &mut Running,
+    whose: &mut BTreeMap<crate::capability::Capability, BTreeMap<Did, usize>>,
+    what: crate::capability::Capability,
+    claimed_by: Option<&Did>,
+) {
+    let counted = running.concentration.entry(what).or_default();
+    counted.offering += 1;
+    match claimed_by {
+        Some(operator) => {
+            *whose
+                .entry(what)
+                .or_default()
+                .entry(operator.clone())
+                .or_insert(0) += 1
+        }
+        None => counted.unclaimed += 1,
+    }
 }
 
 /// Where an object stands on summarising itself.
@@ -540,6 +695,29 @@ impl Objects {
         listed
     }
 
+    /// Every status list this node holds the chain of, with what the record says it is now.
+    ///
+    /// **Walked rather than indexed**, for the reason the catalogue is: an index would be a second
+    /// place the same thing is written down, and the day it drifted a node would serve a version
+    /// the record does not name. What bounds the walk is the arithmetic of `SPECS.md §10.2` — a
+    /// list covers one quarter of expiries, so an issuer keeps between four and twelve live.
+    #[must_use]
+    pub fn status_lists(&self) -> Vec<Kept> {
+        self.chains
+            .iter()
+            .filter(|(_, chain)| !chain.forked && !chain.opaque)
+            .filter_map(|(name, chain)| match &chain.state {
+                State::StatusList(list) => list.latest().map(|version| Kept {
+                    list: name.clone(),
+                    by: list.by.clone(),
+                    version: version.hash.clone(),
+                    cohort: list.cohort,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// What this node says about an object.
     #[must_use]
     pub fn resolve(&self, name: &Name) -> Answer {
@@ -584,8 +762,25 @@ impl Objects {
             return Err(Refused::DoesNotNameItself);
         }
         let name = operation.object.name().clone();
-        if self.chains.contains_key(&name) {
-            return Err(Refused::AlreadyExists);
+        if let Some(chain) = self.chains.get(&name) {
+            // **The same act arriving twice is one act**, exactly as it is on the other path: the
+            // second delivery leaves this holding what it held before. It has to be said here
+            // rather than refused, because a caller that could not tell *you already gave me this*
+            // from *somebody else claimed that name* has no repair available to it when a write
+            // fails after the act was admitted — which is a real state, and one only handing the
+            // act over again can mend.
+            //
+            // **The other arm cannot be reached from here**, and it is kept rather than collapsed
+            // so that if it ever is, this node says so instead of borrowing an answer that is not
+            // true. An object's name is the hash of its creation with `objeto` and `firmas` left
+            // out, and the act's own name leaves out only `firmas` — so two creations with one
+            // object name differ only in `objeto`, which `names_itself` has already forced a few
+            // lines above. Two acts of one name and different signatures are one act: the
+            // signatures are not what names it, and this node checked the ones it took.
+            return match chain.seen.contains(&operation.called()) {
+                true => Ok(Admitted::AlreadyHere),
+                false => Err(Refused::AlreadyExists),
+            };
         }
         // **Before it is born**, because a first act on the catalogue is where the gate and the
         // references have to hold: a template naming an attribute nobody published would otherwise
@@ -613,8 +808,9 @@ impl Objects {
         // chain is created the same way and read the same way, and rule 4 governs the payload
         // rather than what the payload is about — so exempting it would leave the same silent
         // disaster in a place nobody would think to look for it.
-        let opaque = created_vocabulary(&state)
-            .is_some_and(|vocabulary| operation.understood(vocabulary).is_err());
+        let opaque = matches!(state, State::Beyond)
+            || created_vocabulary(&state)
+                .is_some_and(|vocabulary| operation.understood(vocabulary).is_err());
         if let State::Contradiction { against } = &state {
             self.contradicted.insert(*against);
         }
@@ -853,17 +1049,45 @@ impl Objects {
                 .collect(),
             speaking: BTreeMap::new(),
             unreadable: 0,
+            concentration: BTreeMap::new(),
+            operators: 0,
+            unclaimed: 0,
         };
+        // Per capability, how many nodes each declared operator has. Kept while counting and thrown
+        // away after: what is published is the largest share, never whose it is.
+        let mut whose: BTreeMap<crate::capability::Capability, BTreeMap<Did, usize>> =
+            BTreeMap::new();
+        let mut operators: BTreeSet<Did> = BTreeSet::new();
 
         for named in self.nodes() {
-            let Some(State::Node { offers, speaks, .. }) = self.state_of(named) else {
+            let Some(State::Node {
+                offers,
+                speaks,
+                claimed_by,
+                ..
+            }) = self.state_of(named)
+            else {
                 running.unreadable += 1;
                 continue;
             };
+            match claimed_by {
+                Some(operator) => {
+                    operators.insert(operator.clone());
+                }
+                None => running.unclaimed += 1,
+            }
             for what in offers {
                 *running.offering.entry(*what).or_insert(0) += 1;
+                offered(&mut running, &mut whose, *what, claimed_by.as_ref());
             }
             *running.speaking.entry(*speaks).or_insert(0) += 1;
+        }
+
+        running.operators = operators.len();
+        for (what, held) in whose {
+            if let Some(counted) = running.concentration.get_mut(&what) {
+                counted.most = held.into_values().max().unwrap_or(0);
+            }
         }
         running
     }
@@ -885,6 +1109,31 @@ impl Objects {
     pub fn noted(&mut self, object: &Name) {
         if !self.chains.contains_key(object) {
             self.elsewhere.insert(object.clone());
+        }
+    }
+
+    /// Give up on saying what an object is, without saying why beyond that.
+    ///
+    /// **For an act this build will not take that an earlier one did.** A record is replayed by a
+    /// node coming up, and a build whose rules have tightened meets acts its predecessor accepted.
+    /// Refusing to come up over one would be the worst answer available: `SPECS.md §4.8` rule 1 is
+    /// that a node stores and propagates every act whether it understands it or not, and a node
+    /// that will not start has stopped replicating altogether — which is the fork between versions
+    /// that rule exists to prevent, arriving as an outage instead.
+    ///
+    /// So the act is kept, the line saying it happened is kept, and this is the other half of rule
+    /// 2: the object stops resolving. Nothing is claimed about it and nothing is served from before
+    /// the act, which is the one thing a node may never do.
+    ///
+    /// An object it has never heard of is left alone: there is nothing to stop resolving, and
+    /// inventing a chain to mark opaque would be inventing an object.
+    pub fn beyond(&mut self, object: &Name) -> bool {
+        match self.chains.get_mut(object) {
+            Some(chain) => {
+                chain.opaque = true;
+                true
+            }
+            None => false,
         }
     }
 
@@ -1130,8 +1379,7 @@ impl Objects {
                 Answer::Here(State::Attribute(attribute)) if attribute.usable(operation.issued) => {
                     // **A predicate only where the attribute says it answers one.** Asking a plain
                     // date for an answer would be asking for something nobody undertook to give.
-                    if asked.how == crate::template::How::Predicate.number() && !attribute.predicate
-                    {
+                    if asked.how == crate::template::How::Predicate && !attribute.predicate {
                         return Err(Refused::NotAuthorised);
                     }
                 }
@@ -1269,6 +1517,13 @@ impl Objects {
                 Some(by) => self.governed_by(&by, operation.issued),
                 None => empty(),
             },
+            // **The issuer whose list it is, by its own key** (`SPECS.md §10.2`). Named in the act
+            // and resolved from the record, exactly as an element's parent is: naming somebody is
+            // not being them, and the signature that follows is what makes it true.
+            Some(Kind::STATUS_LIST_PUBLISH_VERSION) => match crate::status::publishing(operation) {
+                Some(by) => self.speaks_for_itself(&by),
+                None => empty(),
+            },
             Some(Kind::REPLY_PUBLISH) => self.answering(operation),
             Some(Kind::ISSUER_CREATE) => {
                 let Some(Value::Text(of)) = operation.payload.get(&crate::element::field::OF)
@@ -1316,11 +1571,50 @@ impl Objects {
                     answering: None,
                 }
             }
-            // Almena Government, while the one key the genesis gave it is all it has.
-            Answer::Here(State::Government { key }) => Governor {
+            Answer::Here(State::Government { key, body }) => self.speaking_as(&key, &body, at),
+            _ => Governor::nobody(),
+        }
+    }
+
+    /// Almena Government as a governor: its owners if it has any, and the genesis key if it has not.
+    ///
+    /// **The key is a bootstrap and not a back door** (`SPECS.md §7.9`). It is what signs while
+    /// there is nobody to count, because counting a set that does not exist would be counting
+    /// nothing at all — and it stops the moment there is an owner, or naming owners would be
+    /// theatre performed beside a key that could have done it anyway.
+    fn speaking_as(
+        &self,
+        key: &[u8; ed25519::PUBLIC_KEY_WIDTH],
+        body: &crate::entity::Entity,
+        at: Epoch,
+    ) -> Governor {
+        let body = body.come_due(at);
+        if body.owners.is_empty() {
+            return Governor {
                 owners: crate::entity::Speaking::new(),
                 thresholds: None,
-                alone: Some(key),
+                alone: Some(*key),
+                answering: None,
+            };
+        }
+        Governor {
+            owners: self.speaking_for(&body.owners, at),
+            thresholds: Some(body.thresholds),
+            alone: None,
+            answering: None,
+        }
+    }
+
+    /// The one key an element signs its own acts with, as a governor.
+    ///
+    /// **Nobody where the element cannot be resolved**, which refuses the act rather than guessing:
+    /// this node's own ignorance, and recoverable by asking a node that holds it.
+    fn speaks_for_itself(&self, element: &Did) -> Governor {
+        match self.resolve(element.name()) {
+            Answer::Here(State::Element(held)) if held.closed.is_none() => Governor {
+                owners: crate::entity::Speaking::new(),
+                thresholds: None,
+                alone: Some(held.key),
                 answering: None,
             },
             _ => Governor::nobody(),
@@ -1342,6 +1636,22 @@ impl Objects {
                     answering: None,
                 }
             }
+            // **A guardian is not the account, so who they are comes out of the act and what they
+            // can sign comes out of the record.** The commitment says whether somebody is a
+            // guardian; it cannot say which keys are theirs, because it is a hash of a list nobody
+            // published. So the act names them, and naming somebody is not being them: each is
+            // resolved and each signature is checked against a key their own chain authorises.
+            //
+            // A guardian whose own account is frozen counts as nobody, exactly as a frozen owner
+            // does — their devices cannot act, and a quorum made of them would be one nobody could
+            // have assembled.
+            State::Holder(_) if !crate::guardian::proofs(operation).is_empty() => Governor {
+                owners: self.speaking_for(&naming(operation), operation.issued),
+                thresholds: None,
+                alone: None,
+                answering: None,
+            },
+            State::Government { key, body } => self.speaking_as(key, body, operation.issued),
             // An element is governed by its parent, so both answers come from resolving the parent.
             // One this node cannot resolve gives neither, which refuses the act rather than
             // guessing a number — its own ignorance, and recoverable by asking a node that holds it.
@@ -1356,6 +1666,11 @@ impl Objects {
             State::Attribute(attribute) => self.governed_by(&attribute.by, operation.issued),
             State::Tag(tag) => self.governed_by(&tag.by, operation.issued),
             State::Template(template) => self.governed_by(&template.by, operation.issued),
+            // **The issuer's own key and not its owners'** (`SPECS.md §10.2`). Revoking has to cost
+            // what issuing costs: an issuer that had to convene its owners to flip a bit is one
+            // that does not revoke at the speed a revocation is for. What the owners decided is a
+            // different question and they decided it when they authorised the element.
+            State::StatusList(list) => self.speaks_for_itself(&list.by),
             _ => Governor::nobody(),
         }
     }
@@ -1440,6 +1755,26 @@ impl Objects {
     /// never heard from again. Telling those apart needs measurement this does not have.
     pub fn nodes(&self) -> impl Iterator<Item = &Name> {
         self.nodes.values().map(|(_, name)| name)
+    }
+
+    /// The nodes that were still counting at that moment.
+    ///
+    /// **What the share-out is drawn from** (`SPECS.md §4.1`). A node that has closed is not there:
+    /// no work is assigned to it and it is not counted as absent either, because both would be
+    /// figures about somebody who said they had gone. Everything it ever said stays in the record
+    /// and is still read — closing is a state and never a deletion.
+    ///
+    /// Asked at a moment, because *closed* is a moment: a share-out drawn for an epoch before a
+    /// node closed has to be the same share-out afterwards, or the past would move.
+    pub fn nodes_at(&self, at: Epoch) -> impl Iterator<Item = &Name> {
+        self.nodes.values().filter_map(move |(_, name)| {
+            match self.chains.get(name).map(|chain| &chain.state) {
+                Some(State::Node {
+                    closed: Some(gone), ..
+                }) if gone.number() <= at.number() => None,
+                _ => Some(name),
+            }
+        })
     }
 
     /// What the record calls the node that holds this key.
@@ -1566,7 +1901,22 @@ fn signed_as_required(operation: &Operation) -> Result<(), Refused> {
             || concerns_a_certification(kind)
             || concerns_the_catalogue(kind)
             || kind == Kind::REPLY_PUBLISH
+            // A status list is signed by the **issuer whose list it is**, whose name goes in the
+            // signature — not by the list, which has no key of its own and never will.
+            || kind == Kind::STATUS_LIST_PUBLISH_VERSION
     }) {
+        return match operation.signatures.is_empty() {
+            true => Err(Refused::Unsigned),
+            false => Ok(()),
+        };
+    }
+
+    // **An act carrying guardian proofs is signed by several people, and none of them is the
+    // account.** What makes each of them count is checked where the record is — the signature
+    // against a key their own chain authorises, and the proof against the commitment — which is
+    // strictly more than the name check below could ask. What is checked here is only that there is
+    // somebody to count.
+    if !crate::guardian::proofs(operation).is_empty() {
         return match operation.signatures.is_empty() {
             true => Err(Refused::Unsigned),
             false => Ok(()),
@@ -1624,6 +1974,7 @@ fn created_vocabulary(state: &State) -> Option<almena_format::field::Vocabulary<
         State::Attribute(_) => Some(crate::attribute::vocabulary()),
         State::Tag(_) => Some(crate::tag::vocabulary()),
         State::Template(_) => Some(crate::template::vocabulary()),
+        State::StatusList(_) => Some(crate::status::vocabulary()),
         State::Node { .. } => Some(crate::capability::vocabulary()),
         _ => None,
     }
@@ -1635,6 +1986,12 @@ pub(crate) fn holder_vocabulary() -> almena_format::field::Vocabulary<'static> {
     /// cancellation strikes out.
     const SUBJECT: &[almena_format::field::Field] = &[
         almena_format::field::Field::new(KEY),
+        // What a set of guardians is, and what one of them shows to prove they are one.
+        almena_format::field::Field::new(crate::guardian::field::COMMITMENT),
+        almena_format::field::Field::new(crate::guardian::field::HOW_MANY),
+        almena_format::field::Field::new(crate::guardian::field::ENOUGH),
+        almena_format::field::Field::new(crate::guardian::field::PROOFS),
+        almena_format::field::Field::new(crate::guardian::field::DEVICE),
         almena_format::field::Field::new(crate::resolution::FIELD),
     ];
 
@@ -1692,16 +2049,19 @@ fn apply(
         (
             State::Element(_)
             | State::Entity(_)
+            | State::Government { .. }
             | State::Certification(_)
             | State::Source(_)
             | State::Attribute(_)
             | State::Tag(_)
-            | State::Template(_),
+            | State::Template(_)
+            | State::StatusList(_),
             Some(kind),
         ) if concerns_an_element(kind)
             || concerns_an_entity(kind)
             || concerns_a_certification(kind)
-            || concerns_the_catalogue(kind) =>
+            || concerns_the_catalogue(kind)
+            || kind == Kind::STATUS_LIST_PUBLISH_VERSION =>
         {
             governed(operation, state, kind, speaks)
         }
@@ -1733,7 +2093,8 @@ fn apply(
                 entitled(operation, state, speaks)?;
                 return Ok(Applied::Beyond);
             }
-            holder_takes(operation, holder, kind).map(|next| Applied::State(State::Holder(next)))
+            holder_takes(operation, holder, kind, speaks)
+                .map(|next| Applied::State(State::Holder(next)))
         }
         // Everything else: an act this build has no meaning for, or one on an object whose class it
         // does not model yet. **It is still an act somebody had to be entitled to write.** That
@@ -1777,8 +2138,37 @@ fn governed(
             crate::entity::does(operation, entity, kind)
                 .map(|next| Applied::State(State::Entity(Box::new(next))))
         }
+        // **The same acts, applied the same way** (`SPECS.md §7.1`). Almena Government gains and
+        // loses owners and changes its thresholds through the ordinary organisation acts, because
+        // the alternative — a private mechanism for the one party everybody has to trust — is the
+        // shape this whole design exists not to have. What it keeps is the genesis key, which stops
+        // deciding anything the moment there is an owner to count.
+        State::Government { key, body } => {
+            if operation.understood(crate::entity::vocabulary()).is_err() {
+                return Ok(Applied::Beyond);
+            }
+            crate::entity::does(operation, body, kind).map(|next| {
+                Applied::State(State::Government {
+                    key: *key,
+                    body: Box::new(next),
+                })
+            })
+        }
         _ => in_the_catalogue(operation, state, kind),
     }
+}
+
+/// Everybody an act's signatures name.
+///
+/// **Read from the act and then checked against the record**, which is the shape every counted
+/// signature has: what an act says about who signed it is a claim, and the count is what makes it
+/// true.
+fn naming(operation: &Operation) -> BTreeSet<Did> {
+    operation
+        .signatures
+        .iter()
+        .map(|signature| signature.by.clone())
+        .collect()
 }
 
 /// Who governs an object, resolved from the record before anything is applied.
@@ -1819,7 +2209,11 @@ struct Split<'a> {
 const fn concerns_a_node(kind: Kind) -> bool {
     matches!(
         kind,
-        Kind::NODE_SUMMARY | Kind::NODE_ANNOUNCE | Kind::NODE_BIND | Kind::NODE_UNBIND
+        Kind::NODE_SUMMARY
+            | Kind::NODE_ANNOUNCE
+            | Kind::NODE_BIND
+            | Kind::NODE_UNBIND
+            | Kind::NODE_CLOSE
     )
 }
 
@@ -1834,7 +2228,10 @@ fn on_a_node(
     claimant: Option<[u8; ed25519::PUBLIC_KEY_WIDTH]>,
 ) -> Result<Applied, Refused> {
     let State::Node {
-        key, claimed_by, ..
+        key,
+        claimed_by,
+        closed,
+        ..
     } = state
     else {
         // Unreachable: the caller matched on a node.
@@ -1848,11 +2245,20 @@ fn on_a_node(
         Kind::NODE_SUMMARY => Ok(Applied::State(state.clone())),
         // Announcing is meant to happen again: what a node offers and what version it runs change
         // over its life, and neither may rename it. Only the first one named anything.
-        Kind::NODE_ANNOUNCE => offering(operation, *key, claimed_by.clone()),
+        Kind::NODE_ANNOUNCE => offering(operation, *key, claimed_by.clone(), *closed),
         // A node letting go of whoever contributed it. **The node alone**: whoever claimed it
         // agreed to be credited for what it served, and letting go of that costs them nothing they
         // can be held to, so nobody has to be asked.
         Kind::NODE_UNBIND => Ok(Applied::State(claimed(state, None))),
+        // **The one way out of a node whose key is somebody else's** (`SPECS.md §4.1`). It denies
+        // and concedes nothing, so the worst somebody with the stolen key achieves by writing it is
+        // that the node stops counting — which is what its operator was about to do anyway. That is
+        // `SPECS.md §1.8` again: what takes trust away is accepted at once.
+        //
+        // A node already closed stays closed at the epoch it first said, so that two deliveries of
+        // one act and a second closing act agree — and so that nobody moves the moment it stopped
+        // counting by writing again.
+        Kind::NODE_CLOSE => Ok(Applied::State(shut(state, operation.issued))),
         // Both sides, or it binds nothing. The node signs the act because it is the node's chain,
         // and whoever is claiming it approved a challenge naming this node and no other — checked
         // against the key their own chain authorises, resolved from the record.
@@ -1922,8 +2328,15 @@ fn in_the_catalogue(operation: &Operation, state: &State, kind: Kind) -> Result<
             crate::template::does(operation, template, kind)
                 .map(|next| Applied::State(State::Template(Box::new(next))))
         }
-        // Unreachable: the caller matched on these four. Beyond rather than a panic, because a node
-        // that fell over on an act would be a node an act can stop.
+        State::StatusList(list) => {
+            if operation.understood(crate::status::vocabulary()).is_err() {
+                return Ok(Applied::Beyond);
+            }
+            crate::status::does(operation, list, kind)
+                .map(|next| Applied::State(State::StatusList(Box::new(next))))
+        }
+        // Unreachable: the caller matched on the kinds these handle. Beyond rather than a panic,
+        // because a node that fell over on an act would be a node an act can stop.
         _ => Ok(Applied::Beyond),
     }
 }
@@ -2043,6 +2456,8 @@ const fn concerns_a_holder(kind: Kind) -> bool {
             | Kind::HOLDER_UNFREEZE
             | Kind::HOLDER_CANCEL
             | Kind::HOLDER_CHECKPOINT
+            | Kind::HOLDER_SET_GUARDIANS
+            | Kind::HOLDER_RECOVER
     )
 }
 
@@ -2186,8 +2601,27 @@ fn who_signs(operation: &Operation, holder: &Holder) -> Result<Signer, Refused> 
 ///
 /// Everything due by the act's own moment lands first, so that what an act is judged against is
 /// the account as it stood when the act was made — the same account every other reader computes.
-fn holder_takes(operation: &Operation, holder: &Holder, kind: Kind) -> Result<Holder, Refused> {
+fn holder_takes(
+    operation: &Operation,
+    holder: &Holder,
+    kind: Kind,
+    speaks: &Speaks<'_>,
+) -> Result<Holder, Refused> {
     let holder = holder.come_due(operation.issued);
+
+    // **Guardians are answered before the freeze is consulted**, because a frozen account is
+    // exactly the one a recovery is for: the guardians froze it when the phone was lost, and making
+    // the holder thaw it first would be asking them to concede the account back before they can
+    // take it. Their signatures are not the account's own — what makes them count is the
+    // commitment plus what the record says about each of them.
+    match kind {
+        Kind::HOLDER_RECOVER => return recovering(operation, holder, speaks),
+        Kind::HOLDER_FREEZE if !crate::guardian::proofs(operation).is_empty() => {
+            return guardians_freeze(operation, holder, speaks);
+        }
+        _ => {}
+    }
+
     let signer = who_signs(operation, &holder)?;
 
     // **A frozen account is one where only *no* can be said.** A device may still cancel — a
@@ -2202,6 +2636,89 @@ fn holder_takes(operation: &Operation, holder: &Holder, kind: Kind) -> Result<Ho
         Signer::Control => control_asks(operation, holder, kind),
         Signer::Device(key) => device_does(operation, holder, kind, &key),
     }
+}
+
+/// A quorum of guardians stopping an account.
+///
+/// **Immediate, and that is `SPECS.md §1.8` said again**: what takes trust away is accepted quickly,
+/// what grants it waits. Freezing denies everything and concedes nothing, so two guardians colluding
+/// gain nothing by it — the worst they cost somebody is the trouble of thawing with the words.
+///
+/// It is the only way out of the case nothing else covers: no device, no seed to hand, away from
+/// home. You ring the people who would recognise your voice, and the phone in somebody else's
+/// pocket goes inert.
+fn guardians_freeze(
+    operation: &Operation,
+    holder: Holder,
+    speaks: &Speaks<'_>,
+) -> Result<Holder, Refused> {
+    let mut next = holder;
+    // **An account with no guardians is not one anybody can freeze this way.** Nought guardians and
+    // a proof of nothing would otherwise be a stranger's freeze.
+    let guardians = next.guardians.ok_or(Refused::NotAuthorised)?;
+    // Frozen already is frozen: there is nothing for a second freeze to do, and an act that does
+    // nothing is not written down.
+    if next.frozen {
+        return Err(Refused::Malformed);
+    }
+    let signed = crate::entity::counted(operation, speaks.owners);
+    let counted = guardians.counted(&crate::guardian::proofs(operation), &signed);
+    if !guardians.enough_of_them(counted) {
+        return Err(Refused::NotAuthorised);
+    }
+    next.frozen = true;
+    Ok(next)
+}
+
+/// The account changing hands, asked for by whoever is taking it back.
+///
+/// **Only the holder starts it** (`SPECS.md §11.4`). A guardian who could would mean two of them
+/// colluding could rotate somebody's identity to themselves — so the act carries the new control key
+/// and is signed by it, and what the guardians do is authorise, never propose.
+///
+/// **And it waits.** Reaching the quorum is not executing: the window is what lets a holder who
+/// still has a device say no, which is the defence against collusion and against the guardian who
+/// was talked into it over the phone. Any current device cancels it, exactly as it cancels what the
+/// words ask alone — and for the same reason.
+fn recovering(
+    operation: &Operation,
+    holder: Holder,
+    speaks: &Speaks<'_>,
+) -> Result<Holder, Refused> {
+    let mut next = holder;
+    let guardians = next.guardians.ok_or(Refused::NotAuthorised)?;
+    let control = fixed(operation, KEY)?;
+    let device = match operation.payload.get(&crate::guardian::field::DEVICE) {
+        Some(Value::Bytes(key)) if key.len() == p256::PUBLIC_KEY_WIDTH => key.clone(),
+        _ => return Err(Refused::Malformed),
+    };
+
+    // **Signed by the key it establishes**, which is what says whoever composed this holds it.
+    // Without that, a quorum of guardians would be handing the account to a key nobody proved was
+    // in anybody's hands.
+    verify_control(operation, &control)?;
+
+    let signed = crate::entity::counted(operation, speaks.owners);
+    let counted = guardians.counted(&crate::guardian::proofs(operation), &signed);
+    if !guardians.enough_of_them(counted) {
+        return Err(Refused::NotAuthorised);
+    }
+
+    // The same ceiling everything else the account waits on lives under, so that a queue cannot be
+    // used to bury a device's chance to see any of it.
+    if next.waiting.len() as u64 >= CONTROL_PENDING_MOST.at(operation.issued) {
+        return Err(Refused::NotAuthorised);
+    }
+    let due = operation
+        .issued
+        .plus(almena_time::deadline::CONTROL_KEY_WAIT.epochs(operation.issued))
+        .ok_or(Refused::Malformed)?;
+    next.waiting.push(Waiting {
+        act: operation.called(),
+        does: Does::Recover { control, device },
+        due,
+    });
+    Ok(next)
 }
 
 /// What may still happen to a frozen account.
@@ -2262,6 +2779,14 @@ fn control_asks(operation: &Operation, holder: Holder, kind: Kind) -> Result<Hol
         Kind::HOLDER_CHECKPOINT if !next.waiting.is_empty() => return Err(Refused::NotAuthorised),
         Kind::HOLDER_CHECKPOINT => return Ok(next),
         Kind::HOLDER_CANCEL => return Err(Refused::NotAuthorised),
+        // **A recovery is not something the words ask for.** Whoever holds them does not need one:
+        // they can rotate, remove and add, all of which this same wait already covers. An act that
+        // asked for one with the words alone would be a second, longer road to what they already
+        // have — and one that arrives holding a key it made up.
+        Kind::HOLDER_RECOVER => return Err(Refused::NotAuthorised),
+        // Naming guardians concedes: it makes a set of people who can stop the account, and who
+        // with a new key can hand it to somebody. So the words alone ask, and the devices watch.
+        Kind::HOLDER_SET_GUARDIANS => Does::SetGuardians(crate::guardian::declared(operation)?),
         Kind::HOLDER_ADD_DEVICE => Does::AddDevice(device(operation)?),
         Kind::HOLDER_REMOVE_DEVICE => {
             let removed = device(operation)?;
@@ -2289,7 +2814,7 @@ fn control_asks(operation: &Operation, holder: Holder, kind: Kind) -> Result<Hol
     }
     let due = operation
         .issued
-        .plus(almena_time::Epochs(CONTROL_WAITS.at(operation.issued)))
+        .plus(almena_time::deadline::CONTROL_KEY_WAIT.epochs(operation.issued))
         .ok_or(Refused::Malformed)?;
     next.waiting.push(Waiting {
         act: operation.called(),
@@ -2325,6 +2850,13 @@ fn device_does(
         // The account changing hands is the words' alone: a device that could rotate the control
         // key would make a stolen device the account.
         Kind::HOLDER_ROTATE => return Err(Refused::NotAuthorised),
+        // **Naming guardians is a device's to do, and at once.** It concedes no more than adding a
+        // device does — the people named can stop the account, and can only take it with a key the
+        // holder brings and a wait every device can veto. Holding it back would make the safe
+        // direction the expensive one, which is how somebody ends up with no guardians at all.
+        Kind::HOLDER_SET_GUARDIANS => {
+            next.guardians = Some(crate::guardian::declared(operation)?);
+        }
         Kind::HOLDER_FREEZE => next.frozen = true,
         // There is nothing to thaw. On a frozen account this arm is never reached — a frozen
         // account refuses devices everything but a cancellation, so thawing is always the words
@@ -2380,6 +2912,7 @@ fn born(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refused> {
         Some(
             Kind::SOURCE_ADMIT | Kind::ATTRIBUTE_PUBLISH | Kind::TAG_ADD | Kind::TEMPLATE_PUBLISH,
         ) => catalogued(operation, speaks)?,
+        Some(Kind::STATUS_LIST_PUBLISH_VERSION) => opened_by_an_issuer(operation, speaks)?,
         Some(Kind::ENTITY_CREATE) => {
             // **Signed by a person, because an entity has no key of its own to be signed by.** A
             // holder's creation is self-signed by the control key it establishes; an entity's key
@@ -2391,40 +2924,8 @@ fn born(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refused> {
                 operation.issued,
             )?))
         }
-        Some(Kind::HOLDER_CREATE) => {
-            let control = fixed(operation, KEY)?;
-            // Nothing else could have signed it: the account does not exist until this act
-            // does, so the only key its own state authorises is the one it establishes.
-            check(operation, &control)?;
-            State::Holder(Holder {
-                control,
-                devices: BTreeSet::new(),
-                frozen: false,
-                waiting: Vec::new(),
-            })
-        }
-        Some(Kind::GENESIS) => {
-            // Self-signed, because there is nothing earlier for it to be signed against: the
-            // anchor everything else is trusted from cannot be vouched for by something before
-            // it.
-            let key = fixed(operation, GOVERNMENT_KEY)?;
-            check(operation, &key)?;
-            State::Government { key }
-        }
-        Some(Kind::NODE_ANNOUNCE) => {
-            // Self-signed, like the act that opens a network and for the same reason: nothing
-            // earlier can vouch for something that did not exist until now. What it settles is
-            // that this name and this key belong together, which is what a reader needs before
-            // it can tell one node's word from another's.
-            let key = fixed(operation, KEY)?;
-            check(operation, &key)?;
-            State::Node {
-                key,
-                offers: BTreeSet::new(),
-                speaks: 0,
-                claimed_by: None,
-                reachable: BTreeSet::new(),
-            }
+        Some(Kind::HOLDER_CREATE | Kind::GENESIS | Kind::NODE_ANNOUNCE) => {
+            vouched_for_by_nothing(operation)?
         }
         Some(Kind::CONTRADICTION_PUBLISH) => {
             // **It carries its own proof, so nobody has to be believed.** Whoever wrote it down
@@ -2439,9 +2940,67 @@ fn born(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refused> {
             check(operation, &publisher)?;
             State::Contradiction { against }
         }
-        // Every other object arrives with the work that builds it. Until then a creation this
-        // node cannot apply is refused rather than stored as an object with no state.
-        _ => return Err(Refused::Malformed),
+        // **A class from a newer version, kept and not refused** (`SPECS.md §4.8`, rule 1). What
+        // can still be asked of it is asked: exactly one signature, naming this object, and good
+        // against the key it carries — which is what `signed_as_required` and this check together
+        // make sure of, so writing one costs a key and a signature exactly as every other creation
+        // does. What cannot be asked is which key *governs* it, because that lives in a payload
+        // this build has no meaning for. So nothing is claimed: the object is opaque from here on
+        // and this node answers *cannot resolve* about it rather than a state it made up.
+        _ => {
+            let signature = operation.signatures.first().ok_or(Refused::Unsigned)?;
+            let key = signature
+                .key
+                .as_slice()
+                .try_into()
+                .map_err(|_| Refused::Malformed)?;
+            check(operation, &key)?;
+            State::Beyond
+        }
+    })
+}
+
+/// The three creations that nothing earlier can vouch for, and are therefore self-signed.
+///
+/// An account, the act that opens a network, and a node introducing itself. In each case the only
+/// key the object's own state authorises is the one the act establishes: there is nothing before it
+/// to check against, and what the act settles is precisely that this name and this key belong
+/// together.
+fn vouched_for_by_nothing(operation: &Operation) -> Result<State, Refused> {
+    Ok(match Kind::new(operation.kind) {
+        Some(Kind::HOLDER_CREATE) => {
+            let control = fixed(operation, KEY)?;
+            check(operation, &control)?;
+            State::Holder(Holder {
+                control,
+                devices: BTreeSet::new(),
+                frozen: false,
+                guardians: None,
+                waiting: Vec::new(),
+            })
+        }
+        Some(Kind::GENESIS) => {
+            // The anchor everything else is trusted from cannot be vouched for by something before
+            // it, because there is nothing before it.
+            let key = fixed(operation, GOVERNMENT_KEY)?;
+            check(operation, &key)?;
+            State::Government {
+                key,
+                body: Box::new(crate::entity::alone(key, operation.issued)),
+            }
+        }
+        _ => {
+            let key = fixed(operation, KEY)?;
+            check(operation, &key)?;
+            State::Node {
+                key,
+                offers: BTreeSet::new(),
+                speaks: 0,
+                claimed_by: None,
+                reachable: BTreeSet::new(),
+                closed: None,
+            }
+        }
     })
 }
 
@@ -2504,6 +3063,18 @@ fn catalogued(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refus
     })
 }
 
+/// A status list, opened by the issuer whose list it is.
+///
+/// **The element's own key**, resolved from the record like any other governor (`SPECS.md §10.2`).
+/// An element that does not resolve authorises nothing, which refuses the act rather than letting a
+/// list be opened in somebody else's name — and revoking has to cost what issuing costs, or an
+/// issuer that must convene its owners to flip a bit is one that does not revoke.
+fn opened_by_an_issuer(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refused> {
+    let key = speaks.alone.ok_or(Refused::NotAuthorised)?;
+    check(operation, &key)?;
+    Ok(State::StatusList(Box::new(crate::status::born(operation)?)))
+}
+
 /// An object created under an organisation, which is what authorises it.
 ///
 /// Two of them, and the same shape: the act names the organisation, and it only enters the record
@@ -2563,6 +3134,33 @@ fn settles(kind: Option<Kind>) -> impl Iterator<Item = Governs> {
         .filter(move |part| kind.is_some_and(|kind| part.set_by().contains(&kind)))
 }
 
+/// The same node, closed from the epoch it first said it was.
+///
+/// **Closing does not move.** A node that could restate when it stopped counting would be one whose
+/// place in a share-out depends on when the question is asked, and the share-out is what decides who
+/// keeps what.
+fn shut(state: &State, at: Epoch) -> State {
+    match state {
+        State::Node {
+            key,
+            offers,
+            speaks,
+            claimed_by,
+            reachable,
+            closed,
+        } => State::Node {
+            key: *key,
+            offers: offers.clone(),
+            speaks: *speaks,
+            claimed_by: claimed_by.clone(),
+            reachable: reachable.clone(),
+            closed: Some(closed.unwrap_or(at)),
+        },
+        // Unreachable: only a node's own chain reaches here.
+        other => other.clone(),
+    }
+}
+
 /// The same node, claimed by somebody or by nobody.
 fn claimed(state: &State, by: Option<Did>) -> State {
     match state {
@@ -2571,6 +3169,7 @@ fn claimed(state: &State, by: Option<Did>) -> State {
             offers,
             speaks,
             reachable,
+            closed,
             ..
         } => State::Node {
             key: *key,
@@ -2578,6 +3177,7 @@ fn claimed(state: &State, by: Option<Did>) -> State {
             speaks: *speaks,
             claimed_by: by,
             reachable: reachable.clone(),
+            closed: *closed,
         },
         other => other.clone(),
     }
@@ -2592,6 +3192,7 @@ fn offering(
     operation: &Operation,
     key: [u8; ed25519::PUBLIC_KEY_WIDTH],
     claimed_by: Option<Did>,
+    closed: Option<Epoch>,
 ) -> Result<Applied, Refused> {
     use almena_format::cbor::Value;
 
@@ -2631,6 +3232,10 @@ fn offering(
         speaks,
         claimed_by,
         reachable,
+        // **Announcing again does not reopen it** (`SPECS.md §4.1`): a closed node does not come
+        // back, and one that did would bring whoever took its key back with it. Coming back means
+        // announcing a *new* node, with a new key and a new name.
+        closed,
     }))
 }
 
@@ -2663,6 +3268,14 @@ fn entitled(operation: &Operation, state: &State, speaks: &Speaks<'_>) -> Result
                 .and_then(costs)
                 .ok_or(Refused::NotAuthorised)?;
             enough(operation, speaks.owners, thresholds.of(class))
+        }
+        // **The issuer's own key, and nothing else** (`SPECS.md §10.2`). A revocation that cost a
+        // governance act would be one an issuer puts off, and a list anybody else could publish a
+        // version of would let a stranger un-revoke by publishing an older bitstring under a newer
+        // hash.
+        State::StatusList(_) => {
+            let key = speaks.alone.ok_or(Refused::NotAuthorised)?;
+            check(operation, &key)
         }
         // **Published once and never edited.** A reply somebody could revise after the fact would
         // be one whose meaning depends on when it is read, and the whole point is that the decision
@@ -2710,12 +3323,50 @@ fn entitled(operation: &Operation, state: &State, speaks: &Speaks<'_>) -> Result
             let holder = holder.come_due(operation.issued);
             who_signs(operation, &holder).map(|_| ())
         }
-        State::Government { key } | State::Node { key, .. } => check(operation, key),
+        State::Node { key, .. } => check(operation, key),
+        // **The key alone only while there is nobody to count** (`SPECS.md §7.1`, `§7.9`). Once an
+        // owner exists the threshold decides, exactly as it does for every other organisation —
+        // otherwise naming owners would change nothing, and the anchor of the network would go on
+        // being one key wearing the appearance of a set.
+        State::Government { key, body } => anchored(operation, key, body, speaks),
+        // **Signed, and nothing beyond that** (`SPECS.md §4.8`, rules 1 and 2). Who may write on an
+        // object of a class this build has never read is a question whose answer lives in a payload
+        // it has no meaning for — so asking anything more here would be this node deciding, against
+        // a state it admits it cannot read, and refusing where a node that *can* read it accepts.
+        // That is the divergence rule 1 exists to prevent, and it buys nothing: the object already
+        // answers *cannot resolve*, and goes on doing so whatever arrives.
+        State::Beyond => Ok(()),
         // Evidence, not an account. Nobody controls a contradiction and nothing extends it: it
         // says what it says because of the two signatures it carries, and a second act on it could
         // only muddy what is already settled by its own contents.
         State::Contradiction { .. } => Err(Refused::NotAuthorised),
     }
+}
+
+/// Whether whoever may write on Almena Government did.
+///
+/// **The key alone only while there is nobody to count** (`SPECS.md §7.1`, `§7.9`). Once an owner
+/// exists the threshold decides, exactly as it does for every other organisation — otherwise naming
+/// owners would change nothing, and the anchor of the network would go on being one key wearing the
+/// appearance of a set.
+fn anchored(
+    operation: &Operation,
+    key: &[u8; ed25519::PUBLIC_KEY_WIDTH],
+    body: &crate::entity::Entity,
+    speaks: &Speaks<'_>,
+) -> Result<(), Refused> {
+    let body = body.come_due(operation.issued);
+    if body.owners.is_empty() {
+        return check(operation, key);
+    }
+    let class = if crate::resolution::declared(operation) {
+        crate::entity::Class::Governance
+    } else {
+        Kind::new(operation.kind)
+            .and_then(crate::entity::class)
+            .ok_or(Refused::NotAuthorised)?
+    };
+    enough(operation, speaks.owners, body.thresholds.of(class))
 }
 
 /// Whether whoever the act says is certifying really signed it, at what sealing costs them.
@@ -3748,13 +4399,7 @@ mod tests {
 
         // An act of a kind this build cannot apply, by an authorised signer, on the frozen account.
         let beyond = signed_by_device(
-            following_at(
-                &object,
-                &head,
-                Kind::HOLDER_SET_GUARDIANS,
-                &[7; 33],
-                once_due(),
-            ),
+            following_at(&object, &head, Kind::ENTITY_ADD_OWNER, &[7; 33], once_due()),
             &device,
         );
         assert_eq!(objects.admit(&beyond, once_due()), Ok(Admitted::Extended));
@@ -4247,12 +4892,22 @@ mod tests {
     }
 
     #[test]
-    fn the_same_account_cannot_be_created_twice() {
+    fn the_same_account_is_created_once_however_many_times_it_arrives() {
+        // **One act arriving twice is one act**, which is how delivery works here: acts arrive
+        // twice by design and the second delivery has to leave the record holding what it held.
+        // Said rather than refused, because it is also the only repair available when a write
+        // failed after the act was admitted — a refusal there would make handing it over again,
+        // the obvious thing to try, the one thing that could not mend it.
         let control = control_key(7);
         let mut objects = Objects::new();
         let creation = creation(&control);
         objects.admit(&creation, now()).expect("admitted");
-        assert_eq!(objects.admit(&creation, now()), Err(Refused::AlreadyExists));
+        assert_eq!(objects.admit(&creation, now()), Ok(Admitted::AlreadyHere));
+
+        let Answer::Here(State::Holder(holder)) = objects.resolve(creation.object.name()) else {
+            panic!("one account, and it resolves");
+        };
+        assert_eq!(holder.control, control.verifying_key().bytes());
     }
 
     #[test]
@@ -4330,7 +4985,7 @@ mod tests {
         let head = objects.head(object.name()).expect("a head").clone();
 
         let beyond = signed_by_control(
-            following(&object, &head, Kind::HOLDER_SET_GUARDIANS, &[7; 33]),
+            following(&object, &head, Kind::ENTITY_ADD_OWNER, &[7; 33]),
             &control,
         );
 
@@ -4351,7 +5006,7 @@ mod tests {
 
         let outsider = control_key(200);
         let newer = signed_by_control(
-            following(&object, &head, Kind::HOLDER_SET_GUARDIANS, &[3; 33]),
+            following(&object, &head, Kind::ENTITY_ADD_OWNER, &[3; 33]),
             &outsider,
         );
 
@@ -4605,6 +5260,50 @@ mod tests {
     }
 
     #[test]
+    fn nothing_summarises_a_frozen_account_either() {
+        // **The same rule and the same reason as the entry below**: a summary carries the control
+        // key and the devices, and has nowhere to say the account is stopped. One written over a
+        // freeze would let a reader bootstrap a frozen account as a thawed one — which is the
+        // account somebody froze because their phone was in a stranger's pocket.
+        //
+        // A summary written *before* the freeze is no such hole: a reader takes the last summary
+        // **and everything after it**, so the freeze act is replayed on top of it.
+        let (mut objects, object, control, device) = an_account();
+        let head = objects.head(object.name()).expect("a head").clone();
+        let stopped = signed_by_control(
+            following_at(&object, &head, Kind::HOLDER_FREEZE, &[], once_due()),
+            &control,
+        );
+        objects
+            .admit(&stopped, once_due())
+            .expect("freezing lands at once");
+
+        let hiding = summarising(&objects, &object, &control, once_due());
+        assert_eq!(
+            objects.admit(&hiding, once_due()),
+            Err(Refused::NotAuthorised),
+            "the words may not summarise a stopped account"
+        );
+
+        let head = objects.head(object.name()).expect("a head").clone();
+        let mut theirs = following_at(&object, &head, Kind::HOLDER_CHECKPOINT, &[], once_due());
+        theirs.payload = BTreeMap::from([(
+            crate::checkpoint::FIELD,
+            crate::checkpoint::declaration(
+                &objects
+                    .standing(object.name(), once_due())
+                    .expect("it resolves")
+                    .claims,
+            ),
+        )]);
+        assert_eq!(
+            objects.admit(&signed_by_device(theirs, &device), once_due()),
+            Err(Refused::NotAuthorised),
+            "and a device may not either — on a frozen account only *no* can be said"
+        );
+    }
+
+    #[test]
     fn nothing_summarises_over_an_asking_still_in_flight() {
         // **A summary has nowhere to say what is waiting.** It carries the control key and the
         // devices; an asking in flight leaves no trace in one. And a node serves the last summary
@@ -4658,7 +5357,7 @@ mod tests {
 
         // Once the wait has run out there is nothing for a summary to hide, and it is taken.
         let later = once_due()
-            .plus(Epochs(crate::parameter::CONTROL_WAITS.at(once_due())))
+            .plus(almena_time::deadline::CONTROL_KEY_WAIT.epochs(once_due()))
             .expect("no overflow");
         let honest = summarising(&objects, &object, &control, later);
         assert_eq!(objects.admit(&honest, later), Ok(Admitted::Extended));
@@ -4708,7 +5407,7 @@ mod tests {
         let (mut objects, object, control, _device) = an_account();
         let head = objects.head(object.name()).expect("a head").clone();
         let newer = signed_by_control(
-            following(&object, &head, Kind::HOLDER_SET_GUARDIANS, &[3; 33]),
+            following(&object, &head, Kind::ENTITY_ADD_OWNER, &[3; 33]),
             &control,
         );
 
@@ -4894,7 +5593,7 @@ mod tests {
         let (mut objects, object, control, _device) = an_account();
         let head = objects.head(object.name()).expect("a head").clone();
         let newer = signed_by_control(
-            following(&object, &head, Kind::HOLDER_SET_GUARDIANS, &[3; 33]),
+            following(&object, &head, Kind::ENTITY_ADD_OWNER, &[3; 33]),
             &control,
         );
         assert_eq!(objects.admit(&newer, now()), Ok(Admitted::Extended));
@@ -4920,7 +5619,7 @@ mod tests {
         let (mut objects, object, control, device) = an_account();
         let head = objects.head(object.name()).expect("a head").clone();
         let newer = signed_by_control(
-            following(&object, &head, Kind::HOLDER_SET_GUARDIANS, &[3; 33]),
+            following(&object, &head, Kind::ENTITY_ADD_OWNER, &[3; 33]),
             &control,
         );
         objects.admit(&newer, now()).expect("kept and passed on");
@@ -5013,6 +5712,7 @@ mod tests {
                 speaks: 0,
                 claimed_by: None,
                 reachable: BTreeSet::new(),
+                closed: None,
             }),
             "it has said nothing yet, which is a fact and not a gap"
         );
@@ -5040,6 +5740,7 @@ mod tests {
                 speaks: 2,
                 claimed_by: None,
                 reachable: BTreeSet::new(),
+                closed: None,
             })
         );
         assert_eq!(
@@ -5158,6 +5859,15 @@ mod tests {
         assert_eq!(counted.speaking.get(&2), Some(&2));
         assert_eq!(counted.speaking.get(&1), Some(&1));
         assert_eq!(counted.unreadable, 0);
+
+        // Nobody has claimed any of them, so there are no operators to be concentrated in — which
+        // is a different figure from nobody holding more than one, and is said as itself.
+        assert_eq!(counted.operators, 0);
+        assert_eq!(counted.unclaimed, 3);
+        let interface = counted.concentration[&Capability::Interface];
+        assert_eq!(interface.offering, 2);
+        assert_eq!(interface.most, 0, "nobody offering it has been claimed");
+        assert_eq!(interface.unclaimed, 2);
     }
 
     #[test]
@@ -5356,6 +6066,62 @@ mod tests {
             },
             its_key,
         )
+    }
+
+    #[test]
+    fn how_much_of_a_capability_falls_to_one_operator_is_counted_and_whose_it_is_is_not() {
+        // `SPECS.md §5.2`'s concentration figure. **Numbers and never a name**: who holds the
+        // largest share, published in a record nobody deletes, would be a list of where to attack
+        // assembled by the network about itself — which is why `SPECS.md §5.1` keeps a column
+        // naming who was short out of a summary, and the same argument applies here.
+        let mut objects = Objects::new();
+        let theirs = control_key(121);
+        let creation = creation(&theirs);
+        let one_operator = creation.object.clone();
+        objects.admit(&creation, now()).expect("taken");
+
+        use crate::capability::Capability;
+
+        // Three nodes offering the interface. Two are one operator's, one is nobody's.
+        for which in 0..3u8 {
+            let its_key = control_key(60 + which);
+            let announced =
+                crate::announce::announce(crate::genesis::Which::Development, now(), &its_key);
+            objects.admit(&announced.operation, now()).expect("taken");
+            let head = objects.head(announced.node.name()).expect("a head").clone();
+            let saying = crate::announce::offering(
+                &announced.node,
+                &head,
+                &BTreeSet::from([Capability::Interface]),
+                crate::announce::Speaking {
+                    version: 1,
+                    reachable: &BTreeSet::new(),
+                    issued: now(),
+                    key: &its_key,
+                },
+            );
+            objects.admit(&saying, now()).expect("taken");
+
+            if which < 2 {
+                let head = objects.head(announced.node.name()).expect("a head").clone();
+                let claim = a_claim(&announced.node, &its_key, &one_operator, &theirs, &head);
+                objects.admit(&claim, now()).expect("taken");
+            }
+        }
+
+        let counted = objects.running();
+        let interface = counted.concentration[&Capability::Interface];
+        assert_eq!(interface.offering, 3);
+        assert_eq!(interface.most, 2, "two of the three are one operator's");
+        assert_eq!(
+            interface.unclaimed, 1,
+            "and the denominator travels with it"
+        );
+        assert_eq!(counted.operators, 1);
+        assert_eq!(
+            counted.unclaimed, 1,
+            "the third node — the claimant is a person and is not counted among them"
+        );
     }
 
     #[test]

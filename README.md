@@ -67,13 +67,16 @@ There is no task that installs the four. A command runner cannot install the run
 it, and each of the four is a different act on each operating system; every one of the pages
 above carries its own, for macOS, Windows and Linux alike.
 
-To reach the network, rather than only to build this application, the device also needs
-**IPv6 connectivity**. Almena is an IPv6 network and there is no second address family.
+To reach the network, rather than only to build this application, the device needs a way out to
+the internet and nothing more particular than that. **A node listens on both address families**,
+`/ip6/::` and `/ip4/0.0.0.0`, because a machine that has an address of each is reachable at each
+and which one a caller can use is the caller's business rather than this node's.
 
-Having it is what lets a node take part; being *reachable* at it is a separate fact and not one
-to assume. Most home connections drop what nobody asked for, and nothing here traverses anything
-to get around that. A node that cannot be dialled dials out instead and takes part in full — and
-which of the two it is, the application measures rather than guesses.
+Having an address is what lets a node take part; being *reachable* at it is a separate fact and
+not one to assume. Most home connections drop what nobody asked for, and a node that cannot be
+dialled dials out instead and takes part in full — through a relay where one volunteers to carry
+it, which is what keeps *anybody can run a node* true for a machine behind a household router.
+Which of the two it is, the application measures rather than guesses.
 
 That is all the application needs **to build itself**. To build it with an agent inside it,
 the agent's own requirements apply too — Python 3.14 and `uv`, listed in
@@ -143,9 +146,30 @@ cli/                  the CLI, package `almena-cli`, binary `almena`
 src-tauri/            the windowed application, package `almena-app`
 src/                  its frontend
 crates/
-  almena-log/            the record format both programs write
-  almena-paths/          where a program with no Tauri keeps things
-  almena-agent-protocol/ what the application and an agent say to each other
+  the format everything is written in
+    almena-cbor/           what canonical means here, and the check that says whether bytes are
+    almena-format/         the log entry, the act, and the name an object gets from its own bytes
+    almena-suite/          the one set of algorithms every program signs and hashes with
+    almena-time/           the epoch, and every deadline counted in them
+    almena-frozen/         the checklist a format has to pass before a network opens for good
+  the record, and what a node may say about it
+    almena-store/          the append-only log, the chain each object advances along
+    almena-node/           everything a node does, under whatever is drawing it
+    almena-api/            what can be asked of a node and what comes back
+    almena-serve/          the transport that carries those questions, deciding nothing
+    almena-tls/            the certificate a node serves under, and nothing else about serving
+  reaching other nodes
+    almena-mesh/           how nodes reach each other, and what they are called when they do
+    almena-lookup/         what a zone publishes, and silence told apart from an empty answer
+  what travels between people
+    almena-mailbox/        what a mediator holds for somebody whose device is off
+    almena-credential/     SD-JWT VC, its disclosures, and what verifying one may conclude
+    almena-status/         the bitstring, its cohort, and whether one is fresh enough to use
+    almena-sdk/            what an issuer and a verifier are built on
+  what a program needs and the network does not
+    almena-log/            the record format both programs write
+    almena-paths/          where a program with no Tauri keeps things
+    almena-agent-protocol/ what the application and an agent say to each other
 ```
 
 **A directory at the root is a program; `crates/` holds the libraries they are built from.**
@@ -157,10 +181,11 @@ program is not a library.
 A dependency is named in one place. Members carry `{ workspace = true }` and no version number,
 so two of them cannot end up on two versions of the same crate.
 
-**Each crate is a decision, not a drawer.** `almena-log` owns the shape of a record — the line,
-the sizes a log is bounded by, the names its files take. `almena-paths` owns where a program
-keeps things, for the programs Tauri's resolver does not serve. `almena-agent-protocol` owns
-what this application and an agent may say to each other — a message set with a version number,
+**Each crate is a decision, not a drawer**, and the last group is the one to read that way.
+`almena-log` owns the shape of a record — the line, the sizes a log is bounded by, the names its
+files take. `almena-paths` owns where a program keeps things, for the programs Tauri's resolver
+does not serve. `almena-agent-protocol` owns what this application and an agent may say to each
+other — a message set with a version number,
 framed in MessagePack, naming no graph, no model and no library. Its other half is in another
 repository, in another language, which is the argument for it being a crate at all: held inside
 the application it would become a private detail of the one program that speaks it today, and
@@ -216,10 +241,36 @@ It speaks English and Spanish, from the same two catalogs the screens use — th
 It keeps its records in its own directory, named `network.almena.cli` — not the windowed
 application's. Two applications, two directories, and one day two keys.
 
-There is deliberately no argument naming a peer or a network. This build joins no network, so
-an address would be accepted, used for nothing, and refused by nothing — and refusing an IPv4
-address in any of its disguises is not optional in this project. It arrives with the code that
-can honour it.
+### Opening a network, and the question asked before one is opened for good
+
+A node **opens a network only when there is nobody to join**, which it finds out by reading the
+zone. That is the one defence against the accident that costs the most — a second production
+network beside the first, that nobody can tell apart, because both say the same word about
+themselves.
+
+```bash
+almena --freeze-checklist     # can this format be frozen? nothing is opened
+almena --open-development     # opens dev.almena.network, if nobody is there
+almena --open-production      # opens almena.network. Once, ever
+```
+
+`--resolver <ADDRESS>` asks named servers instead of whatever this machine uses for DNS, for a
+machine whose own resolver is not usable — behind a VPN, pointed at servers it cannot reach, or
+simply answering every other tool on the machine and not this one. A node that cannot look up a
+zone cannot open a network at all, because reading silence as an empty zone is how a second network
+gets started, so being able to name a resolver is the difference between a machine that can take
+part and one that cannot.
+
+The two networks are not one thing with a setting. **Development is re-opened as often as the
+format moves; production is opened once**, and a record is append-only, so whatever is missing on
+the day it opens is missing for as long as that network exists. So the node puts its own freeze
+checklist in front of a production genesis and refuses if anything is wanting — and
+`--freeze-checklist` is the same question with nothing at stake, which is what to read first. Every
+line of it is a probe that runs against this build, not a list somebody keeps up to date.
+
+`--zone` points either of them somewhere else, and `--seed` stands in for a zone that cannot be
+asked. A seed given by hand only ever says *somebody is there*, which is the safe direction: no
+flag can make a node open a network it has not established is missing.
 
 ## What the windowed application answers on a command line
 

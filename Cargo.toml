@@ -15,14 +15,18 @@ members = [
   "crates/almena-agent-protocol",
   "crates/almena-api",
   "crates/almena-cbor",
+  "crates/almena-credential",
   "crates/almena-format",
+  "crates/almena-frozen",
   "crates/almena-log",
   "crates/almena-mailbox",
   "crates/almena-mesh",
   "crates/almena-lookup",
   "crates/almena-node",
   "crates/almena-paths",
+  "crates/almena-sdk",
   "crates/almena-serve",
+  "crates/almena-status",
   "crates/almena-store",
   "crates/almena-suite",
   "crates/almena-time",
@@ -99,9 +103,13 @@ almena-agent-protocol = { path = "crates/almena-agent-protocol" }
 # code or a stream is.
 almena-api = { path = "crates/almena-api" }
 almena-cbor = { path = "crates/almena-cbor" }
+# The credential itself: SD-JWT VC, its disclosures, and what verifying one may conclude. It fetches
+# nothing and trusts nobody — it is given a presentation and a set of facts, and answers.
+almena-credential = { path = "crates/almena-credential" }
 # The log entry, the operation, and the identifier an object takes from the operation that
 # creates it. Replicated in `client`, held to the same golden vectors.
 almena-format = { path = "crates/almena-format" }
+almena-frozen = { path = "crates/almena-frozen" }
 almena-mailbox = { path = "crates/almena-mailbox" }
 almena-log = { path = "crates/almena-log" }
 # Everything a node does. Both faces of the node call this and neither holds logic of its own.
@@ -112,7 +120,13 @@ almena-paths = { path = "crates/almena-paths" }
 # What a node keeps: the append-only log and the chain each object advances along.
 # The transport, which decides nothing: it carries a question to `almena-api` and writes down
 # whatever comes back.
+# What an issuer and a verifier are built on. **In this repository on purpose** (`SPECS.md §13`):
+# the house that validates these rules on one side of the wire writes the library that speaks them
+# on the other, so a disagreement between the two is a bug inside one repository rather than an
+# argument between two.
+almena-sdk = { path = "crates/almena-sdk" }
 almena-serve = { path = "crates/almena-serve" }
+almena-status = { path = "crates/almena-status" }
 almena-store = { path = "crates/almena-store" }
 almena-suite = { path = "crates/almena-suite" }
 # The epoch, and every deadline the protocol counts in them. Replicated in `client` rather than
@@ -198,6 +212,11 @@ hmac = "0.12"
 # generator — so the need lands here instead. This is the operating system's own source and
 # carries no algorithm of its own: one crate, and nothing to get wrong.
 getrandom = "0.3"
+# The one compression this project does, and it is not a choice: the W3C Bitstring Status List
+# fixes GZIP, and a list encoded any other way is one nothing else can read. Pure Rust
+# (`miniz_oxide`) rather than the zlib backend, for the cross-compilation story `SPECS.md §4.11`
+# picked the whole cryptographic suite for.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 # What carries the node's interface. `hyper` is already in this workspace at exactly this version,
 # built for the windowed application's updater — turning on its server side is a smaller supply

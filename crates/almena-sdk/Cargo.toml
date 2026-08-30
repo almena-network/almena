@@ -1,0 +1,20 @@
+[package]
+name = "almena-sdk"
+description = "What an issuer and a verifier are built on: issuing against a template, asking against one, and deciding what a presentation proved"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+almena-credential = { workspace = true }
+almena-format = { workspace = true }
+almena-status = { workspace = true }
+almena-store = { workspace = true }
+almena-suite = { workspace = true }
+almena-time = { workspace = true }
+serde_json = { workspace = true }

@@ -135,6 +135,19 @@ impl Kind {
     pub const NODE_UNBIND: Kind = Kind(45);
     /// `summary` on a node.
     pub const NODE_SUMMARY: Kind = Kind(46);
+    /// `close` on a node: the one way out of a node whose key is somebody else's.
+    ///
+    /// **A node closes; it does not rotate** (`SPECS.md §4.1`). What a rotation preserves is an
+    /// identity with something behind it — credentials issued in that name, a seal, open
+    /// relationships — and a node has none of that: its name appears in its own roots and in the
+    /// census the share-out is drawn from, and the roots it already signed stay where they are,
+    /// true, signed by the key that signed them. A new node starts with no history and has lost
+    /// none.
+    ///
+    /// And it *could* not rotate the way an organisation does. The only thing that governs a node
+    /// is its own key — there are no owners to count a threshold over — so a rotation would have to
+    /// be signed by the very key that was lost, and whoever took it would rotate first.
+    pub const NODE_CLOSE: Kind = Kind(53);
 
     // Contradiction
     /// `publish` on a contradiction.
@@ -203,7 +216,7 @@ impl Kind {
     }
 
     /// Every act this build knows, in the order they are numbered.
-    pub const ALL: [Self; 52] = [
+    pub const ALL: [Self; 53] = [
         Self::HOLDER_CREATE,
         Self::HOLDER_ADD_DEVICE,
         Self::HOLDER_REMOVE_DEVICE,
@@ -256,6 +269,7 @@ impl Kind {
         Self::VOTE_CAST,
         Self::GENESIS,
         Self::REPLY_PUBLISH,
+        Self::NODE_CLOSE,
     ];
 }
 
@@ -275,7 +289,7 @@ mod tests {
         // catches a number typed twice or skipped — either of which would be an act nobody could
         // name, or two acts nobody could tell apart.
         let numbers: Vec<u64> = Kind::ALL.iter().map(|kind| kind.number()).collect();
-        assert_eq!(numbers, (1..=52).collect::<Vec<u64>>());
+        assert_eq!(numbers, (1..=53).collect::<Vec<u64>>());
     }
 
     #[test]

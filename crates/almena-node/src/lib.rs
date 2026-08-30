@@ -47,6 +47,7 @@
 
 pub mod directory;
 pub mod facade;
+pub mod found;
 pub mod identity;
 pub mod peer;
 pub mod record;
@@ -181,20 +182,31 @@ pub struct Saying<'a> {
     pub reachable: &'a std::collections::BTreeSet<String>,
 }
 
-/// What an observer has to say about a day.
+/// What an observer has to say about a day, beyond what it wrote down asking by asking.
 ///
-/// Two things that do not go in the same place and must not be mixed: what it saw of **other
-/// nodes**, which names them, and what it went looking for **itself**, which names nobody. Which
-/// things fall to which node comes from a census, and an observer behind on the record has a
-/// smaller one — so a miss filed against a node would be a figure about the observer's own position
-/// wearing somebody else's name.
+/// **Only the half that names nobody.** What was seen of other nodes is not passed in any more: it
+/// is worked out from the askings this node recorded as they happened, so that the figures a
+/// summary publishes and the observations its hash pins are the same list read two ways. Passing
+/// the figures in separately is what let them differ, and a hash over figures commits to nothing.
+///
+/// What stays here is what this node went looking for **itself**, which names nobody. Which things
+/// fall to which node comes from a census, and an observer behind on the record has a smaller one —
+/// so a miss filed against a node would be a figure about the observer's own position wearing
+/// somebody else's name.
 #[derive(Debug, Clone, Copy)]
-pub struct Watched<'a> {
-    /// What was seen of each node: how often it was asked and how often it answered.
-    pub seen: &'a std::collections::BTreeMap<Did, almena_store::summary::Seen>,
+pub struct Watched {
     /// How much of what this node went looking for it found.
     pub looked: almena_store::summary::Looked,
 }
+
+/// How many days of raw observations a node keeps.
+///
+/// **Three, because what they are for is checking a summary that was published recently.** They
+/// never enter the record and nothing else ages them out, so this is the whole of what bounds them.
+/// A day whose summary is older than this is one whose observations this node no longer offers —
+/// which is what `SPECS.md §5.1` means by *served by whoever made them, for as long as they keep
+/// them*, said as a number instead of left to be discovered.
+const DAYS_WATCHED: usize = 3;
 
 /// How much of a record to hand over at a time.
 ///
@@ -207,6 +219,21 @@ pub struct Page {
     pub at_most: usize,
     /// How many bytes of acts at most, except that one act always fits.
     pub weighing_at_most: usize,
+}
+
+/// The acts of one object, as far as a page reaches, and where to carry on from.
+///
+/// **The cursor is the point.** A page with a bound and no cursor is one a caller cannot tell from
+/// the whole of a chain: they fold what arrived, land on a state from earlier, and nothing anywhere
+/// says so. Every other paged answer here says where it stopped, and now this one does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Composing {
+    /// The acts, oldest first, in the bytes their authors signed.
+    pub acts: Vec<Vec<u8>>,
+    /// The last act handed over, when there are more after it on this branch.
+    ///
+    /// [`None`] is the whole of what was owed. Asking again with this as `after` continues.
+    pub more: Option<Name>,
 }
 
 /// What a node reports about itself, for whoever is drawing it.
@@ -252,6 +279,18 @@ pub enum Claimed {
     NotTheirs,
 }
 
+/// Why a node did not keep a status list's bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotKept {
+    /// No list in the record names those bytes as its current version.
+    ///
+    /// Which is also what an **old** version comes back as: the record names one version per list,
+    /// and anything else is bytes somebody wanted stored.
+    NotNamed,
+    /// The window it covers has passed, so nothing it says is about a credential still alive.
+    WindowPast,
+}
+
 /// What one node holds, and everything it can do.
 ///
 /// It prints without its key, because a signing key has no `Debug` and should not get one: a
@@ -282,7 +321,17 @@ pub struct Node {
     /// **This node's own observation, and it never goes into the record.** Where a node says it is,
     /// is its own word in a place everybody holds; where this one found it is one node's experience,
     /// and putting the second into the first would make somebody's experience everybody's truth.
-    found_at: BTreeMap<[u8; ed25519::PUBLIC_KEY_WIDTH], std::collections::BTreeSet<String>>,
+    /// **Bounded**, because it is the one thing here that grows without anybody signing anything:
+    /// a connection is all it takes to be remembered and a key costs nothing to make. What it drops
+    /// is what has gone longest unseen, which is what this is least use for.
+    found_at: crate::found::Found,
+    /// What this node saw of the others, asking by asking, by the day it saw it in.
+    ///
+    /// **What a summary is really drawn from.** The record carries a day's figures and the hash of
+    /// what they came from; this is what they came from, and it never goes into the record — fifty
+    /// nodes watching each other would make the record almost entirely telemetry. It is served to
+    /// whoever wants to check the hash, for as long as this node keeps it.
+    watching: BTreeMap<almena_time::Day, almena_store::watching::Watching>,
     /// The instant this network's epoch zero began, in seconds since the Unix epoch.
     ///
     /// **The only wall-clock reading this platform ever writes down**, fixed by the act that opened
@@ -299,6 +348,18 @@ pub struct Node {
     /// knows how big, and moving to another mediator costs the sender an address and nobody a
     /// history (`SPECS.md §6.2`).
     post: almena_mailbox::mediator::Mediator,
+    /// The status lists this node is serving, by the hash of the version it holds.
+    ///
+    /// **Opaque bytes, addressed by hash, and never understood** (`SPECS.md §10.2`, `§4.8`). A node
+    /// replicating one does not read a bitstring: it holds what it was handed and answers whether
+    /// it matches the version the record names. That is what makes *any source will do* true, and
+    /// it is what keeps a format change out of every node in the network.
+    ///
+    /// Outside the record, like the post, and for a plainer reason: `SPECS.md §10.2` keeps no
+    /// history of contents. Only the version in force is held, and a list whose window has passed
+    /// is dropped whole — which needs no operation, because the credentials it covered carry their
+    /// expiry signed inside them.
+    lists: BTreeMap<Vec<u8>, Vec<u8>>,
     /// Where what it accepts is kept, when it is kept anywhere.
     ///
     /// [`None`] is a node that will not survive its own process. It is a real state and not a
@@ -328,9 +389,16 @@ impl Node {
     /// second production network by carelessness — one nobody can tell from the first, because
     /// both would say exactly the same word about themselves.
     ///
+    /// **Production is opened once**, so before it is, the format this build writes is held to the
+    /// checklist of [`almena_frozen`]: a record is append-only, and whatever is missing on the day
+    /// a network opens is missing for as long as that network exists. Development is not asked,
+    /// because development is re-opened whenever the format moves — which is the whole of why the
+    /// two are different networks rather than one with a flag.
+    ///
     /// # Errors
     ///
-    /// [`genesis::Refused`], saying whether somebody else is already here or this node is.
+    /// [`genesis::Refused`], saying whether somebody else is already here, this node is, or the
+    /// format is not one a network may be opened on for good.
     pub fn open(
         opening: &Opening,
         seeds: &[String],
@@ -371,6 +439,18 @@ impl Node {
         key: ed25519::SigningKey,
         record: Option<record::Record>,
     ) -> Result<Self, genesis::Refused> {
+        // **Asked before anything is built, and only of production** (`SPECS.md §4.3`, `§18`). The
+        // one moment this question is worth putting is the moment before a record exists: after it,
+        // there is nothing to do with the answer.
+        if opening.which == Which::Production {
+            let wanting: Vec<String> = almena_frozen::wanting()
+                .into_iter()
+                .map(|item| item.called)
+                .collect();
+            if !wanting.is_empty() {
+                return Err(genesis::Refused::TheFormatIsNotFrozen(wanting));
+            }
+        }
         let opened = genesis::open(opening, seeds, false, government)?;
         let announced = announce::announce(opening.which, opening.beginning, &key);
 
@@ -382,9 +462,11 @@ impl Node {
             objects: Objects::new(),
             roots: Roots::new(),
             key,
-            found_at: BTreeMap::new(),
+            found_at: crate::found::Found::new(),
+            watching: BTreeMap::new(),
             began: opening.began,
             post: almena_mailbox::mediator::Mediator::new(),
+            lists: BTreeMap::new(),
             record,
         };
 
@@ -444,7 +526,14 @@ impl Node {
         // design, and a second copy in the record would be a second position in the tree, a second
         // line in the log, and — because the record is what a restart replays — a duplicate that
         // came back every morning.
-        if admitted == Admitted::AlreadyHere {
+        //
+        // **Unless there is no line for it**, which is the one case where *already here* is not
+        // true of the whole node. Admission moves memory and the writing comes after it, so a disk
+        // that refused left the act applied and unwritten — and a plain short-circuit here would
+        // make the obvious repair, handing it over again, the one thing that could not fix it. So
+        // the question asked is whether **this node has a line saying that act happened**, not
+        // whether the chain has seen it.
+        if admitted == Admitted::AlreadyHere && self.log.knows(&operation.called()) {
             return Ok(self.stamped(admitted, now));
         }
 
@@ -550,7 +639,7 @@ impl Node {
     ///
     /// Returns how many it let go of.
     pub fn let_go_of_what_is_not_mine(&mut self, now: Epoch) -> usize {
-        let (network, census) = self.share_out();
+        let (network, census) = self.share_out(now);
         let drawn = almena_store::share::Drawn::at(&network, now, &census);
         let mine = self.did.name().clone();
 
@@ -567,6 +656,34 @@ impl Node {
             .iter()
             .filter(|thing| self.log.let_go(thing))
             .count()
+    }
+
+    /// The acts this node knows happened, has not got, and is supposed to hold.
+    ///
+    /// **The share-out moves every month, so what falls here is not what fell here.** A node that
+    /// only ever let go would be quietly short of everything that moved *towards* it — nothing
+    /// would be wrong with any single answer it gave, and only somebody asking would find out.
+    ///
+    /// It is the same three tests letting go uses, read the other way round: this node's own chain
+    /// and what everybody keeps are always owed, and everything else is owed exactly where the
+    /// share-out deals it here. Asking for what is *not* owed would be worse than not asking —
+    /// letting go runs on the same tick, so the thing would be fetched and dropped for ever.
+    #[must_use]
+    pub fn owed(&self, now: Epoch) -> Vec<Name> {
+        let (network, census) = self.share_out(now);
+        let drawn = almena_store::share::Drawn::at(&network, now, &census);
+        let mine = self.did.name().clone();
+
+        self.log
+            .missing_on()
+            .into_iter()
+            .filter(|(thing, object)| {
+                *object == mine
+                    || self.objects.everybody_keeps(object)
+                    || drawn.falls_to(thing, &mine, COPIES_OF_HISTORY)
+            })
+            .map(|(thing, _)| thing)
+            .collect()
     }
 
     /// The acts this node knows happened and has not got.
@@ -831,7 +948,13 @@ impl Node {
     /// comes back and the two acts claiming one predecessor are there to be seen. Picking a side
     /// would be the one thing no node may do.
     #[must_use]
-    pub fn state_of(&self, object: &Did, page: Page, now: Epoch) -> Answered<Vec<Vec<u8>>> {
+    pub fn state_of(
+        &self,
+        object: &Did,
+        after: Option<&Name>,
+        page: Page,
+        now: Epoch,
+    ) -> Answered<Option<Composing>> {
         let held = self.log.chain_of(object);
         let split = matches!(
             self.objects.resolve(object.name()),
@@ -857,10 +980,24 @@ impl Node {
                 .unwrap_or(walked.len())
         };
         let wanted = since.saturating_add(1).min(walked.len());
-        let from = walked.len().saturating_sub(wanted);
+        let from = match after {
+            // **Continuing where the last page stopped.** The cursor names the last act handed
+            // over, so the next one starts after it — and the summary arithmetic above no longer
+            // applies, because whoever is asking already holds the summary and everything up to
+            // here.
+            Some(cursor) => match walked.iter().position(|entry| &entry.hash == cursor) {
+                Some(at) => at + 1,
+                // A cursor this node cannot place on this branch. **Answered as nothing rather
+                // than as the start**: handing back the first page to somebody who asked for the
+                // fourth would look like an answer and be a different one.
+                None => return self.stamped(None, now),
+            },
+            None => walked.len().saturating_sub(wanted),
+        };
 
         let mut acts = Vec::new();
         let mut weight = 0;
+        let mut more = None;
         for entry in &walked[from..] {
             let Some(act) = self.log.act(&entry.hash) else {
                 continue;
@@ -870,12 +1007,18 @@ impl Node {
             if !acts.is_empty()
                 && (acts.len() >= page.at_most || weight + act.len() > page.weighing_at_most)
             {
+                // **Where it stopped, so that stopping is something the caller is told.** Without
+                // it a page is indistinguishable from the whole of it, and whoever folded the
+                // answer would land on a state from earlier and have no way to know.
+                more = acts
+                    .last()
+                    .map(|_| walked[from + acts.len() - 1].hash.clone());
                 break;
             }
             weight += act.len();
             acts.push(act.to_vec());
         }
-        self.stamped(acts, now)
+        self.stamped(Some(Composing { acts, more }), now)
     }
 
     /// Where an object stands on summarising itself, and the summary it would sign.
@@ -899,19 +1042,29 @@ impl Node {
     /// computes the same way from what everybody has, which is what makes a node that has not got
     /// what falls to it visibly short rather than merely suspected.
     ///
-    /// The census is every node the record names, including ones that announced once and were never
-    /// heard from again. Telling those apart needs measurement this does not have, and counting them
-    /// is the safe way round: it assigns work to nodes that may not do it, and the shortfall then
-    /// shows up as a shortfall rather than being hidden by shrinking what was expected.
+    /// The census is every node the record names **that has not closed**, including ones that
+    /// announced once and were never heard from again. Telling those apart needs measurement this
+    /// does not have, and counting them is the safe way round: it assigns work to nodes that may
+    /// not do it, and the shortfall then shows up as a shortfall rather than being hidden by
+    /// shrinking what was expected.
+    ///
+    /// **A node that has closed is a different case and is left out** (`SPECS.md §4.1`): it said it
+    /// was going, so assigning it work would be assigning work to somebody who is not there, and
+    /// counting it as absent would be a figure about the same. Everything it ever said stays in the
+    /// record and is still read.
+    ///
+    /// Asked at a moment, because *closed* is a moment: a share-out drawn for an epoch before a node
+    /// closed has to be the same share-out afterwards, or the past would move under whoever is
+    /// checking it.
     #[must_use]
-    pub fn share_out(&self) -> (Name, Vec<&Name>) {
-        (self.network().clone(), self.objects.nodes().collect())
+    pub fn share_out(&self, at: Epoch) -> (Name, Vec<&Name>) {
+        (self.network().clone(), self.objects.nodes_at(at).collect())
     }
 
     /// Whether a thing falls to this node in the share-out.
     #[must_use]
     pub fn falls_to_me(&self, thing: &Name, copies: Parameter, at: Epoch) -> bool {
-        let (network, census) = self.share_out();
+        let (network, census) = self.share_out(at);
         almena_store::share::Drawn::at(&network, at, &census).falls_to(
             thing,
             self.did.name(),
@@ -922,7 +1075,7 @@ impl Node {
     /// Which nodes are expected to hold a thing.
     #[must_use]
     pub fn holders_of(&self, thing: &Name, copies: Parameter, at: Epoch) -> Answered<Vec<Did>> {
-        let (network, census) = self.share_out();
+        let (network, census) = self.share_out(at);
         let holders = almena_store::share::Drawn::at(&network, at, &census)
             .holders(thing, copies)
             .into_iter()
@@ -1007,6 +1160,42 @@ impl Node {
         self.stamped(self.objects.running(), now)
     }
 
+    /// How the network's trust anchor stands against what `SPECS.md §7.1` asks of it.
+    ///
+    /// **Published rather than judged, and this is the whole of what holds the line.** The
+    /// composition is configuration and not protocol: how many owners Almena has is its own to
+    /// change by governance, exactly as for every other organisation, so nothing here refuses
+    /// anything. What is not optional is *saying it* — while Almena is a set of keys in one pair of
+    /// hands, the trust anchor of the network is a person, and `SPECS.md §7.1` puts that beside
+    /// `SPECS.md §7.7`'s single-owner warning as its close relative.
+    ///
+    /// Three of the four criteria are here because they are owners and thresholds. The fourth — no
+    /// more than half of them in one organisation or jurisdiction — cannot be: owners are root
+    /// identifiers and root identifiers are anonymous (`SPECS.md §8.1`), so it is a declaration
+    /// Almena makes and not something a node reads.
+    ///
+    /// [`None`] where this node cannot resolve its own government, which is its own ignorance and
+    /// not an answer about the anchor.
+    #[must_use]
+    pub fn anchor(&self, now: Epoch) -> Answered<Option<Anchor>> {
+        let held = match self.objects.resolve(self.government.name()) {
+            almena_store::chain::Answer::Here(almena_store::chain::State::Government {
+                body,
+                ..
+            }) => {
+                let body = body.come_due(now);
+                Some(Anchor {
+                    owners: body.owners.len(),
+                    thresholds: body.thresholds,
+                    one_pair_of_hands: almena_store::government::one_pair_of_hands(&body),
+                    wanting: almena_store::government::counted(&body),
+                })
+            }
+            _ => None,
+        };
+        self.stamped(held, now)
+    }
+
     /// Everything in the catalogue this node holds, by what each object is.
     ///
     /// **Names and not entries**, so that whoever asked composes each one from its own acts and
@@ -1021,6 +1210,81 @@ impl Node {
         self.stamped(self.objects.catalogue(), now)
     }
 
+    /// The bytes of a status list version, where this node is holding them.
+    ///
+    /// **By hash, because the hash is the whole of the question** (`SPECS.md §10.2`). Whoever asks
+    /// already knows which version the record names; what a node adds is a copy of the bytes, and
+    /// either they match or they do not.
+    #[must_use]
+    pub fn list(&self, version: &[u8]) -> Option<Vec<u8>> {
+        self.lists.get(version).cloned()
+    }
+
+    /// Take a status list's bytes, if the record names them.
+    ///
+    /// **Checked against the record and never against the sender.** A node keeps what the record
+    /// says is the current version of some list; anything else is bytes somebody wanted stored, and
+    /// a node that took those would be a node anybody can fill.
+    ///
+    /// It does **not** check that the share-out deals this list to this node: the assignment says
+    /// what a node is short of if it does not have it (`SPECS.md §4.6`), never what it is forbidden
+    /// to hold. A node that serves more than its share serves more copies of a public list, which
+    /// is the direction that costs nobody anything.
+    ///
+    /// # Errors
+    ///
+    /// [`NotKept`], telling apart bytes no list in the record names from a version that is no
+    /// longer the one in force and from a window that has already passed.
+    pub fn keep_list(&mut self, bytes: Vec<u8>, now: Epoch) -> Result<Name, NotKept> {
+        let version = almena_suite::digest::Digest::of(&bytes).bytes().to_vec();
+        let clock = self.clock().ok_or(NotKept::NotNamed)?;
+        let held = self
+            .objects
+            .status_lists()
+            .into_iter()
+            .find(|kept| kept.version == version)
+            .ok_or(NotKept::NotNamed)?;
+        // **Only the version in force** (`SPECS.md §10.2`): no history of contents is kept, so an
+        // older version is not something to store, it is something nobody may use.
+        if held.cohort.past(&clock, now) {
+            return Err(NotKept::WindowPast);
+        }
+        self.lists.insert(version, bytes);
+        Ok(held.list)
+    }
+
+    /// Let go of every list whose window has passed.
+    ///
+    /// **No operation, and nothing to consult** (`SPECS.md §10.2`). Every credential the list
+    /// covered carries its expiry signed inside it and cannot move, so all of them are dead and the
+    /// list can be thrown away whole rather than pruned — the same shape a closed entity already
+    /// has in `SPECS.md §12.1`.
+    pub fn forget_past_lists(&mut self, now: Epoch) {
+        let Some(clock) = self.clock() else {
+            return;
+        };
+        let living: std::collections::BTreeSet<Vec<u8>> = self
+            .objects
+            .status_lists()
+            .into_iter()
+            .filter(|kept| !kept.cohort.past(&clock, now))
+            .map(|kept| kept.version)
+            .collect();
+        // **And a version the record no longer names goes too.** Holding it would be holding a copy
+        // of something no verifier may use, and serving it would be serving a stale answer to
+        // somebody who has to compare it against the record anyway.
+        self.lists.retain(|version, _| living.contains(version));
+    }
+
+    /// This network's clock, which is its genesis instant and the arithmetic hanging from it.
+    ///
+    /// **[`None`] where the figure the record carries is no instant at all**, which refuses to
+    /// answer rather than counting from the Unix epoch: a clock from a moment nobody fixed would
+    /// put every window in the wrong place and say nothing about having done so.
+    fn clock(&self) -> Option<almena_time::Clock> {
+        almena_time::Clock::from_unix(self.began)
+    }
+
     /// Take note of having actually reached somebody somewhere.
     ///
     /// **Kept apart from the record, and never written into it.** Where a node says it is, is its
@@ -1031,18 +1295,15 @@ impl Node {
     /// By key, because that is what a connection proves somebody holds — the name it answers to is
     /// a separate question, and one the record may not be able to answer yet.
     pub fn reached(&mut self, key: [u8; ed25519::PUBLIC_KEY_WIDTH], at: String) {
-        self.found_at.entry(key).or_default().insert(at);
+        self.found_at.reached(&key, at);
     }
 
     /// Where this node has really reached whoever holds that key.
     ///
     /// Empty is *this node has not reached them*, which is not *they are nowhere*.
     #[must_use]
-    pub fn found_at(
-        &self,
-        key: &[u8; ed25519::PUBLIC_KEY_WIDTH],
-    ) -> std::collections::BTreeSet<String> {
-        self.found_at.get(key).cloned().unwrap_or_default()
+    pub fn found_at(&self, key: &[u8; ed25519::PUBLIC_KEY_WIDTH]) -> Vec<String> {
+        self.found_at.at(key)
     }
 
     /// Where the record says a node can be reached.
@@ -1151,6 +1412,29 @@ impl Node {
             return false;
         };
         let said = almena_store::bind::unbind(&self.did, &head, now, &self.key);
+        self.submit(&said, now).is_ok()
+    }
+
+    /// Close this node: say it stops counting from here.
+    ///
+    /// **The one way out of a node whose key is somebody else's** (`SPECS.md §4.1`). A node does not
+    /// rotate — what a rotation preserves is an identity with something behind it, and a node has
+    /// none: its roots stay where they are, signed by the key that signed them, and a new node
+    /// starts with no history and has lost none. It could not rotate either, because the only thing
+    /// that governs a node is the very key that was lost.
+    ///
+    /// What it costs is nothing that was said: closing is a state and never a deletion, and this
+    /// node's roots, summaries and everything it replicated stay in the record and go on being
+    /// read. What changes is the census the share-out is drawn from — no work is assigned to it and
+    /// it is not counted as absent either, because it is not there.
+    ///
+    /// **It does not come back.** Coming back means announcing a new node, with a new key and a new
+    /// name; one that returned would bring whoever took its key back with it.
+    pub fn close_itself(&mut self, now: Epoch) -> bool {
+        let Some(head) = self.objects.head(self.did.name()).cloned() else {
+            return false;
+        };
+        let said = almena_store::announce::close(&self.did, &head, now, &self.key);
         self.submit(&said, now).is_ok()
     }
 
@@ -1454,9 +1738,11 @@ impl Node {
             objects: Objects::new(),
             roots: Roots::new(),
             key,
-            found_at: BTreeMap::new(),
+            found_at: crate::found::Found::new(),
+            watching: BTreeMap::new(),
             began: genesis::began(&opening).ok_or(record::NotReadable::Unreadable)?,
             post: almena_mailbox::mediator::Mediator::new(),
+            lists: BTreeMap::new(),
             record: None,
         };
 
@@ -1466,10 +1752,25 @@ impl Node {
         for act in acts {
             let operation = operation_from(act).ok_or(record::NotReadable::Unreadable)?;
             let at = operation.issued;
-            let admitted = node
-                .objects
-                .admit(&operation, at)
-                .map_err(|_| record::NotReadable::Refused)?;
+            let admitted = match node.objects.admit(&operation, at) {
+                Ok(admitted) => admitted,
+                // **An act this build will not take that an earlier one did.** Rules tighten, and a
+                // record outlives the build that wrote it — so this is a real state and refusing to
+                // come up over it is the worst answer available. `SPECS.md §4.8` rule 1 is that a
+                // node stores and propagates every act whether it understands it or not, and a node
+                // that will not start has stopped replicating altogether: the fork between versions
+                // that rule exists to prevent, arriving as an outage rather than as a disagreement.
+                //
+                // So the act is kept, its line is kept — the tree over those lines is what this
+                // node signed, and one rebuilt without them would contradict a root it published —
+                // and the object stops resolving, which is rule 2. Nothing is claimed about it and
+                // nothing is served from before the act.
+                Err(_) => {
+                    node.objects.beyond(operation.object.name());
+                    node.log.append(&operation, subject_of(&operation));
+                    continue;
+                }
+            };
             // **Written down only if it was taken**, exactly as when it arrived the first time. An
             // act already held is not written twice: a second copy would be a second leaf in the
             // tree for one act, so two nodes handed the same acts in different numbers of copies
@@ -1657,17 +1958,23 @@ impl Node {
     ///
     /// Returns whether it was written. A day still happening, or one with nobody but this node in
     /// it, is not summarised: either would compare with nothing.
-    pub fn summarise(&mut self, day: almena_time::Day, watched: Watched<'_>, now: Epoch) -> bool {
-        let Watched { seen, looked } = watched;
-        if !almena_store::summary::worth_writing(&self.did, day, seen, now) {
+    pub fn summarise(&mut self, day: almena_time::Day, watched: Watched, now: Epoch) -> bool {
+        let Watched { looked } = watched;
+        let Some(watching) = self.watching.get(&day) else {
+            // Nothing was watched that day, so there is nothing to summarise and nothing a hash
+            // could pin. An observer with no observations has no account to be held to.
+            return false;
+        };
+        // **The figures and the hash come from one list, read two ways.** The other way round — a
+        // hash over the figures being published — commits to nothing: it checks out against the act
+        // carrying them whatever they say, and an observer that watched nobody passes exactly as
+        // well as one that watched everybody. What this pins is the observations, so that having
+        // published it the observer cannot later produce a different account of what it saw.
+        let drawn_from = watching.digest();
+        let seen = watching.seen(&|of| self.node_of(of, now));
+        if !almena_store::summary::worth_writing(&self.did, day, &seen, now) {
             return false;
         }
-        // The hash of what it was drawn from. **Not of what is about to be published**: a hash of
-        // the figures themselves would check out against the act carrying them whatever they said,
-        // so an observer that watched nobody would pass exactly as well as one that watched
-        // everybody. What it pins is the observations, so that having published it, the observer
-        // cannot later produce a different account of what it saw.
-        let drawn_from = Digest::of(&summarised(seen));
         let Some(head) = self.objects.head(self.did.name()).cloned() else {
             // A node with no chain has not announced itself, so it has nothing to add to.
             return false;
@@ -1679,11 +1986,49 @@ impl Node {
                 by: &self.key,
             },
             day,
-            seen,
+            &seen,
             looked,
             drawn_from,
         );
         self.submit(&written.operation, now).is_ok()
+    }
+
+    /// Take note of one question put to one peer, and what came of it.
+    ///
+    /// **Written down as it happens, and it is what the day's summary is drawn from.** Kept by the
+    /// day it fell in, so that a summary is over a window and not over whatever had accumulated
+    /// when somebody asked for one.
+    pub fn watched(&mut self, day: almena_time::Day, noted: almena_store::watching::Noted) {
+        self.watching.entry(day).or_default().wrote(noted);
+        // **Only a few days are kept**, because these never enter the record and nothing ages them
+        // out but this. What they are for is checking a summary that was published recently; a day
+        // whose summary is older than that is one whose observations this node no longer offers,
+        // which is what `SPECS.md §5.1` means by *for as long as they keep them*.
+        while self.watching.len() > DAYS_WATCHED {
+            let Some(oldest) = self.watching.keys().next().copied() else {
+                break;
+            };
+            self.watching.remove(&oldest);
+        }
+    }
+
+    /// What this node saw on that day, asking by asking, or nothing where it kept none.
+    ///
+    /// **The thing a summary's hash is a promise about.** Without it the hash is a promise that
+    /// could be kept rather than one that is.
+    #[must_use]
+    pub fn watching(&self, day: almena_time::Day) -> Option<&almena_store::watching::Watching> {
+        self.watching.get(&day)
+    }
+
+    /// The name the record knows a peer by, from the key a connection proved they hold.
+    ///
+    /// A peer it cannot name is nobody here: a figure filed against no name is a figure about
+    /// nobody, and one filed against a guess is worse. The observation itself is kept either way —
+    /// it is what this node really saw.
+    fn node_of(&self, of: &[u8], now: Epoch) -> Option<Did> {
+        let key: [u8; ed25519::PUBLIC_KEY_WIDTH] = of.try_into().ok()?;
+        self.node_called(&key, now).answer
     }
 
     /// This node's word that it saw somebody else's root.
@@ -1719,25 +2064,6 @@ impl Node {
             answer,
         }
     }
-}
-
-/// The observations a summary was drawn from, in bytes anybody can hash the same way.
-///
-/// **Not the summary itself.** Hashing what is already in the act would be a claim vouching for
-/// itself; this is the working, so that whoever holds it can check the summary against it.
-fn summarised(seen: &std::collections::BTreeMap<Did, almena_store::summary::Seen>) -> Vec<u8> {
-    let watched = seen
-        .iter()
-        .map(|(node, seen)| {
-            almena_format::cbor::Value::Array(vec![
-                almena_format::cbor::Value::Text(node.to_string()),
-                almena_format::cbor::Value::Uint(seen.asked),
-                almena_format::cbor::Value::Uint(seen.answered),
-                almena_format::cbor::Value::Uint(seen.behind),
-            ])
-        })
-        .collect();
-    almena_format::cbor::Value::Array(watched).to_bytes()
 }
 
 /// One act, out of the bytes it was written down in.
@@ -1782,6 +2108,23 @@ fn subject_of(operation: &Operation) -> Option<Did> {
     // proof rebuilds the entry from. Deciding it here as well would be two answers to one question,
     // and the day they differed an honest proof for an honest act would be refused.
     almena_store::subject_of(operation)
+}
+
+/// How the network's trust anchor stands, as the record has it.
+///
+/// **Facts and no verdict**, which is the same discipline every other figure this node publishes
+/// follows: it says how many and what it costs, and whoever is relying on the seal decides what
+/// that is worth to them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Anchor {
+    /// How many owners it has. Nought is the state a network opens in.
+    pub owners: usize,
+    /// What each class of act costs them.
+    pub thresholds: almena_store::entity::Thresholds,
+    /// Whether the key the genesis gave it is still what signs.
+    pub one_pair_of_hands: bool,
+    /// What `SPECS.md §7.1` asks that the record does not yet show.
+    pub wanting: Vec<almena_store::government::Wanting>,
 }
 
 /// Whether any act this build knows how to write down can be about somebody else.
@@ -2178,6 +2521,247 @@ mod tests {
         let node = opened();
         assert_eq!(node.written(), 2, "opening it, and joining it");
         assert_eq!(node.network(), node.government().name());
+    }
+
+    #[test]
+    fn a_production_network_is_opened_against_the_frozen_format_and_development_is_not() {
+        // **Both halves matter.** A record is append-only, so what is missing on the day production
+        // opens is missing for as long as that network exists — and development is re-opened every
+        // time the format moves, which is why it is a second network rather than a flag.
+        //
+        // What this cannot show is the refusal, because there is nothing here that could make the
+        // checklist fail on purpose without lying to it. What it shows is the link: the same
+        // question the gate puts is put here, and a production network opens only while the answer
+        // is empty. The items themselves are held to in `almena_frozen`.
+        assert!(
+            almena_frozen::wanting().is_empty(),
+            "the format this build writes: {:#?}",
+            almena_frozen::wanting()
+        );
+        assert!(
+            Node::open(&at(Which::Production), &[], &key(5), key(6)).is_ok(),
+            "and so a production network may be opened on it"
+        );
+        assert!(Node::open(&at(Which::Development), &[], &key(5), key(6)).is_ok());
+    }
+
+    #[test]
+    fn an_act_the_disk_refused_is_mended_by_being_handed_over_again() {
+        // **A real state, and the repair for it has to be the obvious one.** Admission moves memory
+        // and the writing comes after, so a disk that refuses leaves the act applied and in neither
+        // the log nor the record. What must not happen is what used to: handing it over again
+        // answered *already here* and wrote nothing, so the only thing that mended it was a
+        // restart — the one repair nobody thinks to try and the one that costs the most.
+        let scratch = Scratch::new("refused-write");
+        let mut node = Node::open_in(&scratch.0, &at(Which::Development), &[], &key(5), key(6))
+            .expect("nobody to join");
+        let written = node.written();
+
+        node.record = Some(record::will_not_write(&scratch.0).expect("a record to refuse with"));
+        let account = an_account(&key(9), Epoch::GENESIS);
+        assert_eq!(
+            node.submit(&account, Epoch::GENESIS),
+            Err(almena_store::chain::Refused::NotKept),
+            "the disk refused it"
+        );
+        assert_eq!(node.written(), written, "and nothing was written down");
+        assert!(
+            matches!(
+                node.resolve(account.object.name(), Epoch::GENESIS).answer,
+                Answer::Here(_)
+            ),
+            "while memory is ahead of the record, which is the state being mended"
+        );
+
+        node.record = Some(record::Record::open(&scratch.0).expect("a record that writes"));
+        node.submit(&account, Epoch::GENESIS)
+            .expect("handing it over again is what mends it");
+        assert_eq!(
+            node.written(),
+            written + 1,
+            "and now there is a line for it"
+        );
+
+        // Once, and no more: a second copy in the record would be a second position in the tree.
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+        assert_eq!(node.written(), written + 1);
+    }
+
+    /// The acts a node hands over to compose an object from, from the beginning.
+    fn composed(node: &Node, object: &Did, page: Page, now: Epoch) -> Vec<Vec<u8>> {
+        node.state_of(object, None, page, now)
+            .answer
+            .expect("no cursor was given, so there is nothing it could fail to place")
+            .acts
+    }
+
+    #[test]
+    fn a_page_that_stopped_short_says_where_it_stopped_and_the_next_carries_on() {
+        // **The defect this closes.** A page with a bound and no cursor is indistinguishable from
+        // the whole of a chain: a caller folds what arrived, lands on a state from earlier, and
+        // nothing anywhere says so. Every other paged answer here names where it stopped.
+        let mut node = opened();
+        let control = key(9);
+        let account = an_account(&control, Epoch::GENESIS);
+        let object = account.object.clone();
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+        a_busy_account(&mut node, &object, &control, 3);
+
+        let whole = composed(&node, &object, a_page(100), Epoch::GENESIS);
+        assert!(whole.len() > 2, "a chain worth paging over");
+
+        let mut gathered = Vec::new();
+        let mut after = None;
+        loop {
+            let page = node
+                .state_of(&object, after.as_ref(), a_page(2), Epoch::GENESIS)
+                .answer
+                .expect("every cursor here came from the page before it");
+            gathered.extend(page.acts);
+            match page.more {
+                Some(more) => after = Some(more),
+                None => break,
+            }
+        }
+        assert_eq!(
+            gathered, whole,
+            "and following the cursor to the end gives exactly what one page would have"
+        );
+    }
+
+    #[test]
+    fn a_cursor_this_node_cannot_place_is_answered_as_nothing_and_never_as_the_beginning() {
+        // Handing back the first page to somebody who asked for the fourth would look like an
+        // answer and be a different one — and they would fold it and be wrong.
+        let mut node = opened();
+        let control = key(9);
+        let account = an_account(&control, Epoch::GENESIS);
+        let object = account.object.clone();
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+
+        assert_eq!(
+            node.state_of(
+                &object,
+                Some(&Name::of(b"an act nobody wrote")),
+                a_page(100),
+                Epoch::GENESIS
+            )
+            .answer,
+            None
+        );
+    }
+
+    #[test]
+    fn what_a_node_cannot_read_is_worked_out_again_from_the_record_and_never_carried() {
+        // **Why a build that learns to read an act heals the object it refused.** Opacity is not a
+        // thing the record holds and not a thing a restart inherits: it is computed by admission
+        // from the acts themselves, so a node coming back up puts every act through the same
+        // question again and answers it with what *this* build knows. A build that could read the
+        // act would answer differently, which is the whole of what upgrading is.
+        let scratch = Scratch::new("opaque-is-recomputed");
+        let mut node = Node::open_in(&scratch.0, &at(Which::Development), &[], &key(5), key(6))
+            .expect("nobody to join");
+
+        let control = key(9);
+        let account = an_account(&control, Epoch::GENESIS);
+        let object = account.object.clone();
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+
+        // An act on that account carrying a critical field this build has no meaning for. It is
+        // kept and passed on — replication does not require understanding — and the object stops
+        // resolving, which is the other half of the same rule.
+        let mut beyond = almena_format::operation::Operation {
+            object: object.clone(),
+            previous: Some(account.called()),
+            kind: almena_store::kind::Kind::HOLDER_ADD_DEVICE.number(),
+            version: 1,
+            issued: Epoch::GENESIS,
+            payload: BTreeMap::from([(1, Value::Bytes(vec![2; 33])), (9_999, Value::Uint(1))]),
+            signatures: Vec::new(),
+        };
+        let signature = control.sign(&beyond.signing_bytes());
+        beyond.signatures.push(Signed {
+            by: object.clone(),
+            key: control.verifying_key().bytes().to_vec(),
+            signature: signature.bytes(),
+        });
+        node.submit(&beyond, Epoch::GENESIS)
+            .expect("kept and passed on");
+        assert!(matches!(
+            node.resolve(object.name(), Epoch::GENESIS).answer,
+            Answer::CannotResolve(Reason::Unintelligible)
+        ));
+
+        // Coming back up, every act goes through admission again from nothing. This build still
+        // cannot read that field, so it answers the same — and a build that could would not, with
+        // no state anywhere to stop it.
+        drop(node);
+        let again = Node::rejoin(&scratch.0, key(6)).expect("the record comes back");
+        assert_eq!(
+            again.written(),
+            4,
+            "the genesis, this node's announcement, the account and the act it could not read"
+        );
+        assert!(matches!(
+            again.resolve(object.name(), Epoch::GENESIS).answer,
+            Answer::CannotResolve(Reason::Unintelligible)
+        ));
+    }
+
+    #[test]
+    fn a_node_comes_up_over_an_act_it_will_not_take_and_stops_resolving_what_it_is_on() {
+        // **A record outlives the build that wrote it, and rules tighten.** So this is a real
+        // state: an act an earlier build accepted that this one will not. Refusing to come up over
+        // it is the worst answer available — `SPECS.md §4.8` rule 1 is that a node stores and
+        // propagates every act whether it understands it or not, and a node that will not start has
+        // stopped replicating altogether, which is the fork between versions that rule prevents,
+        // arriving as an outage instead.
+        let scratch = Scratch::new("will-not-take");
+        let mut node = Node::open_in(&scratch.0, &at(Which::Development), &[], &key(5), key(6))
+            .expect("nobody to join");
+        let control = key(9);
+        let account = an_account(&control, Epoch::GENESIS);
+        let object = account.object.clone();
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+        let written = node.written();
+
+        // An act this build refuses, put straight into the record — standing in for one an earlier
+        // build let through and this one will not. Unsigned is the plainest such act there is, and
+        // what it stands in for is any rule that has since tightened.
+        let refused = almena_format::operation::Operation {
+            object: object.clone(),
+            previous: Some(account.called()),
+            kind: almena_store::kind::Kind::HOLDER_ADD_DEVICE.number(),
+            version: 1,
+            issued: Epoch::GENESIS,
+            payload: BTreeMap::from([(1, Value::Bytes(vec![3; 33]))]),
+            signatures: Vec::new(),
+        };
+        assert!(
+            node.submit(&refused, Epoch::GENESIS).is_err(),
+            "handed over the ordinary way it is refused, which is what makes it the right stand-in"
+        );
+        drop(node);
+
+        record::Record::open(&scratch.0)
+            .expect("a record")
+            .wrote(&refused.to_bytes())
+            .expect("straight into it, as an earlier build would have left it");
+
+        // And the node comes up.
+        let again = Node::rejoin(&scratch.0, key(6)).expect("a node comes up over it");
+        assert_eq!(
+            again.written(),
+            written + 1,
+            "the line saying it happened is kept — the tree over those lines is what this node signed"
+        );
+        assert!(
+            matches!(
+                again.resolve(object.name(), Epoch::GENESIS).answer,
+                Answer::CannotResolve(Reason::Unintelligible)
+            ),
+            "and the object stops resolving rather than being served from before the act"
+        );
     }
 
     /// A directory of this test's own, removed when it is done with it.
@@ -2712,45 +3296,65 @@ mod tests {
         );
     }
 
+    /// Another node, announced into this one's record, so that it is somebody the record can name.
+    fn somebody_else(node: &mut Node, seed: u8, now: Epoch) -> (Did, [u8; 32]) {
+        let their_key = key(seed);
+        let announced = almena_store::announce::announce(Which::Development, now, &their_key);
+        node.submit(&announced.operation, now).expect("announced");
+        (announced.node, their_key.verifying_key().bytes())
+    }
+
+    /// One thing seen, written down as it happened.
+    fn saw(
+        of: [u8; 32],
+        at: Epoch,
+        saw: almena_store::watching::Saw,
+    ) -> almena_store::watching::Noted {
+        almena_store::watching::Noted {
+            of: of.to_vec(),
+            at,
+            saw,
+        }
+    }
+
+    /// A day's summary with nothing said about the looking, which names nobody either way.
+    const fn watched() -> Watched {
+        Watched {
+            looked: almena_store::summary::Looked {
+                asked_for: 0,
+                found: 0,
+            },
+        }
+    }
+
     #[test]
     fn a_node_writes_down_what_it_saw_of_others_and_never_of_itself() {
         // **The whole reason cross-observation exists.** What a node claims about its own uptime is
         // worth nothing; what is worth something is that the nodes which kept asking it wrote down
         // whether it answered.
-        use almena_store::summary::Seen;
-        use std::collections::BTreeMap;
-
         let mut node = opened();
-        let somebody = Did::new(Network::Development, Name::of(b"another node"));
-        let seen = BTreeMap::from([
-            (
-                somebody.clone(),
-                Seen {
-                    asked: 100,
-                    answered: 97,
-                    behind: 3,
-                },
-            ),
-            (
-                node.did().clone(),
-                Seen {
-                    asked: 100,
-                    answered: 100,
-                    behind: 0,
-                },
-            ),
-        ]);
+        let day = almena_time::Day::new(1);
+        let during = Epoch::new(almena_time::EPOCHS_PER_DAY);
+        let (somebody, theirs) = somebody_else(&mut node, 7, during);
+        let mine = key(6).verifying_key().bytes();
+
+        use almena_store::watching::Saw;
+        for what in [
+            Saw::Asked,
+            Saw::Answered,
+            Saw::Asked,
+            Saw::Answered,
+            Saw::Asked,
+            Saw::Behind(3),
+        ] {
+            node.watched(day, saw(theirs, during, what));
+        }
+        // And about itself, which must not reach the summary however it got written down.
+        node.watched(day, saw(mine, during, Saw::Asked));
 
         // A day that is over. One still happening compares with nothing.
         let after = Epoch::new(almena_time::EPOCHS_PER_DAY * 2);
-        assert!(node.summarise(
-            almena_time::Day::new(1),
-            Watched {
-                seen: &seen,
-                looked: almena_store::summary::Looked::default(),
-            },
-            after
-        ));
+        assert!(node.summarise(day, watched(), after));
 
         let chain = node.chain_of(node.did(), after).answer;
         let summary = chain
@@ -2764,44 +3368,86 @@ mod tests {
                 .as_ref()
                 .and_then(almena_store::summary::read)
         });
-        let (day, _, watched, _) = read.expect("a summary");
+        let (said, behind, seen, _) = read.expect("a summary");
 
-        assert_eq!(day, almena_time::Day::new(1));
-        assert_eq!(watched.len(), 1);
-        assert!(watched.contains_key(&somebody));
+        assert_eq!(said, day);
+        assert_eq!(seen.len(), 1);
+        let of_them = seen.get(&somebody).expect("what it saw of them");
+        assert_eq!(
+            (of_them.asked, of_them.answered, of_them.behind),
+            (3, 2, 3),
+            "worked out from the askings themselves"
+        );
         assert!(
-            !watched.contains_key(node.did()),
+            !seen.contains_key(node.did()),
             "and it said nothing about itself"
+        );
+
+        // **The hash is over the observations and not over the figures.** A hash of what is being
+        // published would check out against the act carrying it whatever it said.
+        assert_eq!(
+            behind,
+            node.watching(day).expect("it kept them").digest(),
+            "and what it pins is what this node can still hand over"
+        );
+    }
+
+    #[test]
+    fn a_summary_pins_the_observations_and_never_the_figures_it_publishes() {
+        // The failure the old mechanism could not catch: an observer that watched nobody passed
+        // exactly as well as one that watched everybody, because the hash was over the aggregate
+        // the act carried and checking it against that act always succeeded.
+        let mut node = opened();
+        let day = almena_time::Day::new(1);
+        let during = Epoch::new(almena_time::EPOCHS_PER_DAY);
+        let (_, theirs) = somebody_else(&mut node, 7, during);
+
+        // Nothing watched: nothing to summarise, and nothing a hash could pin.
+        assert!(!node.summarise(day, watched(), Epoch::new(almena_time::EPOCHS_PER_DAY * 2)));
+
+        node.watched(day, saw(theirs, during, almena_store::watching::Saw::Asked));
+        let held = node.watching(day).expect("it kept them");
+        assert_eq!(held.len(), 1);
+        assert_ne!(
+            held.digest(),
+            almena_store::watching::Watching::new().digest(),
+            "an empty day and a watched one do not hash alike"
+        );
+    }
+
+    #[test]
+    fn only_a_few_days_of_observations_are_kept() {
+        // They never enter the record and nothing else ages them out. What they are for is checking
+        // a summary published recently, and a day older than that is one this node stops offering.
+        let mut node = opened();
+        let during = Epoch::new(almena_time::EPOCHS_PER_DAY);
+        let (_, theirs) = somebody_else(&mut node, 7, during);
+
+        for day in 0..(super::DAYS_WATCHED as u64 + 4) {
+            node.watched(
+                almena_time::Day::new(day),
+                saw(theirs, during, almena_store::watching::Saw::Asked),
+            );
+        }
+        assert!(node.watching(almena_time::Day::new(0)).is_none());
+        assert!(
+            node.watching(almena_time::Day::new(super::DAYS_WATCHED as u64 + 3))
+                .is_some()
         );
     }
 
     #[test]
     fn a_day_still_happening_is_not_summarised() {
-        use almena_store::summary::Seen;
-        use std::collections::BTreeMap;
-
         let mut node = opened();
-        let seen = BTreeMap::from([(
-            Did::new(Network::Development, Name::of(b"another node")),
-            Seen::default(),
-        )]);
+        let day = almena_time::Day::new(0);
+        let (_, theirs) = somebody_else(&mut node, 7, Epoch::GENESIS);
+        node.watched(
+            day,
+            saw(theirs, Epoch::GENESIS, almena_store::watching::Saw::Asked),
+        );
 
-        assert!(!node.summarise(
-            almena_time::Day::new(0),
-            Watched {
-                seen: &seen,
-                looked: almena_store::summary::Looked::default(),
-            },
-            Epoch::new(23)
-        ));
-        assert!(node.summarise(
-            almena_time::Day::new(0),
-            Watched {
-                seen: &seen,
-                looked: almena_store::summary::Looked::default(),
-            },
-            Epoch::new(24)
-        ));
+        assert!(!node.summarise(day, watched(), Epoch::new(23)));
+        assert!(node.summarise(day, watched(), Epoch::new(24)));
     }
 
     #[test]
@@ -3076,7 +3722,7 @@ mod tests {
         node.submit(&account, Epoch::GENESIS).expect("taken");
         let head = a_busy_account(&mut node, &object, &control, 8);
 
-        let everything = node.state_of(&object, a_page(100), Epoch::GENESIS).answer;
+        let everything = composed(&node, &object, a_page(100), Epoch::GENESIS);
         assert_eq!(
             everything.len(),
             17,
@@ -3091,7 +3737,7 @@ mod tests {
         let summary = a_summary(&object, &head, &control, &standing.claims, settled);
         node.submit(&summary, settled).expect("taken");
 
-        let after = node.state_of(&object, a_page(100), settled).answer;
+        let after = composed(&node, &object, a_page(100), settled);
         assert_eq!(after.len(), 1, "the summary, and nothing behind it");
         assert_eq!(after[0], summary.to_bytes());
 
@@ -3102,7 +3748,7 @@ mod tests {
         another.signatures.clear();
         let another = signed(another, &control);
         node.submit(&another, settled).expect("taken");
-        assert_eq!(node.state_of(&object, a_page(100), settled).answer.len(), 2);
+        assert_eq!(composed(&node, &object, a_page(100), settled).len(), 2);
     }
 
     #[test]
@@ -3206,9 +3852,7 @@ mod tests {
             almena_store::chain::Answer::CannotResolve(almena_store::chain::Reason::Forked)
         ));
         assert_eq!(
-            node.state_of(&object, a_page(100), Epoch::GENESIS)
-                .answer
-                .len(),
+            composed(&node, &object, a_page(100), Epoch::GENESIS).len(),
             3,
             "the creation and both acts that claim it"
         );
@@ -3228,7 +3872,11 @@ mod tests {
             almena_format::operation::Operation {
                 object: object.clone(),
                 previous: Some(account.called()),
-                kind: Kind::HOLDER_SET_GUARDIANS.number(),
+                // **A kind this build numbers and has no meaning for on this object.** An act
+                // from another class of thing entirely, which is what an act from a newer version
+                // looks like from here — and unlike a hole in this build's own vocabulary, it does
+                // not stop being one as the holes get filled.
+                kind: Kind::ENTITY_ADD_OWNER.number(),
                 version: 1,
                 issued: Epoch::GENESIS,
                 payload: BTreeMap::from([(1, Value::Bytes(vec![3; 33]))]),
@@ -3244,9 +3892,7 @@ mod tests {
             almena_store::chain::Answer::CannotResolve(_)
         ));
         assert_eq!(
-            node.state_of(&object, a_page(100), Epoch::GENESIS)
-                .answer
-                .len(),
+            composed(&node, &object, a_page(100), Epoch::GENESIS).len(),
             2,
             "and the acts are still there to be worked out from"
         );
@@ -3302,7 +3948,7 @@ mod tests {
             announced.push(other.node.name().clone());
         }
 
-        let (network, census) = node.share_out();
+        let (network, census) = node.share_out(Epoch::GENESIS);
         assert_eq!(census.len(), announced.len(), "every node it has heard of");
 
         // A thing falls to five of the eleven, and this node's own answer agrees with the rule.
@@ -3363,8 +4009,8 @@ mod tests {
 
         for which in 0..40 {
             let thing = Name::of(format!("thing {which}").as_bytes());
-            let (mine, my_census) = one.share_out();
-            let (theirs, their_census) = other.share_out();
+            let (mine, my_census) = one.share_out(Epoch::GENESIS);
+            let (theirs, their_census) = other.share_out(Epoch::GENESIS);
             assert_eq!(
                 almena_store::share::Drawn::at(&mine, Epoch::GENESIS, &my_census)
                     .holders(&thing, COPIES_OF_HISTORY),
@@ -3389,22 +4035,15 @@ mod tests {
         assert_eq!(nothing.observers, 0);
         assert_eq!(nothing.asked_for, 0);
 
-        // This node writes down its own day.
-        let seen = std::collections::BTreeMap::from([(
-            Did::new(
-                almena_format::identifier::Network::Development,
-                Name::of(b"somebody else"),
-            ),
-            almena_store::summary::Seen {
-                asked: 40,
-                answered: 39,
-                behind: 0,
-            },
-        )]);
+        // This node writes down its own day, drawn from what it actually watched.
+        let (_, theirs) = somebody_else(&mut node, 7, Epoch::GENESIS);
+        node.watched(
+            day,
+            saw(theirs, Epoch::GENESIS, almena_store::watching::Saw::Asked),
+        );
         assert!(node.summarise(
             day,
             Watched {
-                seen: &seen,
                 looked: almena_store::summary::Looked {
                     asked_for: 12,
                     found: 11,
@@ -3696,6 +4335,49 @@ mod tests {
             let_go,
             "and it knows exactly what it no longer has"
         );
+    }
+
+    #[test]
+    fn what_a_node_goes_and_fetches_is_what_it_is_owed_and_not_everything_it_is_missing() {
+        // **The share-out moves every month, so what falls here is not what fell here.** A node
+        // that only ever let go would be quietly short of everything that moved *towards* it, and
+        // one that went and fetched everything it was missing would fetch what it had just dropped
+        // and drop it again on the next tick — the two halves of one question, and only one of
+        // them was being asked.
+        let mut node = opened();
+        for seed in 60u8..75 {
+            let other =
+                almena_store::announce::announce(Which::Development, Epoch::GENESIS, &key(seed));
+            node.submit(&other.operation, Epoch::GENESIS)
+                .expect("taken");
+        }
+        for seed in 130u8..160 {
+            let account = an_account(&key(seed), Epoch::GENESIS);
+            node.submit(&account, Epoch::GENESIS).expect("taken");
+        }
+
+        let let_go = node.let_go_of_what_is_not_mine(Epoch::GENESIS);
+        assert!(let_go > 0, "some of it was dealt to somebody else");
+        assert_eq!(node.not_got().len(), let_go);
+        assert!(
+            node.owed(Epoch::GENESIS).is_empty(),
+            "and none of it is owed here, so there is nothing to go and ask for"
+        );
+
+        // A later moment is a different share-out, and some of what it dropped now falls to it
+        // again. That is the half nothing was asking for.
+        let later = Epoch::new(almena_time::deadline::ASSIGNMENT_SEED_ROTATION.now() * 3);
+        let owed = node.owed(later);
+        assert!(
+            !owed.is_empty(),
+            "the share moved and some of what it let go of came back to it"
+        );
+        for thing in &owed {
+            assert!(
+                node.not_got().contains(thing),
+                "and everything owed is something it knows happened and has not got"
+            );
+        }
     }
 
     #[test]

@@ -251,6 +251,22 @@ impl Log {
             .collect()
     }
 
+    /// The same, with the object each one is on.
+    ///
+    /// **Because what is owed depends on whose chain it is.** A node keeps its own chain and what
+    /// everybody keeps whatever the share-out says, so a caller deciding what to go and fetch needs
+    /// the object beside the act — the mirror of what [`Log::everything_held`] hands the caller
+    /// deciding what to let go of.
+    #[must_use]
+    pub fn missing_on(&self) -> Vec<(Name, Name)> {
+        self.entries
+            .iter()
+            .zip(&self.acts)
+            .filter(|(_, held)| held.is_none())
+            .map(|(entry, _)| (entry.hash.clone(), entry.object.name().clone()))
+            .collect()
+    }
+
     /// Whether this node has a line saying that act happened, whether or not it holds what it said.
     #[must_use]
     pub fn knows(&self, hash: &Name) -> bool {

@@ -32,7 +32,7 @@ use std::sync::Arc;
 use almena_format::identifier::Name;
 use almena_node::{Epoch, Node};
 use almena_store::root::{Published, Root, Witness};
-use almena_store::summary::Seen;
+use almena_store::watching::{Noted, Saw};
 use almena_time::Day;
 use libp2p::{Multiaddr, PeerId};
 use tokio::sync::RwLock;
@@ -99,6 +99,13 @@ struct ReadSoFar {
     /// filed against a peer would be a figure about this node's own position wearing that peer's
     /// name. Kept here, it costs this node its own denominator and costs nobody else anything.
     looked: almena_store::summary::Looked,
+    /// What this node has seen of the others since the last day was written down, as it happened.
+    ///
+    /// **Nobody says anything about themselves**, and this is the other half of that: a node's
+    /// availability is what the nodes that kept asking it wrote down. Events rather than totals,
+    /// because the summary's hash is over these — a hash over the figures being published checks
+    /// out against the act carrying them whatever they say.
+    watching: Vec<Noted>,
 }
 
 /// Where this node has got to in one peer's record, and whether it is waiting on an answer.
@@ -113,11 +120,6 @@ struct Reading {
     /// the answers come back looking alike. Taking them by arrival would move the cursor on the
     /// answer to a different question and leave records nobody ever asks for again.
     reading: Option<Asked>,
-    /// What this node has seen of that one, to be summarised at the end of the day.
-    ///
-    /// **Nobody says anything about themselves**, and this is the other half of that: a node's
-    /// availability is what the nodes that kept asking it wrote down.
-    seen: Seen,
     /// The one thing this node has asked that peer to hand over, and has not been handed yet.
     ///
     /// One at a time: what is being measured turns over once a month, so asking oftener buys
@@ -132,10 +134,26 @@ impl ReadSoFar {
     }
 
     /// Take note of having asked that peer for what comes next.
-    fn asked(&mut self, peer: PeerId, question: Asked) {
-        let reading = self.peers.entry(peer).or_default();
-        reading.reading = Some(question);
-        reading.seen.asked += 1;
+    fn asked(&mut self, peer: PeerId, question: Asked, now: Epoch) {
+        self.peers.entry(peer).or_default().reading = Some(question);
+        self.saw(peer, now, Saw::Asked);
+    }
+
+    /// Write down one thing seen of one peer, in the order it happened.
+    ///
+    /// **Events and not totals.** A day's figures are counts over these, and the hash a summary
+    /// carries is over these — so the two cannot come apart, which is the whole of what that hash
+    /// is worth. A peer whose key cannot be read is not written down: an observation about nobody
+    /// is not an observation.
+    fn saw(&mut self, peer: PeerId, now: Epoch, saw: Saw) {
+        let Some(key) = crate::whose::key_of(&peer) else {
+            return;
+        };
+        self.watching.push(Noted {
+            of: key.to_vec(),
+            at: now,
+            saw,
+        });
     }
 
     /// Whether this node is still waiting on the answer that would move that peer's cursor.
@@ -164,16 +182,16 @@ impl ReadSoFar {
     ///
     /// It still counts: what is being measured is whether a node answers when it is asked, and a
     /// fraction whose top and bottom counted different questions would mean nothing.
-    fn also_asked(&mut self, peer: PeerId) {
-        self.peers.entry(peer).or_default().seen.asked += 1;
+    fn also_asked(&mut self, peer: PeerId, now: Epoch) {
+        self.saw(peer, now, Saw::Asked);
     }
 
     /// Take note of an answer, moving the cursor only if it was the one outstanding.
     ///
     /// Returns whether it counted.
-    fn answered(&mut self, peer: PeerId, to: Asked, count: u64) -> bool {
+    fn answered(&mut self, peer: PeerId, to: Asked, count: u64, now: Epoch) -> bool {
+        self.saw(peer, now, Saw::Answered);
         let reading = self.peers.entry(peer).or_default();
-        reading.seen.answered += 1;
         if reading.reading != Some(to) {
             return false;
         }
@@ -183,10 +201,9 @@ impl ReadSoFar {
     }
 
     /// Take note of having asked somebody to hand over a thing that was dealt to them.
-    fn asking_for(&mut self, peer: PeerId, question: Asked, thing: Name) {
-        let reading = self.peers.entry(peer).or_default();
-        reading.holding = Some((question, thing));
-        reading.seen.asked += 1;
+    fn asking_for(&mut self, peer: PeerId, question: Asked, thing: Name, now: Epoch) {
+        self.peers.entry(peer).or_default().holding = Some((question, thing));
+        self.saw(peer, now, Saw::Asked);
     }
 
     /// Whether that answer was the thing this node asked that peer to hand over.
@@ -217,32 +234,24 @@ impl ReadSoFar {
     ///
     /// What is being measured is whether a node replies when it is spoken to, and a fraction whose
     /// top and bottom counted different questions would mean nothing.
-    fn answered_at_all(&mut self, peer: PeerId) {
-        self.peers.entry(peer).or_default().seen.answered += 1;
+    fn answered_at_all(&mut self, peer: PeerId, now: Epoch) {
+        self.saw(peer, now, Saw::Answered);
     }
 
     /// Take note of how far behind that peer was seen to be.
     ///
     /// The furthest is kept, not the latest: **a node that is up and behind is worse than one that
     /// is down**, and a figure that forgot the worst of it would say the opposite.
-    fn behind(&mut self, peer: PeerId, by: u64) {
-        let seen = &mut self.peers.entry(peer).or_default().seen;
-        seen.behind = seen.behind.max(by);
+    fn behind(&mut self, peer: PeerId, by: u64, now: Epoch) {
+        self.saw(peer, now, Saw::Behind(by));
     }
 
-    /// What has been seen of everybody, ready to be written down.
-    fn seen(&self) -> Vec<(PeerId, Seen)> {
-        self.peers
-            .iter()
-            .map(|(peer, reading)| (*peer, reading.seen))
-            .collect()
-    }
-
-    /// Start the next day's counting, keeping where everybody has got to.
-    fn a_new_day(&mut self) {
-        for reading in self.peers.values_mut() {
-            reading.seen = Seen::default();
-        }
+    /// Everything seen since the last day was written down, and start the next one.
+    ///
+    /// Taken rather than copied: what it hands over goes to the node, which is where it is hashed,
+    /// served and aged out. Two copies of a day's observations would be two accounts of it.
+    fn a_new_day(&mut self) -> Vec<Noted> {
+        std::mem::take(&mut self.watching)
     }
 
     /// Everybody this node has met.
@@ -344,10 +353,10 @@ pub async fn watching<C>(
                 asking_who_holds(listening, node, &mut read, clock()).await;
                 asking_for_what_is_missing(listening, node, &mut read, clock()).await;
                 letting_go(node, clock()).await;
-                noticed = saying_what_changed(listening, node, &mut read, noticed).await;
+                noticed = saying_what_changed(listening, node, &mut read, noticed, clock()).await;
             }
             _ = asking.tick() => {
-                asking_everybody(listening, &mut read, noticed);
+                asking_everybody(listening, &mut read, noticed, clock());
             }
             happened = listening.next() => {
                 let doing = Doing { listening, node, read: &mut read, watched, noticed };
@@ -397,7 +406,7 @@ async fn something_happened(doing: Doing<'_>, happened: Happened, now: Epoch) {
             if let (crate::Meeting::Dialled(at), Some(key)) = (&how, crate::whose::key_of(&peer)) {
                 node.write().await.reached(key, at.to_string());
             }
-            asking_one(listening, read, peer, noticed);
+            asking_one(listening, read, peer, noticed, now);
         }
         Happened::Asked(peer, question, back) => {
             let asking = Question {
@@ -420,6 +429,11 @@ async fn something_happened(doing: Doing<'_>, happened: Happened, now: Epoch) {
         // Whatever was asked of somebody who has gone is not coming. Holding the question
         // open would mean never asking them again if they came back.
         Happened::Parted(peer) => read.gone(&peer),
+        // **The same treatment, and never a note against them.** A question that cannot be answered
+        // is a question this node has to stop waiting for, and the reason is worth having in the
+        // event and worth leaving out of any figure: somebody on another network did not fail to
+        // answer — they were never asked anything they could have answered.
+        Happened::Unanswered(peer, _, _) => read.gone(&peer),
         // **A circuit is published and an address of its own is not**, and the difference is who
         // could have known it. A node's own address is chosen — it is the one somebody puts in a
         // zone, and a node that published whatever the machine happened to have would be deciding
@@ -617,13 +631,13 @@ impl Witnessed {
 /// **Only what was asked for moves the cursor.** An answer that is not the one outstanding — a
 /// duplicate, or one to a question about something else — would otherwise push the position past
 /// records nobody ever asks for again, and a node would sit quietly missing them for ever.
-fn taking_it_in(read: &mut ReadSoFar, peer: PeerId, to: Asked, said: &Said) -> bool {
+fn taking_it_in(read: &mut ReadSoFar, peer: PeerId, to: Asked, said: &Said, now: Epoch) -> bool {
     // How far behind it is, from the one number it always tells: how much it has. A node that is up
     // and behind is worse than one that is down, because whoever asks it gets an answer and cannot
     // tell it is stale.
-    read.behind(peer, said.written.saturating_sub(read.of(&peer)));
+    read.behind(peer, said.written.saturating_sub(read.of(&peer)), now);
 
-    read.answered(peer, to, said.acts.len() as u64) && read.of(&peer) < said.written
+    read.answered(peer, to, said.acts.len() as u64, now) && read.of(&peer) < said.written
 }
 
 /// Write down what this node saw of the others, once a day is over.
@@ -649,32 +663,23 @@ async fn summarising(
         return;
     }
 
-    let mut seen = BTreeMap::new();
-    {
-        let node = node.read().await;
-        for (peer, watched) in read.seen() {
-            // Only somebody the record names. A key nobody announced themselves with is somebody
-            // speaking the protocol without being anybody, and a figure filed against no name is a
-            // figure about nobody.
-            if let Some(key) = crate::whose::key_of(&peer)
-                && let Some(named) = node.node_called(&key, now).answer
-            {
-                seen.insert(named, watched);
-            }
-        }
-    }
-
+    // **What was seen goes to the node before anything is summarised**, because that is where it is
+    // hashed, served and aged out. The figures a summary publishes are counted over these and its
+    // hash is over these, so the two cannot come apart — which is the whole of what the hash is
+    // worth. Handing over totals instead is what let an observer that watched nobody pass exactly
+    // as well as one that watched everybody.
     let looked = std::mem::take(&mut read.looked);
-    let written = node.write().await.summarise(
-        yesterday,
-        almena_node::Watched {
-            seen: &seen,
-            looked,
-        },
-        now,
-    );
-    if written {
-        read.a_new_day();
+    let seen = read.a_new_day();
+    let written = {
+        let mut node = node.write().await;
+        for noted in seen {
+            node.watched(yesterday, noted);
+        }
+        node.summarise(yesterday, almena_node::Watched { looked }, now)
+    };
+    if !written {
+        // Nothing was written down, so what this node went looking for is still owed a day.
+        read.looked = looked;
     }
     *already = Some(yesterday);
 }
@@ -716,6 +721,7 @@ async fn saying_what_changed(
     node: &Arc<RwLock<Node>>,
     read: &mut ReadSoFar,
     before: Noticed,
+    at: Epoch,
 ) -> Noticed {
     let now = Noticed::of(node).await;
     let grown = now.written > before.written;
@@ -731,7 +737,7 @@ async fn saying_what_changed(
         // too — so it is also the moment to ask them for theirs.
         if let Some(closed) = closed {
             listening.ask(&peer, Ask::Root(closed.number()));
-            read.also_asked(peer);
+            read.also_asked(peer, at);
         }
     }
     now
@@ -765,7 +771,7 @@ async fn answering_them(
     take_note(node, peer, asked).await;
     if told_they_grew(asked, &peer, read) && !read.waiting_on(&peer) {
         let asking = listening.ask(&peer, Ask::Since(read.of(&peer)));
-        read.asked(peer, asking);
+        read.asked(peer, asking, now);
     }
 
     let said = answering(node, asked, now).await;
@@ -807,17 +813,17 @@ async fn taking_theirs(
     // cursor. Not finding it is counted and nobody is named: what it says is how much of what this
     // node went looking for it found.
     if let Some(handed_over) = read.handed_over(peer, to, said) {
-        read.answered_at_all(peer);
+        read.answered_at_all(peer, now);
         if handed_over {
             read.looked.found += 1;
         }
         return;
     }
-    if taking_it_in(read, peer, to, said) {
+    if taking_it_in(read, peer, to, said, now) {
         // More where that came from, so the next page goes out now rather than at the next tick. A
         // long way behind should not take an hour to walk forward.
         let asking = listening.ask(&peer, Ask::Since(read.of(&peer)));
-        read.asked(peer, asking);
+        read.asked(peer, asking, now);
     }
 }
 
@@ -846,7 +852,7 @@ async fn asking_who_holds(
     };
     let holders: Vec<Name> = {
         let node = node.read().await;
-        let (network, census) = node.share_out();
+        let (network, census) = node.share_out(now);
         almena_store::share::Drawn::at(&network, now, &census)
             .holders(&thing, almena_node::COPIES_OF_HISTORY)
             .into_iter()
@@ -866,7 +872,7 @@ async fn asking_who_holds(
             continue;
         }
         let asking = listening.ask(&peer, Ask::Act(thing.clone()));
-        read.asking_for(peer, asking, thing.clone());
+        read.asking_for(peer, asking, thing.clone(), now);
         read.looked.asked_for += 1;
     }
 }
@@ -884,7 +890,7 @@ async fn letting_go(node: &Arc<RwLock<Node>>, now: Epoch) {
     // share moves once a month, and everything else here is a read.
     let anything = {
         let node = node.read().await;
-        !node.share_out().1.is_empty()
+        !node.share_out(now).1.is_empty()
     };
     if anything {
         node.write().await.let_go_of_what_is_not_mine(now);
@@ -927,10 +933,14 @@ async fn asking_for_what_is_missing(
 ) {
     let (wanted, holders) = {
         let node = node.read().await;
-        let Some(wanted) = node.not_got().into_iter().next() else {
+        // **What is owed here, and not merely what is missing.** Letting go runs on this same tick,
+        // so asking for something the share-out does not deal here would fetch it and drop it again
+        // for ever — and the thing worth asking for is exactly the other case: what moved towards
+        // this node when the share last rotated, which nothing else would ever go and get.
+        let Some(wanted) = node.owed(now).into_iter().next() else {
             return;
         };
-        let (network, census) = node.share_out();
+        let (network, census) = node.share_out(now);
         let holders: Vec<Name> = almena_store::share::Drawn::at(&network, now, &census)
             .holders(&wanted, almena_node::COPIES_OF_HISTORY)
             .into_iter()
@@ -946,7 +956,7 @@ async fn asking_for_what_is_missing(
         let named = node.read().await.node_called(&key, now).answer;
         if named.is_some_and(|named| holders.contains(named.name())) {
             listening.ask(&peer, Ask::Act(wanted.clone()));
-            read.also_asked(peer);
+            read.also_asked(peer, now);
         }
     }
 }
@@ -988,14 +998,20 @@ fn told_they_grew(question: &Ask, peer: &PeerId, read: &ReadSoFar) -> bool {
 /// Everything, straight away rather than at the next tick: the point of meeting somebody is that
 /// they may have what this node has not — and that goes for what they have signed as much as for
 /// what they have written down.
-fn asking_one(listening: &mut Listening, read: &mut ReadSoFar, peer: PeerId, noticed: Noticed) {
+fn asking_one(
+    listening: &mut Listening,
+    read: &mut ReadSoFar,
+    peer: PeerId,
+    noticed: Noticed,
+    now: Epoch,
+) {
     if !read.waiting_on(&peer) {
         let asking = listening.ask(&peer, Ask::Since(read.of(&peer)));
-        read.asked(peer, asking);
+        read.asked(peer, asking, now);
     }
     if let Some(closed) = noticed.closed {
         listening.ask(&peer, Ask::Root(closed.number()));
-        read.also_asked(peer);
+        read.also_asked(peer, now);
     }
 }
 
@@ -1004,9 +1020,9 @@ fn asking_one(listening: &mut Listening, read: &mut ReadSoFar, peer: PeerId, not
 /// **Everybody, every time.** A node that only asked whoever last had something would stop asking
 /// the quiet ones, and quiet is what a node looks like just before it has something. This is the
 /// floor rather than the usual way: meeting somebody asks, and so does anything changing.
-fn asking_everybody(listening: &mut Listening, read: &mut ReadSoFar, noticed: Noticed) {
+fn asking_everybody(listening: &mut Listening, read: &mut ReadSoFar, noticed: Noticed, now: Epoch) {
     for peer in read.everybody() {
-        asking_one(listening, read, peer, noticed);
+        asking_one(listening, read, peer, noticed, now);
     }
 }
 
@@ -1309,8 +1325,8 @@ mod tests {
         let mut read = ReadSoFar::default();
 
         let question = Asked::numbered(1);
-        read.asked(one, question);
-        read.answered(one, question, 7);
+        read.asked(one, question, Epoch::GENESIS);
+        read.answered(one, question, 7, Epoch::GENESIS);
         assert_eq!(read.of(&one), 7);
         assert_eq!(read.of(&other), 0, "and nothing has been read of theirs");
     }
@@ -1324,18 +1340,18 @@ mod tests {
         let mut read = ReadSoFar::default();
 
         assert!(
-            !read.answered(peer, Asked::numbered(9), 5),
+            !read.answered(peer, Asked::numbered(9), 5, Epoch::GENESIS),
             "nothing was outstanding"
         );
         assert_eq!(read.of(&peer), 0);
 
         let asking = Asked::numbered(1);
-        read.asked(peer, asking);
-        assert!(read.answered(peer, asking, 5));
+        read.asked(peer, asking, Epoch::GENESIS);
+        assert!(read.answered(peer, asking, 5, Epoch::GENESIS));
         assert_eq!(read.of(&peer), 5);
 
         assert!(
-            !read.answered(peer, asking, 5),
+            !read.answered(peer, asking, 5, Epoch::GENESIS),
             "and the same answer again counts once"
         );
         assert_eq!(read.of(&peer), 5);
@@ -1351,10 +1367,10 @@ mod tests {
     fn reading_more_adds_to_what_was_read_before() {
         let peer = PeerId::random();
         let mut read = ReadSoFar::default();
-        read.asked(peer, Asked::numbered(1));
-        read.answered(peer, Asked::numbered(1), 3);
-        read.asked(peer, Asked::numbered(2));
-        read.answered(peer, Asked::numbered(2), 4);
+        read.asked(peer, Asked::numbered(1), Epoch::GENESIS);
+        read.answered(peer, Asked::numbered(1), 3, Epoch::GENESIS);
+        read.asked(peer, Asked::numbered(2), Epoch::GENESIS);
+        read.answered(peer, Asked::numbered(2), 4, Epoch::GENESIS);
         assert_eq!(read.of(&peer), 7, "a page at a time, walking forward");
     }
 
@@ -1366,8 +1382,8 @@ mod tests {
         let met: Vec<PeerId> = (0..3).map(|_| PeerId::random()).collect();
         for (which, peer) in met.iter().enumerate() {
             let asking = Asked::numbered(which as u64 + 1);
-            read.asked(*peer, asking);
-            read.answered(*peer, asking, 1);
+            read.asked(*peer, asking, Epoch::GENESIS);
+            read.answered(*peer, asking, 1, Epoch::GENESIS);
         }
         assert_eq!(read.everybody().len(), 3);
     }
@@ -1381,10 +1397,10 @@ mod tests {
         let mut read = ReadSoFar::default();
 
         let reading = Asked::numbered(1);
-        read.asked(peer, reading);
+        read.asked(peer, reading, Epoch::GENESIS);
         let holding = Asked::numbered(2);
         let thing = Name::of(b"a thing it was dealt");
-        read.asking_for(peer, holding, thing.clone());
+        read.asking_for(peer, holding, thing.clone(), Epoch::GENESIS);
 
         let said = Said {
             acts: Vec::new(),
@@ -1395,7 +1411,7 @@ mod tests {
         assert_eq!(read.of(&peer), 0, "the cursor did not move");
 
         // And the read question is still outstanding, so its answer still counts.
-        assert!(read.answered(peer, reading, 5));
+        assert!(read.answered(peer, reading, 5, Epoch::GENESIS));
         assert_eq!(read.of(&peer), 5);
     }
 
@@ -1416,7 +1432,7 @@ mod tests {
         let thing = act.called();
 
         let holding = Asked::numbered(7);
-        read.asking_for(peer, holding, thing.clone());
+        read.asking_for(peer, holding, thing.clone(), Epoch::GENESIS);
         let right = Said {
             acts: vec![act.to_bytes()],
             written: 1,
@@ -1435,7 +1451,7 @@ mod tests {
                 key: vec![2; 33],
                 signature: [9; 64],
             });
-        read.asking_for(peer, Asked::numbered(9), thing.clone());
+        read.asking_for(peer, Asked::numbered(9), thing.clone(), Epoch::GENESIS);
         let same = Said {
             acts: vec![other_form.to_bytes()],
             written: 1,
@@ -1447,7 +1463,7 @@ mod tests {
         );
 
         // Something else entirely, offered in its place.
-        read.asking_for(peer, Asked::numbered(8), thing);
+        read.asking_for(peer, Asked::numbered(8), thing, Epoch::GENESIS);
         let wrong = Said {
             acts: vec![b"something else altogether".to_vec()],
             written: 1,
@@ -1470,7 +1486,12 @@ mod tests {
         };
         assert_eq!(read.handed_over(peer, Asked::numbered(3), &said), None);
 
-        read.asking_for(peer, Asked::numbered(4), Name::of(b"a thing"));
+        read.asking_for(
+            peer,
+            Asked::numbered(4),
+            Name::of(b"a thing"),
+            Epoch::GENESIS,
+        );
         assert_eq!(
             read.handed_over(peer, Asked::numbered(9), &said),
             None,

@@ -1,0 +1,17 @@
+[package]
+name = "almena-credential"
+description = "The credential format: SD-JWT VC, its disclosures, and what verifying one may and may not conclude"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+almena-suite = { workspace = true }
+almena-time = { workspace = true }
+serde_json = { workspace = true }
+getrandom = { workspace = true }

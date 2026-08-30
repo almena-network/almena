@@ -119,6 +119,7 @@
         "noDirectory": "Este ordenador no dice dónde guarda sus cosas el nodo, así que no tiene dónde ser un nodo.",
         "unreadableIdentity": "Hay una clave en el directorio del nodo y no se puede leer. Se ha dejado intacta: escribir encima sería convertirse en otro nodo sin decirlo.",
         "recordWouldNotStart": "El registro no admitió los actos que lo inician, así que la red no se abrió. Nada queda a medias: este nodo está como estaba.",
+        "formatIsNotFrozen": "El formato que escribe esta versión no es uno sobre el que abrir una red para siempre, así que no se abrió nada. Esto solo se le pregunta a la red de producción, y lo que se abre aquí es desarrollo — así que si lo estás leyendo, dilo.",
         "unreadableRecord": "Hay un registro en el directorio del nodo y no se puede leer. Se ha dejado intacto: abrir una red encima pondría a este nodo en una segunda.",
         "recordDoesNotAddUp": "El registro ya no contiene todo lo que este nodo ha firmado. No ha arrancado, en vez de servir una historia que contradice lo que ya le ha dicho a otros.",
         "directoryHeld": "Ya hay otro nodo funcionando sobre este directorio. Un nodo es un directorio con su clave dentro, y dos sobre uno serían una sola identidad con dos historias.",

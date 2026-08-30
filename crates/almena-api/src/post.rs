@@ -97,6 +97,51 @@ mod landed {
     pub const DOORBELL: u64 = 2;
 }
 
+/// Take a status list's bytes, so this node can serve them to whoever asks.
+///
+/// **Nothing is understood here** (`SPECS.md §4.8`, `§10.2`). A node hashes what it was handed and
+/// keeps it if the record names that hash as some list's current version. It never reads a
+/// bitstring: replicating one is holding bytes, and a change to that format is a change to issuers
+/// and verifiers and to nobody else.
+///
+/// Anybody may hand these over and there is nothing to authenticate: what decides whether the bytes
+/// are kept is the record, which is public — and a node that took anything else would be one
+/// anybody can fill with rubbish under the name of a service.
+pub fn kept(node: &mut Node, bytes: &[u8], now: Epoch) -> Said {
+    let root = node.root_now();
+    match node.keep_list(bytes.to_vec(), now) {
+        Ok(list) => raw(
+            now,
+            root,
+            State::Taken,
+            Some(Value::Text(list.as_str().to_owned())),
+            None,
+        ),
+        Err(why) => raw(
+            now,
+            root,
+            State::NotTaken,
+            None,
+            Some(match why {
+                almena_node::NotKept::NotNamed => not_kept::NOT_NAMED,
+                almena_node::NotKept::WindowPast => not_kept::WINDOW_PAST,
+            }),
+        ),
+    }
+}
+
+/// Why a node did not keep a status list, as a number.
+///
+/// **Its own numbering, and deliberately not the one an act's refusals use.** These answer a
+/// different question, and folding them into one vocabulary would let a reader that knew one set
+/// read a number from the other and believe it had understood.
+pub mod not_kept {
+    /// No list in the record names those bytes as its current version.
+    pub const NOT_NAMED: u64 = 1;
+    /// The window it covers has passed, so nothing it says is about a credential still alive.
+    pub const WINDOW_PAST: u64 = 2;
+}
+
 /// Why the post would not take something, as a number.
 ///
 /// **One vocabulary for both kinds of no**, because a sender and a device both need to know which
@@ -234,6 +279,25 @@ pub fn asked(node: &mut Node, asking: &[u8], now: Epoch) -> Said {
         Errand::Confirm => {
             post.confirm(&asking.whose, &asking.device, &asking.named(), now);
             raw(now, root, State::Taken, None, None)
+        }
+        // **One endpoint, opaque, and only for a device this account has** (`SPECS.md §6.3`). What
+        // is held is somewhere to deliver a signal to; how the signal reaches a telephone — a relay
+        // translating a handle, somebody's own push distributor — is not this node's business, and
+        // not knowing is what stops the notification path becoming a dependency.
+        //
+        // Naming no endpoint clears it, which is a device saying *stop waking me*.
+        Errand::Wake => {
+            let endpoint = asking.names.first().map_or("", String::as_str);
+            match post.wakes_at(&asking.whose, &asking.device, endpoint) {
+                true => raw(now, root, State::Taken, None, None),
+                false => raw(
+                    now,
+                    root,
+                    State::NotTaken,
+                    None,
+                    Some(why(Refused::NoSuchMailbox)),
+                ),
+            }
         }
     }
 }

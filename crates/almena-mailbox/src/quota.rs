@@ -23,8 +23,6 @@
 //! This is only about room. The two are separate because a mediator that refused on grounds of
 //! content would be a mediator reading it.
 
-use almena_time::Epochs;
-
 /// The most one message may be.
 ///
 /// **A ceiling on one thing, so the ones below are ceilings on many.** A megabyte is far past any
@@ -65,10 +63,12 @@ pub const DOORBELL_MOST: usize = 256 * 1024;
 ///
 /// A copy waits at every mediator the recipient declared, so the storage is paid for by all of
 /// them — which is why the sender declares the expiry and does not choose the ceiling.
-pub const HELD_AT_MOST: Epochs = almena_time::deadline::MESSAGE_MAXIMUM_LIFETIME;
+pub const HELD_AT_MOST: almena_time::parameter::Parameter =
+    almena_time::deadline::MESSAGE_MAXIMUM_LIFETIME;
 
 /// How long a mailbox goes uncollected before it is not a mailbox.
-pub const UNCOLLECTED_UNTIL_INACTIVE: Epochs = almena_time::deadline::MAILBOX_INACTIVE;
+pub const UNCOLLECTED_UNTIL_INACTIVE: almena_time::parameter::Parameter =
+    almena_time::deadline::MAILBOX_INACTIVE;
 
 /// How much of a message goes where, given what a relationship is already holding.
 ///

@@ -318,6 +318,22 @@ fn frame(file: &mut File, bytes: &[u8]) -> Result<(), NotReadable> {
     file.sync_data().map_err(|_| NotReadable::NotWritable)
 }
 
+/// A record whose files are open for reading only, so that every write to it fails.
+///
+/// **For the one state that is otherwise unreachable in a test**: an act admitted into memory and
+/// refused by the disk. It is a real state — a full disk, a revoked mount, a device that went away
+/// — and what it costs is that handing the act over again is the only thing that mends it, so the
+/// path that mends it has to be exercised rather than reasoned about.
+#[cfg(test)]
+pub(crate) fn will_not_write(directory: &Path) -> Result<Record, NotReadable> {
+    let read_only = |path: PathBuf| File::open(path).map_err(|_| NotReadable::NotWritable);
+    Ok(Record {
+        acts: read_only(acts_at(directory))?,
+        entries: read_only(entries_at(directory))?,
+        roots: read_only(roots_at(directory))?,
+    })
+}
+
 /// Every complete frame in a file, stopping at the first one that is not.
 ///
 /// A short tail is a machine that stopped mid-write. What it was writing was never answered for —

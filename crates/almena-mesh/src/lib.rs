@@ -198,23 +198,24 @@ impl Listening {
                     peer,
                     message,
                     ..
-                })) => match message {
-                    request_response::Message::Request {
-                        request, channel, ..
-                    } => return Happened::Asked(peer, request, Answering(channel)),
-                    request_response::Message::Response {
+                })) => return self.said(peer, message),
+                // A question that will not be answered, said as one. Cleared from the outstanding
+                // list here as well as when a connection ends, so that what is held is what is
+                // genuinely still open.
+                SwarmEvent::Behaviour(DoingEvent::Sync(
+                    request_response::Event::OutboundFailure {
+                        peer,
                         request_id,
-                        response,
-                    } => {
-                        // A question nobody here put would be an answer to nothing, which is what
-                        // the zero says: it matches no outstanding question and so moves nothing.
-                        let asked = self
-                            .outstanding
-                            .remove(&request_id)
-                            .map_or(Asked(0), |(_, asked)| asked);
-                        return Happened::Answered(peer, asked, response);
-                    }
-                },
+                        error,
+                        ..
+                    },
+                )) => {
+                    let asked = self
+                        .outstanding
+                        .remove(&request_id)
+                        .map_or(Asked(0), |(_, asked)| asked);
+                    return Happened::Unanswered(peer, asked, why(&error));
+                }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
                     // Whatever was asked of them will not be answered now, and holding on to it
                     // would be holding on to it for as long as the node ran.
@@ -224,6 +225,31 @@ impl Listening {
                 // Everything else is the transport getting on with itself, and saying so would be
                 // noise in the one place somebody looks when something is wrong.
                 _ => {}
+            }
+        }
+    }
+
+    /// One message off the wire: a question somebody put, or an answer to one this node put.
+    fn said(
+        &mut self,
+        peer: PeerId,
+        message: request_response::Message<sync::Ask, sync::Said>,
+    ) -> Happened {
+        match message {
+            request_response::Message::Request {
+                request, channel, ..
+            } => Happened::Asked(peer, request, Answering(channel)),
+            request_response::Message::Response {
+                request_id,
+                response,
+            } => {
+                // A question nobody here put would be an answer to nothing, which is what the zero
+                // says: it matches no outstanding question and so moves nothing.
+                let asked = self
+                    .outstanding
+                    .remove(&request_id)
+                    .map_or(Asked(0), |(_, asked)| asked);
+                Happened::Answered(peer, asked, response)
             }
         }
     }
@@ -337,6 +363,35 @@ pub enum Happened {
     /// signed bytes and go through the same admission as any other; the peer that sent them
     /// vouches for nothing, including itself.
     Answered(PeerId, Asked, sync::Said),
+    /// A question this node put will not be answered, and why.
+    ///
+    /// **Reported rather than left to a timeout somebody wrote themselves.** A node that only ever
+    /// heard about answers would hold a question open for as long as it ran, and would have no way
+    /// to tell *nobody has replied yet* from *this peer cannot reply at all*.
+    ///
+    /// [`Unanswerable::NotOnThisNetwork`] is the one that matters most, and it is `SPECS.md §4.12`
+    /// happening: two networks do not talk because the network's own name is inside the name of the
+    /// protocol, so there is nothing to negotiate. It arrives here as an answer that will not come
+    /// rather than as a comparison somebody remembered to write.
+    Unanswered(PeerId, Asked, Unanswerable),
+}
+
+/// Why a question will not be answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unanswerable {
+    /// They offer no protocol this node speaks.
+    ///
+    /// **Which is what being on another network looks like from here** (`SPECS.md §4.12`): the
+    /// protocol is named `/almena/<the hash of the act that opened the network>/sync/1.0.0`, so a
+    /// node on another network offers a name this one never asks for. It is not a check that can be
+    /// forgotten, because it is what decides whether the two can speak at all.
+    NotOnThisNetwork,
+    /// The connection went before an answer came back.
+    TheyWentAway,
+    /// Nothing came back in time.
+    NothingCameBack,
+    /// Something went wrong on the wire.
+    TheWireFailed,
 }
 
 /// How a connection came about, and what that says about where somebody can be reached.
@@ -353,6 +408,19 @@ pub enum Meeting {
     Dialled(Multiaddr),
     /// They dialled this node. Where they came from is not where they can be found.
     Answered,
+}
+
+/// What a failed question says about why it failed.
+fn why(error: &request_response::OutboundFailure) -> Unanswerable {
+    match error {
+        // **The one that is not a fault.** Dialling somebody on another network reaches them, and
+        // then there is no protocol in common: the name of this one has the network inside it.
+        request_response::OutboundFailure::UnsupportedProtocols => Unanswerable::NotOnThisNetwork,
+        request_response::OutboundFailure::ConnectionClosed
+        | request_response::OutboundFailure::DialFailure => Unanswerable::TheyWentAway,
+        request_response::OutboundFailure::Timeout => Unanswerable::NothingCameBack,
+        request_response::OutboundFailure::Io(_) => Unanswerable::TheWireFailed,
+    }
 }
 
 /// What a connection says about where the other end can be reached.

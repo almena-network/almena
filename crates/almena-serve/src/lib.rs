@@ -55,6 +55,13 @@ const POST: &str = "/post";
 /// Where a message is left for somebody, under their identifier.
 const POST_TO: &str = "/post/";
 
+/// Where a status list's bytes are handed to a node that will serve them.
+///
+/// **Not `/acts`, and the two are not arms of one thing.** An act enters a record everybody keeps
+/// and is checked against a chain; these are opaque bytes a node holds because the record already
+/// names their hash, and it never reads one.
+const LISTS: &str = "/list";
+
 /// One node, answering.
 ///
 /// Cheap to clone, because every connection holds one and they must all reach the **same** node: a
@@ -183,6 +190,22 @@ impl Serving {
             };
             let mut node = self.node.write().await;
             return Ok(written(&deliver(&mut node, &body.to_bytes(), now)));
+        }
+
+        if method == Method::POST && path == LISTS {
+            // Under the same ceiling an act is: a door that would read any size at all is a door
+            // anybody can exhaust before anything gets a chance to say no.
+            let largest = usize::try_from(self.limits.largest_act).unwrap_or(usize::MAX);
+            let Ok(body) = Limited::new(request.into_body(), largest).collect().await else {
+                let node = self.node.read().await;
+                return Ok(written(&unreadable(&node, now, Unreadable::Malformed)));
+            };
+            let mut node = self.node.write().await;
+            return Ok(written(&almena_api::post::kept(
+                &mut node,
+                &body.to_bytes(),
+                now,
+            )));
         }
 
         if method == Method::POST && (path == POST || path.starts_with(POST_TO)) {
@@ -434,6 +457,37 @@ mod tests {
         operation.to_bytes()
     }
 
+    /// An act on that account which follows something this node has never heard of.
+    ///
+    /// Perfectly formed, properly signed, and refused — because the act it says it follows is not
+    /// in the record. A rule about the record and not about the bytes, which is the difference
+    /// this path exists to draw.
+    fn following_nothing(account: &[u8]) -> Vec<u8> {
+        let Ok(value) = almena_format::cbor::read(account) else {
+            panic!("an act");
+        };
+        let Some(created) = almena_format::operation::read(&value) else {
+            panic!("an act");
+        };
+        let control = key(9);
+        let mut operation = almena_format::operation::Operation {
+            object: created.object.clone(),
+            previous: Some(Name::of(b"an act nobody wrote")),
+            kind: Kind::HOLDER_ADD_DEVICE.number(),
+            version: 1,
+            issued: Epoch::GENESIS,
+            payload: BTreeMap::from([(1, Value::Bytes(vec![2; 33]))]),
+            signatures: Vec::new(),
+        };
+        let signature = control.sign(&operation.signing_bytes());
+        operation.signatures.push(Signed {
+            by: created.object.clone(),
+            key: control.verifying_key().bytes().to_vec(),
+            signature: signature.bytes(),
+        });
+        operation.to_bytes()
+    }
+
     /// Ask over a real socket, and get back what came out of it.
     async fn asked(serving: &Serving, method: &str, path: &str, body: Vec<u8>) -> (u16, Vec<u8>) {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -555,12 +609,15 @@ mod tests {
         // body — which rule was broken — and the request itself was fine.
         let serving = serving();
 
-        // The same account twice. The second is a well-formed act that breaks a rule.
+        // An account, and then an act on it that **follows something nobody has seen**. That is a
+        // well-formed act breaking a rule of the record rather than a rule of the bytes, which is
+        // the case this path has to answer in the body. Handing over the *identical* act twice
+        // would not do: an act arriving twice is one act, which is how delivery works.
         let act = an_account(&key(9));
         let (first, _) = asked(&serving, "POST", ACTS, act.clone()).await;
         assert_eq!(first, 200);
 
-        let (status, body) = asked(&serving, "POST", ACTS, act).await;
+        let (status, body) = asked(&serving, "POST", ACTS, following_nothing(&act)).await;
         assert_eq!(status, 200, "the request was fine");
         assert_eq!(state(&body), State::NotTaken as u64, "the act was not");
 
@@ -802,6 +859,8 @@ mod tests {
             ("GET", "/kept/0"),
             ("GET", "/capacity"),
             ("GET", "/catalogue"),
+            ("GET", "/list/00"),
+            ("POST", "/list"),
             ("POST", "/post"),
         ] {
             let (_, body) = asked(&serving, method, path, Vec::new()).await;

@@ -65,6 +65,14 @@ pub enum Errand {
     Collect = 3,
     /// Say those messages arrived, so that they stop being held.
     Confirm = 5,
+    /// Say where to wake this device, which the mediator holds and never publishes.
+    ///
+    /// **Given to the mediator and nowhere else** (`SPECS.md §6.3`). It does not go in the root
+    /// identifier: that is public and enumerable, and waking somebody's telephone is exactly the
+    /// abuse this is defended against. The device key **is** public and is what authorises the
+    /// delivery, so taking the device off the account turns the notice off without anybody having
+    /// published where it was going.
+    Wake = 7,
 }
 
 impl Errand {
@@ -75,6 +83,7 @@ impl Errand {
             1 => Some(Self::Carry),
             3 => Some(Self::Collect),
             5 => Some(Self::Confirm),
+            7 => Some(Self::Wake),
             _ => None,
         }
     }
@@ -91,7 +100,8 @@ pub struct Asking {
     pub device: Vec<u8>,
     /// The epoch it was written in.
     pub at: Epoch,
-    /// What it names: the relationships for [`Errand::Carry`], the messages for [`Errand::Confirm`].
+    /// What it names: the relationships for [`Errand::Carry`], the messages for [`Errand::Confirm`],
+    /// and the one endpoint to wake this device at for [`Errand::Wake`].
     pub names: Vec<String>,
     /// The signature over everything else.
     pub signed: Vec<u8>,
@@ -331,7 +341,10 @@ mod tests {
     #[test]
     fn an_errand_this_build_does_not_know_is_refused_and_not_guessed_at() {
         // Guessing between *take* and *destroy* is the guess with somebody's post on the other side.
-        assert!(Errand::of(7).is_none());
+        // **A number from a newer build, and not one of the holes this build's own list keeps
+        // filling**: an errand it does not know stops it, whichever version of it stopped knowing.
+        assert!(Errand::of(9).is_none());
+        assert!(Errand::of(0).is_none());
         let mut signed = asking(Errand::Collect, Epoch::new(9)).signed_by(&key(1));
         signed.names = vec!["not a name".to_owned()];
         assert!(

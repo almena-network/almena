@@ -96,6 +96,25 @@ impl VerifyingKey {
         bytes
     }
 
+    /// The point's two coordinates, which is how a JWK writes a key.
+    ///
+    /// **Here rather than wherever a JWK is built**, because this crate is the one place the curve
+    /// is touched: a second decompression somewhere else would be a second opinion about what a
+    /// key is, and the day the two disagreed a credential would name a holder nobody can find.
+    ///
+    /// Thirty-two bytes each, big-endian and left-padded, which is what `crv: P-256` fixes.
+    #[must_use]
+    pub fn coordinates(&self) -> ([u8; 32], [u8; 32]) {
+        let point = self.0.to_encoded_point(false);
+        let mut x = [0; 32];
+        let mut y = [0; 32];
+        // Uncompressed is `0x04 ‖ x ‖ y`, and this is the library's own encoding of a point it
+        // already holds — there is nothing here that could be short.
+        x.copy_from_slice(point.x().map_or(&[0; 32][..], |held| held.as_slice()));
+        y.copy_from_slice(point.y().map_or(&[0; 32][..], |held| held.as_slice()));
+        (x, y)
+    }
+
     /// Whether this signature is this key's, over these bytes.
     ///
     /// # Errors

@@ -1,0 +1,17 @@
+[package]
+name = "almena-status"
+description = "Status lists: the bitstring, the cohort it covers, and the rule that decides whether one is fresh enough to use"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+almena-credential = { workspace = true }
+almena-suite = { workspace = true }
+flate2 = { workspace = true }
+getrandom = { workspace = true }

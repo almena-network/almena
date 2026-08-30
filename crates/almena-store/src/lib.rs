@@ -46,6 +46,8 @@ pub mod element;
 pub mod entity;
 pub mod firm;
 pub mod genesis;
+pub mod government;
+pub mod guardian;
 pub mod kind;
 pub mod log;
 pub mod parameter;
@@ -54,10 +56,12 @@ pub mod resolution;
 pub mod root;
 pub mod share;
 pub mod source;
+pub mod status;
 pub mod summary;
 pub mod tag;
 pub mod template;
 pub mod tree;
+pub mod watching;
 
 /// What an act is about, when that is not its author.
 ///

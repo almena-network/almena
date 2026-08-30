@@ -82,6 +82,22 @@ fn bring_up(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
         return Err(1);
     }
 
+    // **The other zone by default, because the zone is which network is being asked about.**
+    // Pointing a production opening at the development zone would be asking *is anybody there* of
+    // the wrong network, and the answer would be no for the wrong reason.
+    if arguments.open_production
+        && let Err(why) = node.open_production(
+            arguments
+                .zone
+                .as_deref()
+                .unwrap_or(crate::node::PRODUCTION_ZONE),
+            &arguments.seeds,
+        )
+    {
+        error!("network_not_opened reason={why:?}");
+        return Err(1);
+    }
+
     if let Some(port) = arguments.mesh
         && let Err(why) = node.join_the_mesh(&crate::node::Joining {
             port,
@@ -133,6 +149,13 @@ fn saying_who_contributed_it(arguments: &Arguments, node: &mut Node) -> Result<(
         return Err(1);
     }
 
+    if arguments.close_this_node
+        && let Err(why) = node.close_this_node()
+    {
+        error!("node_not_closed reason={why:?}");
+        return Err(1);
+    }
+
     if arguments.contributed_by_nobody
         && let Err(why) = node.contributed_by_nobody()
     {
@@ -169,12 +192,65 @@ fn listen(
         .ok_or_else(|| address.to_owned())
 }
 
+/// The node this run is about, in the directory and against the resolvers it was told.
+fn held(arguments: &Arguments, records: Option<std::path::PathBuf>) -> Node {
+    Node::in_directory(
+        records,
+        arguments.directory.clone(),
+        arguments.resolvers.clone(),
+    )
+}
+
+/// Print whether the format this build writes is one a network may be opened on for good.
+///
+/// **Printed rather than logged, and it opens nothing.** It is a thing shown to a person who is
+/// about to do something once, and the one place it is worth having is in front of them before they
+/// do it. Every line is a probe that has just run against this build — not a list somebody keeps up
+/// to date — and a line that is wanting is one that cannot be corrected after a record exists.
+fn freeze_checklist() -> u8 {
+    let items = almena_frozen::checklist();
+    let wanting = items.iter().filter(|item| item.wanting()).count();
+
+    for item in &items {
+        let held = match &item.answered {
+            almena_frozen::Answered::Holds => "holds".to_owned(),
+            almena_frozen::Answered::Wanting(why) => format!("wanting — {why}"),
+        };
+        match item.kept {
+            // Written out rather than printed as a list, because a reader of this is deciding
+            // whether to do something once and the mechanism is half of what they are deciding on.
+            Some(kept) => {
+                let by: Vec<String> = kept.iter().map(|one| format!("{one:?}")).collect();
+                println!("{}: {held} — kept by {}", item.called, by.join(" and "));
+            }
+            None => println!("{}: {held}", item.called),
+        }
+    }
+
+    if wanting == 0 {
+        println!("\nThe format may be frozen: a production network may be opened on it.");
+        return 0;
+    }
+    println!(
+        "\n{wanting} of {} not met. A production network opened on this format would keep what is missing for as long as it exists.",
+        items.len()
+    );
+    1
+}
+
 /// Brings a node up, draws it or writes about it, and takes it down again.
 ///
 /// Returns the code the process should exit with: `0` unless the terminal itself failed.
 #[must_use]
 pub fn run() -> u8 {
     let arguments = Arguments::parse();
+
+    // **Before anything else, because it is instead of everything else.** Nothing is opened,
+    // joined, served or written: the run answers one question and leaves.
+    if arguments.freeze_checklist {
+        return freeze_checklist();
+    }
+
     let writes_records = arguments.writes_records();
 
     let directories = almena_paths::Paths::for_application(IDENTIFIER);
@@ -184,7 +260,7 @@ pub fn run() -> u8 {
     let configuration = directories.configuration().ok();
     let language = settle(arguments.language.as_deref(), configuration.as_deref());
 
-    let mut node = Node::in_directory(destination, arguments.directory.clone());
+    let mut node = held(&arguments, destination);
     let mut code = 0;
 
     if let Err(code) = bring_up(&arguments, &mut node) {

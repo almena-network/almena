@@ -122,7 +122,7 @@ async fn what_it_says(
         reachable: record.read().await.reachable_at(node.did().name()),
         // Where the counter itself reached them, which is its own observation — never where the
         // node being counted says it was.
-        found_at: record.read().await.found_at(&key),
+        found_at: record.read().await.found_at(&key).into_iter().collect(),
         // What other nodes wrote down about it, whether the share-out deals it this act, and
         // whether it handed it over when asked. This counter has asked nobody and read no
         // summaries, and says so rather than filling the gaps with noughts.
