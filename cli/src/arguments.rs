@@ -4,7 +4,30 @@
 //! flag would be accepted, used for nothing and refused by nothing. It arrives with the code that
 //! can honour it.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+/// Which network a run is about.
+///
+/// Two, and there will never be a third from here: `SPECS.md §4.5` names two zones, and a network
+/// nobody publishes a zone for is one nobody can join.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Network {
+    /// Development, which is opened again as often as it needs to be.
+    Dev,
+    /// The real one, opened once.
+    Pro,
+}
+
+impl Network {
+    /// The same choice, as the node's own word for it.
+    #[must_use]
+    pub const fn which(self) -> almena_node::Which {
+        match self {
+            Self::Dev => almena_node::Which::Development,
+            Self::Pro => almena_node::Which::Production,
+        }
+    }
+}
 
 /// The command line, parsed.
 ///
@@ -24,27 +47,38 @@ pub struct Arguments {
     #[arg(long)]
     pub quiet: bool,
 
-    /// Open a development network, on the word that there is nobody to join.
+    /// Which network this node is for: `dev` or `pro`.
     ///
-    /// **A node opens a network only when nobody is there**, and normally it finds that out by
-    /// reading the zone. Nothing reads a zone yet, so this flag is somebody saying it — which is
-    /// why it says *development* in its own name and cannot open anything else. Development can be
-    /// opened again as often as it needs to be; a production network is opened once, ever, and
-    /// nobody is going to do that on the strength of a promise typed at a terminal.
-    #[arg(long)]
-    pub open_development: bool,
+    /// **Chosen once and never mixed.** It decides which zone the node reads, which network it
+    /// would open, and — the part that is not obvious — **where the node lives**: a node for one
+    /// network keeps its key, its record and its roots in a directory of its own, so a node for the
+    /// other cannot read any of them.
+    ///
+    /// Everything else already separated the two: the act that opened a network is inside the
+    /// record, its hash is the network's name, and the mesh protocol carries that name so two
+    /// networks have nothing to negotiate. **The key is what none of that covered** — thirty-two
+    /// bytes with no network in them — and development is where directories get copied and machines
+    /// get shared, so one key across both would mean a careless afternoon there costing a node in
+    /// production.
+    #[arg(long, value_enum, default_value_t = Network::Dev)]
+    pub network: Network,
 
-    /// Open the production network, on the word that there is nobody to join.
+    /// Open that network, on the word that there is nobody to join.
     ///
-    /// **Once, ever.** A record is append-only, so what this settles is settled for as long as that
-    /// network exists — and the node holds the format to its own freeze checklist before it will do
-    /// it, refusing rather than opening a network on a format that is still moving. That is the
-    /// difference between the two networks and the reason there are two: development is re-opened
-    /// whenever the format changes, and production is not re-opened at all.
+    /// **The same act for both, and what differs is what is at stake.** A node opens a network only
+    /// when nobody is there and it finds that out by reading that network's zone — the same
+    /// question asked of a different zone. Development is opened again as often as it needs to be;
+    /// **production is opened once, ever**, and the node holds the format to its own freeze
+    /// checklist first, refusing rather than opening a network on a format that is still moving.
     ///
-    /// Read `--freeze-checklist` first. It answers the same question without opening anything.
-    #[arg(long, conflicts_with = "open_development")]
-    pub open_production: bool,
+    /// Without it a node comes back to the network its directory already holds and opens nothing —
+    /// which is what every start after the first wants, and what keeps a restart from ever becoming
+    /// a second network.
+    ///
+    /// Read `--freeze-checklist` before opening production. It answers the same question with
+    /// nothing at stake.
+    #[arg(long)]
+    pub open: bool,
 
     /// Say whether the format this build writes is one a network may be opened on for good.
     ///
@@ -215,7 +249,7 @@ impl Arguments {
 mod tests {
     use clap::Parser as _;
 
-    use super::Arguments;
+    use super::{Arguments, Network};
 
     #[test]
     fn a_certificate_without_its_key_is_refused() {
@@ -282,21 +316,30 @@ mod tests {
     #[test]
     fn opening_a_network_is_off_unless_it_is_asked_for() {
         // It opens a network, which on production is a thing that happens once ever. Nothing that
-        // consequential is the default.
-        assert!(!Arguments::parse_from(["almena"]).open_development);
-        assert!(Arguments::parse_from(["almena", "--open-development"]).open_development);
-        assert!(!Arguments::parse_from(["almena"]).open_production);
-        assert!(Arguments::parse_from(["almena", "--open-production"]).open_production);
+        // consequential is the default — and without it a run comes back to the network its
+        // directory already holds, which is what every start after the first wants.
+        assert!(!Arguments::parse_from(["almena"]).open);
+        assert!(Arguments::parse_from(["almena", "--open"]).open);
     }
 
     #[test]
-    fn a_run_cannot_ask_for_both_networks() {
-        // Two networks over one directory would be a second history for one identity, and the two
-        // flags mean opposite things about how often a network may be opened at all.
-        assert!(
-            Arguments::try_parse_from(["almena", "--open-development", "--open-production"])
-                .is_err()
+    fn development_is_the_network_a_run_is_about_unless_it_says_otherwise() {
+        // **The default is the one that is opened again as often as it needs to be.** Production is
+        // opened once, ever, so reaching it is something a run says out loud.
+        assert_eq!(Arguments::parse_from(["almena"]).network, Network::Dev);
+        assert_eq!(
+            Arguments::parse_from(["almena", "--network", "pro"]).network,
+            Network::Pro
         );
+    }
+
+    #[test]
+    fn a_run_is_about_one_network_and_there_is_nowhere_to_say_two() {
+        // Two networks over one directory would be a second history for one identity. It is not a
+        // rule anybody enforces here: it falls out of the choice being one value rather than two
+        // flags that could both be given.
+        assert!(Arguments::try_parse_from(["almena", "--network", "both"]).is_err());
+        assert!(Arguments::try_parse_from(["almena", "--network", "prod"]).is_err());
     }
 
     #[test]
@@ -305,19 +348,7 @@ mod tests {
         // network finds out what would happen before it happens.
         let asked = Arguments::parse_from(["almena", "--freeze-checklist"]);
         assert!(asked.freeze_checklist);
-        assert!(!asked.open_production);
-        assert!(!asked.open_development);
-    }
-
-    #[test]
-    fn each_network_is_opened_by_the_flag_that_names_it() {
-        // **Named rather than switched**, because the two are not the same act done twice.
-        // Development is opened again whenever the format moves; production is opened once and is
-        // held to the freeze checklist before it is. A single flag with an argument would make them
-        // look like one thing with a setting.
-        assert!(Arguments::parse_from(["almena", "--open-development"]).open_development);
-        assert!(Arguments::parse_from(["almena", "--open-production"]).open_production);
-        assert!(!Arguments::parse_from(["almena", "--open-production"]).open_development);
+        assert!(!asked.open);
     }
 
     #[test]

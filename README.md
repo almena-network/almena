@@ -249,10 +249,28 @@ network beside the first, that nobody can tell apart, because both say the same 
 themselves.
 
 ```bash
+almena                        # comes back to the network this directory holds
+almena --network pro          # the same, for the production one
+almena --open                 # opens that network, if its zone says nobody is there
 almena --freeze-checklist     # can this format be frozen? nothing is opened
-almena --open-development     # opens dev.almena.network, if nobody is there
-almena --open-production      # opens almena.network. Once, ever
 ```
+
+**Which network a run is about is one choice, `--network dev|pro`, and it decides three things**:
+which zone is read, which network `--open` would open, and — the part that is not obvious — **where
+the node lives**. A node for one network keeps its key, its record and its roots in a directory of
+its own, so a node for the other cannot read any of them.
+
+Everything else already kept the two apart: the act that opened a network is inside the record, its
+hash is the network's name, and the mesh protocol carries that name so two networks have nothing to
+negotiate. **The key is what none of that covered** — thirty-two bytes with no network in them — and
+development is where directories get copied and machines get shared, so one key across both would
+mean a careless afternoon there costing a node in production.
+
+**Opening is the same act on both**, asked of a different zone. What differs is what is at stake:
+development is opened again as often as it needs to be, and production is opened once, ever, after
+the node has held the format to its own freeze checklist. Without `--open` a run comes back to the
+network its directory already holds and opens nothing, which is what every start after the first
+wants — and what keeps a restart from ever becoming a second network.
 
 `--resolver <ADDRESS>` asks named servers instead of whatever this machine uses for DNS, for a
 machine whose own resolver is not usable — behind a VPN, pointed at servers it cannot reach, or

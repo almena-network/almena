@@ -69,32 +69,30 @@ fn certificate_of(
 /// past: a node half on a network is one whose published records describe something that is not
 /// there.
 fn bring_up(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
-    if arguments.open_development
-        && let Err(why) = node.open_development(
+    // **One flow, and the network chosen is the only thing that varies.** Opening asks that
+    // network's own zone whether anybody is there; coming back reads the record this directory
+    // already holds and asks nobody. What must never happen is the second becoming the first by
+    // accident, which is why opening is something a run says out loud.
+    let asking = match arguments.open {
+        true => node.open(
             arguments
                 .zone
                 .as_deref()
-                .unwrap_or(crate::node::DEVELOPMENT_ZONE),
+                .unwrap_or(match arguments.network {
+                    crate::arguments::Network::Dev => crate::node::DEVELOPMENT_ZONE,
+                    crate::arguments::Network::Pro => crate::node::PRODUCTION_ZONE,
+                }),
             &arguments.seeds,
-        )
-    {
-        error!("network_not_opened reason={why:?}");
-        return Err(1);
-    }
-
-    // **The other zone by default, because the zone is which network is being asked about.**
-    // Pointing a production opening at the development zone would be asking *is anybody there* of
-    // the wrong network, and the answer would be no for the wrong reason.
-    if arguments.open_production
-        && let Err(why) = node.open_production(
-            arguments
-                .zone
-                .as_deref()
-                .unwrap_or(crate::node::PRODUCTION_ZONE),
-            &arguments.seeds,
-        )
-    {
-        error!("network_not_opened reason={why:?}");
+        ),
+        // Nothing to come back to is not a failure worth stopping over: a node with no network
+        // still draws, still says what it is, and still has a network to be given.
+        false => match node.rejoin() {
+            Err(crate::node::Opening::NoNetwork) => Ok(()),
+            other => other,
+        },
+    };
+    if let Err(why) = asking {
+        error!("network_not_taken reason={why:?}");
         return Err(1);
     }
 
@@ -115,7 +113,8 @@ fn bring_up(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
     Ok(())
 }
 
-/// Show a challenge, record a claim, or let go of one, as far as this run asked for.
+/// Show a challenge, record a claim, close this node, or let go of a claim — as far as this run
+/// asked for.
 ///
 /// **Whoever sustains the network earns the right to write on it, and that has to attach to
 /// somebody.** A node nobody claimed is a machine, and a machine cannot be credited — so a node and
@@ -141,11 +140,11 @@ fn saying_who_contributed_it(arguments: &Arguments, node: &mut Node) -> Result<(
         }
     }
 
-    if let Some(both) = arguments.contributed_by.as_deref()
-        && let [challenge, approval] = both
+    if let Some(both) = arguments.contributed_by.as_ref()
+        && let [challenge, approval] = both.as_slice()
         && let Err(why) = node.contributed_by(challenge, approval)
     {
-        error!("not_claimed reason={why:?}");
+        error!("claim_not_written reason={why:?}");
         return Err(1);
     }
 
@@ -198,6 +197,7 @@ fn held(arguments: &Arguments, records: Option<std::path::PathBuf>) -> Node {
         records,
         arguments.directory.clone(),
         arguments.resolvers.clone(),
+        arguments.network.which(),
     )
 }
 

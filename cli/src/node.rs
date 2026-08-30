@@ -75,6 +75,18 @@ const ASKING_FOR: std::time::Duration = std::time::Duration::from_secs(10);
 /// anything is *nobody is here*, and no number of attempts can invent a seed.
 const ASK_AT_MOST: u32 = 3;
 
+/// The one word a network is called by, in a path and in a record line.
+///
+/// **Short, lower case and not translated.** It names a directory and it is read by whoever is
+/// looking at one, so it is the same word on every machine and in every language — the same reason
+/// the log carries a stable code rather than a translated sentence.
+const fn worded(which: almena_node::Which) -> &'static str {
+    match which {
+        almena_node::Which::Development => "dev",
+        almena_node::Which::Production => "pro",
+    }
+}
+
 /// The zone a node looks in for somebody to join on the production network.
 ///
 /// **The other one, and there are only two** (`SPECS.md §4.5`). Which zone was read is the weak
@@ -283,6 +295,19 @@ pub struct Node {
     directories: almena_paths::Paths,
     /// The DNS servers an operator named, or nothing to use the machine's own.
     resolvers: Vec<std::net::IpAddr>,
+    /// Which network this node is for, chosen once and never mixed with the other.
+    ///
+    /// **It decides where the node lives**, so a node for one network cannot read the other's key,
+    /// record or roots — they are not in the same directory. What already made the two networks
+    /// separate is the record itself: the act that opened a network is inside it, its hash is the
+    /// network's name, and the mesh protocol carries that name so two networks have nothing to
+    /// negotiate. What this adds is the one thing those do not cover — **the key**, which is
+    /// thirty-two bytes with no network in them and would otherwise be one node's identity on both.
+    ///
+    /// That matters in one direction in particular. Development is where directories get copied,
+    /// machines get shared and nobody is careful; production is opened once. One key across both
+    /// would mean a careless afternoon in development costing a node in production.
+    which: almena_node::Which,
     /// The file its records are going to, when they are going to one at all.
     records: Option<PathBuf>,
     /// When this network's epoch zero began, so that this face can say what epoch it is.
@@ -330,7 +355,7 @@ impl Node {
     /// the destination happens before there is a node to install it for.
     #[must_use]
     pub fn start(records: Option<PathBuf>) -> Self {
-        Self::in_directory(records, None, Vec::new())
+        Self::in_directory(records, None, Vec::new(), almena_node::Which::Development)
     }
 
     /// The same, being the node in a directory somebody named.
@@ -341,13 +366,18 @@ impl Node {
         records: Option<PathBuf>,
         directory: Option<PathBuf>,
         resolvers: Vec<std::net::IpAddr>,
+        which: almena_node::Which,
     ) -> Self {
-        info!("node_started identifier={IDENTIFIER}");
+        info!(
+            "node_started identifier={IDENTIFIER} network={}",
+            worded(which)
+        );
 
         Self {
             directory,
             directories: almena_paths::Paths::for_application(IDENTIFIER),
             resolvers,
+            which,
             records,
             holds: None,
             began: None,
@@ -359,49 +389,52 @@ impl Node {
         }
     }
 
-    /// Open a development network, on the caller's word that there is nobody to join.
+    /// Open the network this node was told it is for, if there is nobody to join.
     ///
-    /// **A node opens a network only when nobody is there.** Normally it learns that by reading
-    /// the zone; nothing reads one yet, so this takes somebody's word for it — which is why only
-    /// development can be opened this way. Development is opened again as often as it needs to be;
-    /// production is opened once, ever, and not on a promise typed at a terminal.
+    /// **One flow, and which network it is for is the only thing that differs.** A node opens a
+    /// network only when nobody is there, and it finds that out by reading that network's zone —
+    /// the same question, asked of a different zone. Nothing else about opening changes.
+    ///
+    /// What the two do not share is what happens afterwards. Development is opened again as often
+    /// as it needs to be, so a network there lives as long as it is useful; **production is opened
+    /// once, ever**, and the node holds the format to the checklist of `almena_frozen` before it
+    /// will do it. That is a difference in what is at stake and not in the steps.
     ///
     /// # Errors
     ///
     /// [`Opening`], and each of them is a different thing to go and do about it. The one worth
     /// naming is [`Opening::NoRandomness`]: it is a refusal to start rather than something to work
     /// around, because a node with a guessable key is worse than one that did not come up.
-    pub fn open_development(&mut self, zone: &str, told: &[String]) -> Result<(), Opening> {
-        self.opening(almena_node::Which::Development, zone, told)
+    pub fn open(&mut self, zone: &str, told: &[String]) -> Result<(), Opening> {
+        self.taking_part(Some(Looking {
+            which: self.which,
+            zone,
+            told,
+        }))
     }
 
-    /// Open the production network, on the caller's word that there is nobody to join.
+    /// Come back to the network this directory already holds, without opening anything.
     ///
-    /// **Once, ever.** A record is append-only, so what this act settles is settled for as long as
-    /// that network exists — which is why the node holds the format to the checklist of
-    /// `almena_frozen` before it will do it, and refuses with
-    /// [`Opening::FormatIsNotFrozen`] rather than opening a network on a format that is still
-    /// moving. Development takes no such check, because development is opened again as often as the
-    /// format changes; that is the whole of why they are two networks.
-    ///
-    /// What it does not check is who is doing it. Nothing here can: a network is opened by whoever
-    /// holds a machine and finds the zone empty, and the defence against opening a second one is
-    /// that finding anybody at all stops it.
+    /// **For every start after the first.** A node is a directory with a key in it, and one that
+    /// holds a record is already on a network — so this reads it back rather than asking a zone
+    /// whether it may open one.
     ///
     /// # Errors
     ///
-    /// [`Opening`], and each of them is a different thing to go and do about it.
-    pub fn open_production(&mut self, zone: &str, told: &[String]) -> Result<(), Opening> {
-        self.opening(almena_node::Which::Production, zone, told)
+    /// [`Opening`], and [`Opening::NoNetwork`] where the directory holds no record: coming back to
+    /// a network this node was never on is not something it can do, and opening one is a different
+    /// thing that has to be asked for.
+    pub fn rejoin(&mut self) -> Result<(), Opening> {
+        self.taking_part(None)
     }
 
-    /// Open a network of that kind, or come back to the one this directory already holds.
-    fn opening(
-        &mut self,
-        which: almena_node::Which,
-        zone: &str,
-        told: &[String],
-    ) -> Result<(), Opening> {
+    /// Take this node's place on a network: the one this directory holds, or a new one.
+    ///
+    /// `looking` is what to do when the directory holds no record. [`Some`] is *open one if the
+    /// zone says nobody is there*; [`None`] is *do not*, which is what every start after the first
+    /// asks for — and the difference is the whole of what keeps a second network from being opened
+    /// by a restart.
+    fn taking_part(&mut self, looking: Option<Looking<'_>>) -> Result<(), Opening> {
         if self.holds.is_some() {
             return Err(Opening::AlreadyOnOne);
         }
@@ -434,9 +467,13 @@ impl Node {
                 );
                 almena_node::Node::rejoin(&directory, key).map_err(Opening::from)?
             }
-            almena_node::record::Holding::Nothing => {
-                self.first_time(&directory, Looking { which, zone, told }, government, key)?
-            }
+            // **Nothing here, so this node is on no network.** Opening one is a thing to be asked
+            // for and never a thing a start falls into: a node that opened whenever it found its
+            // directory empty would open a second network the first time somebody moved one.
+            almena_node::record::Holding::Nothing => match looking {
+                Some(looking) => self.first_time(&directory, looking, government, key)?,
+                None => return Err(Opening::NoNetwork),
+            },
         };
 
         let began = opened.began();
@@ -838,8 +875,16 @@ impl Node {
     /// is, in which case this node can store nothing at all.
     pub fn application_data(&self) -> Result<PathBuf, almena_paths::NoHomeDirectory> {
         match &self.directory {
+            // **A directory somebody named is theirs, whole.** They said where this node lives, so
+            // nothing is appended to it: two networks in one named directory is two directories
+            // they can name, which is how a machine already runs more than one node.
             Some(named) => Ok(named.clone()),
-            None => self.directories.application_data(),
+            // **The network is part of the path**, so the two never share a key. Everything else
+            // that separates them lives in the record; this is what separates what is beside it.
+            None => Ok(self
+                .directories
+                .application_data()?
+                .join(worded(self.which))),
         }
     }
 
