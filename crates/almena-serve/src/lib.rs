@@ -62,6 +62,8 @@ const POST_TO: &str = "/post/";
 /// names their hash, and it never reads one.
 const LISTS: &str = "/list";
 
+pub mod openapi;
+
 /// One node, answering.
 ///
 /// Cheap to clone, because every connection holds one and they must all reach the **same** node: a
@@ -210,6 +212,13 @@ impl Serving {
 
         if method == Method::POST && (path == POST || path.starts_with(POST_TO)) {
             return Ok(written(&self.posted(request, &path, now).await));
+        }
+
+        // **The one answer that is not about the record, and the one that is not CBOR.** It
+        // describes the door rather than what is behind it, and the tools that read a description
+        // of a door read JSON.
+        if method == Method::GET && path == openapi::AT {
+            return Ok(describing());
         }
 
         let node = self.node.read().await;
@@ -379,6 +388,19 @@ impl Timekeeping {
 /// The only decision here is which status code carries it, and it is a decision about the
 /// *request* rather than about what was asked after. Everything about the object rides in the
 /// body, where a reader has to look anyway.
+/// The interface's own description, as JSON.
+///
+/// Split out because it is the one response here built from nothing: no node is read, no epoch is
+/// stamped, and nothing about it changes between requests.
+fn describing() -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::new(Bytes::from(openapi::DOCUMENT)));
+    response.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
 fn written(said: &Said) -> Response<Full<Bytes>> {
     let status = match said.state {
         State::NoSuchQuestion => StatusCode::NOT_FOUND,

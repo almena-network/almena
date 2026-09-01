@@ -57,6 +57,13 @@ export interface NetworkReading {
   peer: string | null;
   /** The peers — or `null`, meaning nobody counted, which an empty array would not say. */
   peers: Peer[] | null;
+  /**
+   * Where this node serves its interface, or `null` where it serves none.
+   *
+   * **Absent is a state.** A node that has not been asked to serve has no origin, and an address
+   * standing in for one would send somebody to a door that is not open.
+   */
+  origin: string | null;
 }
 
 /**
@@ -69,7 +76,12 @@ export interface NetworkReading {
  * @returns What the node reports about itself.
  */
 export async function readNetwork(): Promise<NetworkReading> {
-  const facts = await invoke<Facts>("node_facts");
+  // Both at once, because they are two independent questions about the same node and asking them
+  // one after another would make a screen that draws them together draw two different moments.
+  const [facts, origin] = await Promise.all([
+    invoke<Facts>("node_facts"),
+    invoke<string | null>("interface_at"),
+  ]);
   return {
     network: facts.network,
     identity: facts.identity,
@@ -77,5 +89,36 @@ export async function readNetwork(): Promise<NetworkReading> {
     root: facts.root,
     peer: facts.peer,
     peers: null,
+    origin,
   };
+}
+
+/** Which of the two networks a node is being put on. */
+export type Which = "production" | "development";
+
+/**
+ * Puts this node on a network, by asking somebody already on it for the record.
+ *
+ * **The only thing anybody is asked is which.** Finding a seed, pulling the record and announcing
+ * are the node's own work — a wizard that walked an operator through them would be asking for
+ * presses on steps they cannot judge.
+ *
+ * @param which - Which network.
+ * @param port - The port to listen on, which is the one that gets published in the zone.
+ * @throws The identifier of whatever went wrong, which the interface looks its words up by.
+ */
+export async function joinANetwork(which: Which, port: number): Promise<Facts> {
+  return invoke<Facts>("join_a_network", { which, port });
+}
+
+/**
+ * Opens a development network, on the operator's word that there is nobody to join.
+ *
+ * **Only development, and only where the zone named nobody.** A network is opened once, ever;
+ * production is arrived at and never started from a button.
+ *
+ * @throws The identifier of whatever went wrong.
+ */
+export async function openDevelopment(): Promise<Facts> {
+  return invoke<Facts>("open_development_network", {});
 }

@@ -34,7 +34,6 @@ import ScreenNav from "@/components/ScreenNav";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -114,7 +113,6 @@ function Ai() {
     <Card>
       <CardHeader>
         <CardTitle>{t("ai.heading")}</CardTitle>
-        <CardDescription>{t("ai.body")}</CardDescription>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">

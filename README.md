@@ -327,6 +327,17 @@ If the tray fails to build — on Linux, most often because nothing on the deskt
 one — **the close button goes back to closing.** An application that put itself away with
 nowhere to be found again would be worse than one that simply quit, so it does not.
 
+**The glyph is the reversed mark**, white inside a dark rounded square, and so is this
+application's icon. The holder's client wears the same mark plain — they are one brand, and on a
+machine running both they were two identical tiles in the Dock and, once that client grew a tray
+of its own, two identical glyphs on the bar. The mark cannot change; the ground can.
+
+What that costs is macOS's tinting. A template image is an alpha mask the system fills to suit
+its bar, and the mask of a filled square is a square, so a glyph carrying its own ground cannot
+be one. This one is drawn as it was made: on a dark bar it disappears into it and reads as the
+white mark alone, and on a light one it is a dark tile — heavier than the bar's convention, and
+unmistakably not the other application.
+
 The tray's menu is built from the frontend rather than at startup, because its entries are
 text a person reads and only that side holds the catalogs. It is the same reason
 `notification::show` takes text and not a key. Changing the language on the Settings screen
@@ -773,6 +784,17 @@ whether the operating system starts Almena when somebody logs in.
 Both appearance choices are attributes on the document element, written by
 `src/lib/appearance.ts` and read by `src/styles/tokens.css` alone. No screen knows which
 palette it is in, and no component branches on one.
+
+## Nothing in the window explains it
+
+**The windowed application carries no explanatory text** — every card had a sentence under its
+heading saying what the card was about, and none of them is there. What is left is the heading, the
+figures, the controls, what happened when something failed, and what there is none of. A failure
+still says which failure it is; it no longer says what to do about it.
+
+The decision and what it costs are `SPECS.md §16-AG`. Nothing has replaced what went, and where it
+goes instead — a page of documentation, an agent to ask — is not decided. The agent this application
+already runs beside itself is the obvious candidate and has not been pointed at it.
 
 ## Languages
 

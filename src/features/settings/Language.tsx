@@ -19,7 +19,6 @@ import { useTranslation } from "react-i18next";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -44,7 +43,6 @@ function Language() {
     <Card>
       <CardHeader>
         <CardTitle>{t("settings.language.heading")}</CardTitle>
-        <CardDescription>{t("settings.language.body")}</CardDescription>
       </CardHeader>
 
       <CardContent>

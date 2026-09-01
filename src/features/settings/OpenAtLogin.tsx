@@ -19,7 +19,6 @@ import Setting from "@/components/Setting";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -52,7 +51,6 @@ function OpenAtLogin() {
     <Card>
       <CardHeader>
         <CardTitle>{t("settings.openAtLogin.heading")}</CardTitle>
-        <CardDescription>{t("settings.openAtLogin.body")}</CardDescription>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-2">

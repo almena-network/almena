@@ -22,7 +22,6 @@ import { useTranslation } from "react-i18next";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -74,7 +73,6 @@ function Appearance() {
     <Card>
       <CardHeader>
         <CardTitle>{t("settings.appearance.heading")}</CardTitle>
-        <CardDescription>{t("settings.appearance.body")}</CardDescription>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-6">

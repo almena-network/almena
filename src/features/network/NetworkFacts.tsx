@@ -14,7 +14,6 @@ import Figure from "@/components/Figure";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -35,7 +34,6 @@ function NetworkFacts({ reading }: NetworkFactsProps) {
     <Card>
       <CardHeader>
         <CardTitle>{t("network.about.heading")}</CardTitle>
-        <CardDescription>{t("network.about.body")}</CardDescription>
       </CardHeader>
 
       <CardContent>

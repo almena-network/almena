@@ -45,25 +45,28 @@
   },
   "home": {
     "notJoined": {
-      "title": "Not on the network.",
-      "body": "This build joins none: the peer-to-peer layer is not written yet, so there is nothing here that could truthfully report on one."
+      "title": "Not on the network."
     },
     "notify": {
       "heading": "Notifications.",
-      "body": "Nothing announces itself yet, because nothing has happened that would be worth announcing. What does work is the sending of one, on this device, and it can be tried here.",
       "action": "Send a notification",
       "message": "Notifications arrive on this device. Nothing else has anything to announce yet.",
       "outcome": {
         "sent": "Sent. Some devices do not draw one while this window is the one in front.",
-        "refused": "This device does not permit notifications from Almena. That is changed in its own settings, not here.",
+        "refused": "This device does not permit notifications from Almena.",
         "failed": "It could not be sent, and this build cannot say why."
       }
+    },
+    "on": {
+      "network": "Network",
+      "identity": "This node",
+      "written": "Acts written down",
+      "root": "Root over them"
     }
   },
   "network": {
     "about": {
       "heading": "The network.",
-      "body": "Which network this node belongs to, who it is, and how many peers it is talking to. A dash is not a zero: it means nobody measured that, which is the case for all three until the peer-to-peer layer exists.",
       "figure": {
         "network": "Network",
         "identity": "This node",
@@ -76,11 +79,11 @@
     "peers": {
       "heading": "Peers",
       "lookingTitle": "Looking.",
-      "looking": "Nobody has counted yet. This is the first look since the screen opened, and whatever it finds — peers, or the reason there are none — takes the place of this.",
+      "looking": "Nobody has counted yet.",
       "noNetworkTitle": "No network.",
-      "noNetwork": "There is no network for a peer to be on: the peer-to-peer layer is not written yet. The list itself is here and working — the first peer to exist appears in it without this screen changing.",
+      "noNetwork": "There is no network for a peer to be on: the peer-to-peer layer is not written yet.",
       "noneTitle": "No peers.",
-      "none": "This node is on a network and is talking to nobody on it. That is an answer rather than a gap: somebody counted, and the count was none.",
+      "none": "This node is on a network and is talking to nobody on it.",
       "refresh": "Refresh",
       "lookedAt": "Looked at {{time}}, and again every ten seconds."
     },
@@ -92,7 +95,6 @@
     },
     "control": {
       "heading": "Running this node",
-      "body": "What an operator can do to it from here. The terminal offers the same two.",
       "open": "Open a development network",
       "zone": "Zone, or empty for this network's own",
       "serve": "Serve the interface",
@@ -101,9 +103,8 @@
       "carry": "Carry other nodes' traffic",
       "carriedBy": "Relay to be carried by, or empty to be dialled directly",
       "claimHeading": "Who contributed this node",
-      "claimBody": "Whoever sustains the network earns the right to write on it, and that has to attach to somebody. The node asks; approving is theirs to do, with their own key.",
       "showChallenge": "Show a challenge",
-      "challengeShown": "Show this to whoever contributed the node. It is good for a day, and nothing but this node remembers it.",
+      "challengeShown": "Show this to whoever contributed the node.",
       "challenge": "The challenge that was shown",
       "approval": "What they handed back",
       "recordClaim": "Write it down",
@@ -113,36 +114,47 @@
       "privateKey": "Private key (PEM)",
       "address": "Address to serve on",
       "reason": {
-        "alreadyOnANetwork": "This node is already on a network. A second one would be a second history for one identity.",
-        "noRandomness": "The system would not produce randomness, so there is no key to be. A node with a guessable key is worse than one that did not start.",
+        "alreadyOnANetwork": "This node is already on a network.",
+        "noRandomness": "The system would not produce randomness, so there is no key to be.",
         "noClock": "The system would not say what time it is, and a network has to record when its first epoch began.",
         "noDirectory": "This computer would not say where the node keeps things, so it has nowhere to be a node.",
-        "unreadableIdentity": "There is a key in the node's directory and it cannot be read. It has been left alone: writing over it would be quietly becoming a different node.",
-        "recordWouldNotStart": "The record would not take the acts that start it, so the network was not opened. Nothing is half-open: this node is as it was.",
-        "formatIsNotFrozen": "The format this build writes is not one a network may be opened on for good, so nothing was opened. Only the production network is asked this, and what is opened here is development — so if you are reading it, say so.",
-        "unreadableRecord": "There is a record in the node's directory and it cannot be read. It has been left alone: opening a network on top of it would put this node on a second one.",
-        "recordDoesNotAddUp": "The record no longer holds everything this node has already signed for. It has not come up, rather than serve a history that contradicts what it has told other people.",
-        "directoryHeld": "Another node is already running on this directory. A node is a directory with a key in it, and two of them over one would be a single identity with two histories.",
-        "directoryCannotBeHeld": "This filesystem will not say whether another node is using the directory. Starting anyway would mean guessing that nobody is — network drives often cannot answer this.",
-        "noCertificate": "The certificate file is not there, cannot be read, or holds no certificate. The interface has not come up: serving in the clear having been asked not to would be the worst of both.",
-        "noPrivateKey": "The private key is not there, cannot be read, or holds no key. A certificate and its key are one decision, and one without the other is not it.",
-        "certificateAndKeyAreNotAPair": "That key does not belong to that certificate. Found here rather than by the first person who fails to connect.",
-        "zoneSilent": "The zone did not answer, so whether anybody is already there is unknown. Nothing was opened: reading silence as an empty zone is how a second network gets started beside the one that was already running.",
-        "thereIsANetwork": "The zone says there is already a network. A node joins one when somebody is there and opens one only when nobody is.",
-        "notThePromisedNetwork": "Somebody listed as being on this network turned out to be on another one, or to be passing off one they made up. Nothing was written down — the question is asked before anything is.",
+        "unreadableIdentity": "There is a key in the node's directory and it cannot be read.",
+        "recordWouldNotStart": "The record would not take the acts that start it, so the network was not opened.",
+        "formatIsNotFrozen": "The format this build writes is not one a network may be opened on for good, so nothing was opened.",
+        "unreadableRecord": "There is a record in the node's directory and it cannot be read.",
+        "recordDoesNotAddUp": "The record no longer holds everything this node has already signed for.",
+        "directoryHeld": "Another node is already running on this directory.",
+        "directoryCannotBeHeld": "This filesystem will not say whether another node is using the directory.",
+        "noCertificate": "The certificate file is not there, cannot be read, or holds no certificate.",
+        "noPrivateKey": "The private key is not there, cannot be read, or holds no key.",
+        "certificateAndKeyAreNotAPair": "That key does not belong to that certificate.",
+        "zoneSilent": "The zone did not answer, so whether anybody is already there is unknown.",
+        "thereIsANetwork": "The zone says there is already a network.",
+        "notThePromisedNetwork": "Somebody listed as being on this network turned out to be on another one, or to be passing off one they made up.",
         "noTransport": "This machine would not give the node a way onto the mesh at all.",
-        "meshAddressUnavailable": "That port could not be listened on — usually somebody else already has it. It has not quietly taken another: a node whose port moved is a node whose published record is now wrong, and nobody reading it would be told.",
+        "meshAddressUnavailable": "That port could not be listened on — usually somebody else already has it.",
         "noNetwork": "There is no network to serve yet.",
-        "notAClaim": "That is not a challenge and an approval of it. A typo or a half-copied line — nothing was written down, and nothing is wrong with the node.",
-        "notTheirs": "It read, and it does not bind: the approval is not signed by the key their own record authorises, or the challenge had stopped being good. A binding that cannot be checked would be this node's word about somebody who never agreed.",
-        "notWrittenDown": "The record would not take it, which should not be reachable. Worth looking at the node rather than at whoever was being claimed for.",
+        "notAClaim": "That is not a challenge and an approval of it.",
+        "notTheirs": "It read, and it does not bind: the approval is not signed by the key their own record authorises, or the challenge had stopped being good.",
+        "notWrittenDown": "The record would not take it, which should not be reachable.",
         "addressUnavailable": "Nothing could listen on that address.",
         "unknown": "It did not work, and this build has no reading for what came back."
       }
+    },
+    "published": {
+      "title": "What this node publishes",
+      "body": "Where it can be reached, and where the interface describes itself.",
+      "interface": "Interface",
+      "mesh": "Mesh",
+      "description": "Description"
+    },
+    "claim": {
+      "title": "Claim this node",
+      "body": "Scan it with the client to sign, on the network, that you contributed this node.",
+      "none": "No identifier yet."
     }
   },
   "ai": {
-    "body": "An agent runs beside this application, on this computer. What you type reaches it over a pipe and nothing else: it is a separate program, it is handed nothing about you, and the only host it talks to is the model server it was pointed at.",
     "heading": "Ask the agent.",
     "state": {
       "label": "Agent",
@@ -154,11 +166,11 @@
     },
     "empty": {
       "notBundledTitle": "No agent in this build.",
-      "notBundled": "The agent is built from its own repository and staged into the bundle, and this build was made without one. Nothing here is broken — there is simply no program to ask.",
+      "notBundled": "The agent is built from its own repository and staged into the bundle, and this build was made without one.",
       "notStartedTitle": "Nothing asked yet.",
-      "notStarted": "The agent has not been started. It starts when you ask it something, which takes a moment the first time and nothing after that.",
+      "notStarted": "The agent has not been started.",
       "willNotStartTitle": "The agent will not start.",
-      "willNotStart": "It is in this build and it would not run. What it said on the way down is in the records, which is the only place it could say anything at all.",
+      "willNotStart": "It is in this build and it would not run.",
       "stoppedTitle": "The agent stopped.",
       "stopped": "It was running and it is not now. Asking something else starts a fresh one."
     },
@@ -185,14 +197,13 @@
       "agent_will_not_start": "The agent would not start, so there was nothing to ask.",
       "agent_stopped": "The agent stopped part-way, so the answer never finished.",
       "run_already_in_flight": "The agent is already answering something. It does one thing at a time.",
-      "model_unreachable": "Nothing answered at the model's address. Almena does not run a model — one has to be serving on this computer for the agent to reach.",
+      "model_unreachable": "Nothing answered at the model's address.",
       "model_unknown": "That address is serving, and it does not serve the model chosen in Settings.",
       "resource_unknown": "The agent was asked for something it does not hold.",
-      "unknown": "The agent refused, and this build has no words for the reason it gave. It is written down in the records exactly as it arrived."
+      "unknown": "The agent refused, and this build has no words for the reason it gave."
     },
     "agent": {
       "heading": "The agent.",
-      "body": "What is running beside this application, and what it was built to ask. Every figure here is measured from the agent that is actually running — where none is, there is nothing to measure and a dash says so.",
       "figure": {
         "version": "Version",
         "model": "Model in force"
@@ -202,7 +213,6 @@
   "settings": {
     "appearance": {
       "heading": "Appearance.",
-      "body": "How Almena is drawn on this device. Dark is the design and what a device with no opinion gets; light is there for the rooms and the people it suits better. The identity colour is the one colour on a screen that means “this is Almena” or “this is the thing you came here for” — nothing else wears it, and the application icon is the icon whichever is chosen.",
       "theme": {
         "label": "Palette",
         "system": "System",
@@ -220,18 +230,15 @@
     },
     "language": {
       "heading": "Language.",
-      "body": "Almena opens in the language this device asks for, so there is nothing to do here until that is the wrong one. Choose a language and it is remembered from then on; leave it alone and changing the device's own language changes Almena's with it.",
       "label": "Interface language"
     },
     "openAtLogin": {
       "heading": "Open at login.",
-      "body": "The system opens Almena when you log in, with no window: it waits in the tray until you ask for it. This is only about who starts it — Almena runs in the tray whenever it is running, whether it was opened at login or by you.",
       "label": "Open Almena at login",
-      "refused": "The system did not accept the change, so the setting stays as it was. Its own settings are where a refusal like this is undone."
+      "refused": "The system did not accept the change, so the setting stays as it was."
     },
     "model": {
       "heading": "Model.",
-      "body": "Which model the agent is asked for. Almena runs no model itself and does not go looking for one: it asks whatever is serving on this computer, at the address the agent was built with. Nothing here has asked that server what it actually holds — this is the list Almena knows how to ask for, not the list this computer can answer.",
       "label": "Model the agent asks for",
       "notChosen": "The agent's own default",
       "inForce": "Running now: {{model}}",
@@ -245,5 +252,38 @@
     "records": "Records",
     "recordsNone": "Not being written to a file. This node has nowhere it may keep one.",
     "quit": "Press q to quit."
+  },
+  "onboarding": {
+    "title": "Which network",
+    "lead": "The one decision worth asking for. Everything after it, this node does by itself.",
+    "joining": "Joining…",
+    "production": {
+      "title": "Production",
+      "body": "The network. What is signed here stands, and does not come undone.",
+      "go": "Join production"
+    },
+    "development": {
+      "title": "Development",
+      "body": "Where something is tried before it is real. Opened afresh whenever the format moves.",
+      "go": "Join development"
+    },
+    "says": {
+      "alreadyOnANetwork": "This node is already on a network.",
+      "noSuchNetwork": "There is no such network.",
+      "zoneSilent": "The zone did not answer, so nobody knows who is there.",
+      "nobodyIsThere": "Nobody is on that network yet.",
+      "noTransport": "This node could not take a place on the mesh.",
+      "seedUnreachable": "The node named in the zone could not be reached.",
+      "seedWouldNotAnswer": "The node named in the zone would not hand over the record.",
+      "seedTooSlow": "Nothing came back in time.",
+      "notThePromisedNetwork": "What came back is not the network the zone named.",
+      "recordDoesNotAddUp": "What came back does not add up.",
+      "unreadableRecord": "What came back could not be read.",
+      "noDirectory": "This node's directory could not be written to.",
+      "directoryHeld": "Another process is holding this node's directory.",
+      "noRandomness": "The system would not produce randomness.",
+      "unreadableIdentity": "This node's key could not be read.",
+      "somethingElse": "It did not work, and this build has no words for why. The reason is in the records."
+    }
   }
 }

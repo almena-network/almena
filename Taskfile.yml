@@ -304,6 +304,12 @@ tasks:
     cmds:
       - task: banner
         vars: { OPERATION: icons }
+      # **One brand, one mark, and the client wears the same one.** There was a version of this
+      # that reversed the node's mark inside a dark square so that a machine running both would
+      # not put two identical tiles in the Dock. It is gone: the mark is the project's, neither
+      # application owns a variation on it, and on the bar the reversed one could not be a
+      # template image — which on macOS means a tile that ignores the bar it sits in.
+      #
       # The manifest drives the whole set: the desktop sizes and the Windows Store logos. It
       # also carried the Android adaptive layers — background, foreground and monochrome, which
       # cannot be derived from a single square — and nothing built here runs on a phone now.
@@ -317,13 +323,14 @@ tasks:
         platforms: [darwin]
       - cmd: rm -rf /tmp/almena-icons
         platforms: [darwin]
-      # The two tray glyphs, at the size a menu bar draws them. `tray.png` is the bare mark:
-      # macOS is handed it as a template image, tints it itself, and would draw a square of
-      # its own as a square. `trayNegative.png` is the reversed one, for the platforms that do
-      # not tint and may put it on a dark bar.
+      # The tray glyphs, at the size a menu bar draws them, and two files because two platforms
+      # need different ones: macOS is handed the black mark as a template image and fills the mask
+      # itself, and everywhere else gets the same shape painted in the identity colour, because a
+      # black mark on a dark bar is a mark nobody can see. **The same two the client generates from
+      # the same artwork** — see `src-tauri/src/tray.rs`.
       - cmd: sips -z 32 32 assets/branding/tray/tray-icon.png --out src-tauri/icons/tray.png
         platforms: [darwin]
-      - cmd: sips -z 32 32 assets/branding/tray/tray-icon-negative.png --out src-tauri/icons/trayNegative.png
+      - cmd: sips -z 32 32 assets/branding/tray/tray-icon-colour.png --out src-tauri/icons/trayColour.png
         platforms: [darwin]
 
   # ----- Development ---------------------------------------------------------

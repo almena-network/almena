@@ -22,7 +22,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -133,7 +132,6 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
     <Card>
       <CardHeader>
         <CardTitle>{t("network.control.heading")}</CardTitle>
-        <CardDescription>{t("network.control.body")}</CardDescription>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">
@@ -288,9 +286,6 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
         <div className="flex flex-col gap-2 border-t pt-4">
           <p className="text-sm font-medium">
             {t("network.control.claimHeading")}
-          </p>
-          <p className="text-muted-foreground text-sm">
-            {t("network.control.claimBody")}
           </p>
           <Button
             variant="secondary"

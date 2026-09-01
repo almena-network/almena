@@ -196,6 +196,8 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
         open_at_login::set_opens_at_login,
         node::node_facts,
         node::open_development_network,
+        node::join_a_network,
+        node::interface_at,
         node::serve_interface,
         node::close_epoch,
         node::join_the_mesh,

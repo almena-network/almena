@@ -101,6 +101,12 @@ pub struct Running {
     /// Empty is a network nobody else was on when this node came up — the ordinary state for the
     /// first node, and no claim about whether anybody is on it now.
     dialling: tokio::sync::Mutex<Vec<almena_mesh::Multiaddr>>,
+    /// Where this node is serving its interface, once it is.
+    ///
+    /// **Kept because nothing else knows it.** The address is the caller's — it is the one that gets
+    /// published in the zone — and a node asked what it serves on would otherwise have to be told
+    /// by whoever told it, which is two places for one fact.
+    serving_at: tokio::sync::Mutex<Option<String>>,
     /// What this node has closed, shared with whatever is closing it.
     ///
     /// It starts with the network and **not** with the interface: an epoch is owed whether or not
@@ -219,6 +225,20 @@ pub async fn open_development_network(
     Ok(facts.into())
 }
 
+/// The zone a production node looks in.
+///
+/// **Production is joined and never opened from here.** A network is opened once, ever, and this
+/// application has no button for it: what an operator does with production is arrive at one that
+/// already exists.
+pub const PRODUCTION_ZONE: &str = "almena.network";
+
+/// How long a seed is given to meet this node and hand over a record.
+///
+/// **A node that waited for ever would have no answer and no way to say so.** Long enough for a
+/// record of some size over a connection that had to be made; short enough that a node which
+/// cannot come up says so while somebody is still watching it try.
+const JOINING_WITHIN: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// The zone a development node looks in for somebody to join.
 ///
 /// Named here rather than typed into the window: the check it feeds — **open only when nobody is
@@ -280,6 +300,218 @@ fn first_time(
         // the day it does arise nobody is sent looking in the wrong place.
         almena_node::NotOpened::TheFormatIsNotFrozen(_) => "format_is_not_frozen",
     })
+}
+
+/// Join the network a zone names, by asking somebody already on it for the record.
+///
+/// # What joining is, and why it is not opening
+///
+/// Opening a network makes one. Joining takes the one that is there: this node asks a seed the zone
+/// names for everything it has written down, replays it, and announces itself. **Nothing that
+/// arrives is believed for having arrived** — the acts are somebody else's signed bytes and go
+/// through the same admission as any other, and the network they opened is checked against the name
+/// the zone published before a single one is replayed.
+///
+/// # It joins by itself, and the operator only chooses which
+///
+/// Which network is a decision — signing against the wrong one does not come undone — and it is the
+/// only one asked of anybody. Finding somebody, pulling the record and announcing are this node's
+/// own work, and a wizard that walked an operator through them would be asking them to press
+/// buttons for steps they cannot judge.
+///
+/// # Errors
+///
+/// The reason it could not, as a stable identifier the interface translates — never a sentence.
+#[tauri::command]
+pub async fn join_a_network(
+    app: tauri::AppHandle,
+    running: tauri::State<'_, Running>,
+    which: String,
+    port: u16,
+) -> Result<Facts, &'static str> {
+    let mut held = running.held.write().await;
+    if held.is_some() {
+        return Err("already_on_a_network");
+    }
+
+    // **The window says which network, never which zone.** Where each one is published is the
+    // network's own fact, and a name typed into an interface is a name that can be typed wrong —
+    // which would mean joining whatever answered at it.
+    let zone = match which.as_str() {
+        "production" => PRODUCTION_ZONE,
+        "development" => DEVELOPMENT_ZONE,
+        _ => return Err("no_such_network"),
+    };
+
+    let (seed, dialling) = where_to_join(zone).await?;
+    let network = seed.network().to_owned();
+    let address = almena_mesh::dialling(&seed).map_err(|_| "no_transport")?;
+    // Kept for afterwards, so that taking a place on the mesh does not ask the zone a second time
+    // and get a different answer.
+    *running.dialling.lock().await = dialling;
+
+    let (directory, holding, key) = ready(&app)?;
+    let acts = pulled(&key, &network, port, &address).await?;
+
+    // The instant the network began, out of the act that opened it — which is the only place it is
+    // written and the reason a newcomer counts epochs from where everybody else does.
+    let began = almena_node::Node::began_in(&acts).ok_or("record_does_not_add_up")?;
+    running
+        .began
+        .store(began, std::sync::atomic::Ordering::Relaxed);
+    let now = running.now();
+
+    let joined = almena_node::Node::join(
+        &directory,
+        key,
+        almena_node::Joining {
+            acts: &acts,
+            network: &network,
+        },
+        now,
+    )
+    .map_err(|why| match why {
+        almena_node::record::NotReadable::AnotherNetwork => "not_the_promised_network",
+        almena_node::record::NotReadable::NotWritable => "no_directory",
+        almena_node::record::NotReadable::DoesNotAddUp => "record_does_not_add_up",
+        almena_node::record::NotReadable::Unreadable
+        | almena_node::record::NotReadable::Refused => "unreadable_record",
+    })?;
+
+    let facts = joined.facts();
+    *running.held_directory.lock().await = Some(holding);
+    let serving = almena_serve::Serving::new(joined, limits());
+    tokio::spawn(
+        running
+            .timekeeping
+            .clone()
+            .keeping_time(serving.clone(), clock(began), LOOK),
+    );
+    *held = Some(serving);
+    Ok(facts.into())
+}
+
+/// Somebody on that network to ask, and everywhere else worth dialling afterwards.
+///
+/// **Parsed, because what is needed from a seed is more than somewhere to dial.** The record names
+/// the network, and that name is the anchor everything pulled is checked against — a node that took
+/// whatever it was handed would be calling that the network it joined.
+async fn where_to_join(
+    zone: &str,
+) -> Result<(almena_node::zone::Seed, Vec<almena_mesh::Multiaddr>), &'static str> {
+    let dns = almena_lookup::Dns::of_this_machine().map_err(|_| "zone_silent")?;
+    let looked = almena_lookup::look_patiently(&dns, zone)
+        .await
+        .ok_or("zone_silent")?;
+    let seed = looked
+        .answer
+        .seeds
+        .first()
+        .cloned()
+        .ok_or("nobody_is_there")?;
+    let dialling = looked
+        .answer
+        .seeds
+        .iter()
+        .filter_map(|one| almena_mesh::dialling(one).ok())
+        .collect();
+    Ok((seed, dialling))
+}
+
+/// The directory, held, and the key that outlives every run — in the one order that is safe.
+///
+/// **The directory is taken before anything in it is read or written, including the key**: two
+/// processes racing to make one would each think they had made it. And a directory that already
+/// holds a record is a node that has a network; joining over it would be a second history for one
+/// identity.
+fn ready(
+    app: &tauri::AppHandle,
+) -> Result<
+    (
+        std::path::PathBuf,
+        almena_node::directory::Held,
+        almena_node::SigningKey,
+    ),
+    &'static str,
+> {
+    let directory = tauri::Manager::path(app)
+        .app_data_dir()
+        .map_err(|_| "no_directory")?;
+    let holding = almena_node::directory::hold(&directory).map_err(|why| match why {
+        almena_node::directory::NotHeld::AlreadyHeld => "directory_held",
+        almena_node::directory::NotHeld::NotWritable => "no_directory",
+        almena_node::directory::NotHeld::CannotTell => "directory_cannot_be_held",
+    })?;
+    if !matches!(
+        almena_node::record::holding(&directory),
+        almena_node::record::Holding::Nothing
+    ) {
+        return Err("already_on_a_network");
+    }
+    let key = almena_node::identity::load_or_make(&directory).map_err(|why| match why {
+        almena_node::identity::NoIdentity::NoRandomness => "no_randomness",
+        almena_node::identity::NoIdentity::Unreadable => "unreadable_identity",
+        almena_node::identity::NoIdentity::NotWritable => "no_directory",
+    })?;
+    Ok((directory, holding, key))
+}
+
+/// Everything one seed has written down, asked for over the mesh.
+///
+/// **Paged by the answering node and asked for until it stops growing.** What comes back says how
+/// much that node holds altogether, which is what tells a short answer from the end of a record —
+/// a caller that folded the first page would join on part of a history with nothing saying so.
+async fn pulled(
+    key: &almena_node::SigningKey,
+    network: &str,
+    port: u16,
+    address: &almena_mesh::Multiaddr,
+) -> Result<Vec<Vec<u8>>, &'static str> {
+    // **The network's name is in the protocol's own name**, so a seed on another network offers
+    // nothing this node asks for and the two never speak (`SPECS.md §4.12`). That check is made by
+    // listening under this name, before anything is pulled.
+    let mut listening =
+        almena_mesh::listening(key, network, port, almena_mesh::Carrying::ForNobody)
+            .map_err(|_| "no_transport")?;
+    listening
+        .dial(address.clone())
+        .map_err(|_| "seed_unreachable")?;
+
+    let mut acts: Vec<Vec<u8>> = Vec::new();
+    let taken = tokio::time::timeout(JOINING_WITHIN, async {
+        loop {
+            match listening.next().await {
+                almena_mesh::Happened::Met(peer, _) => {
+                    listening.ask(&peer, almena_mesh::sync::Ask::Since(0));
+                }
+                almena_mesh::Happened::Answered(peer, _, said) => {
+                    let had = acts.len() as u64;
+                    acts.extend(said.acts);
+                    // Done when this node holds what that one said it holds. Asking again from
+                    // where it got to is how a record larger than one answer arrives.
+                    if acts.len() as u64 >= said.written {
+                        return true;
+                    }
+                    // A page that added nothing is a node that has no more to give, whatever it
+                    // said it held. Stopping is the honest end: asking the same question for ever
+                    // would be a loop nobody could see.
+                    if acts.len() as u64 == had {
+                        return !acts.is_empty();
+                    }
+                    listening.ask(&peer, almena_mesh::sync::Ask::Since(acts.len() as u64));
+                }
+                almena_mesh::Happened::Unanswered(_, _, _) => return false,
+                _ => {}
+            }
+        }
+    })
+    .await;
+
+    match taken {
+        Ok(true) => Ok(acts),
+        Ok(false) => Err("seed_would_not_answer"),
+        Err(_) => Err("seed_too_slow"),
+    }
 }
 
 /// Take a place on the mesh, listening on `port`.
@@ -498,6 +730,8 @@ pub async fn serve_interface(
         .await
         .map_err(|_| "address_unavailable")?;
 
+    *running.serving_at.lock().await = Some(origin_of(&listener, &address, under.is_some()));
+
     // The same clock the node has been keeping time by since its network opened. Building a second
     // one here would be this face deciding what epoch it is, which is a fact and not a face's.
     let telling = clock(running.began.load(std::sync::atomic::Ordering::Relaxed));
@@ -528,6 +762,27 @@ pub async fn serve_interface(
         }
     });
     Ok(())
+}
+
+/// Where a bound listener is, written the way somebody would type it.
+///
+/// **What was actually bound and not what was asked for**: a port of nought is a real request, and
+/// the answer to it is whatever the operating system granted. Only where the socket will not say
+/// does the asked-for address stand in, which is the closest thing to true that is left.
+fn origin_of(listener: &tokio::net::TcpListener, asked: &str, secure: bool) -> String {
+    let bound = listener
+        .local_addr()
+        .map_or_else(|_| asked.to_owned(), |at| at.to_string());
+    format!("{}://{bound}", if secure { "https" } else { "http" })
+}
+
+/// Where this node serves its interface, or nothing where it serves none.
+///
+/// **Absent is a state and not a gap.** A node that has not been asked to serve has no origin, and
+/// a plausible-looking address standing in for one would send somebody to a door that is not open.
+#[tauri::command]
+pub async fn interface_at(running: tauri::State<'_, Running>) -> Result<Option<String>, ()> {
+    Ok(running.serving_at.lock().await.clone())
 }
 
 /// What this node will and will not do for whoever asks.

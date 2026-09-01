@@ -20,7 +20,6 @@ import Figure from "@/components/Figure";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -41,7 +40,6 @@ function AgentFacts({ status }: AgentFactsProps) {
     <Card>
       <CardHeader>
         <CardTitle>{t("ai.agent.heading")}</CardTitle>
-        <CardDescription>{t("ai.agent.body")}</CardDescription>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">

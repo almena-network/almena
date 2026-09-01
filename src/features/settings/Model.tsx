@@ -27,7 +27,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -70,7 +69,6 @@ function Model() {
     <Card>
       <CardHeader>
         <CardTitle>{t("settings.model.heading")}</CardTitle>
-        <CardDescription>{t("settings.model.body")}</CardDescription>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">

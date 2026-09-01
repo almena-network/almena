@@ -15,11 +15,13 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import Ai from "@/features/ai/Ai";
+import Onboarding from "@/features/onboarding/Onboarding";
 import Home from "@/features/home/Home";
 import Network from "@/features/network/Network";
 import Settings from "@/features/settings/Settings";
 import AppShell from "@/features/shell/AppShell";
 import { type SectionId } from "@/features/shell/sections";
+import { useNetwork } from "@/hooks/useNetwork";
 import { installTray } from "@/lib/tray";
 import "@/styles/index.css";
 
@@ -45,6 +47,16 @@ const SCREENS: Record<SectionId, () => React.ReactElement> = {
 function App() {
   const { t } = useTranslation();
   const [section, setSection] = useState<SectionId>("home");
+  /*
+   * **What a node with no network is offered instead of the application.** Which network it is for
+   * is the one decision that has to be taken before anything else means anything, and a shell with
+   * four empty sections behind it would be four screens reporting nothing while the thing that
+   * would fill them goes unasked.
+   *
+   * Read here rather than remembered: whether this node has a network is the node's own answer, and
+   * a flag in the browser would be a second one to disagree with it after a directory was moved.
+   */
+  const { reading, refresh } = useNetwork();
 
   // The tray is built on the Rust side and named on this one: its menu is text a person reads
   // and the catalogs are here. Asked for once at startup, and harmlessly again whenever a
@@ -52,6 +64,16 @@ function App() {
   useEffect(() => {
     void installTray(t("tray.quit"));
   }, [t]);
+
+  // Nothing is decided until the first answer is back: drawing the onboarding over a node that
+  // has a network, for the moment before anybody has asked, would be offering to join one twice.
+  if (reading !== null && reading.network === null) {
+    return (
+      <AppShell section={section} onSelect={setSection}>
+        <Onboarding onJoined={refresh} />
+      </AppShell>
+    );
+  }
 
   const Screen = SCREENS[section];
 

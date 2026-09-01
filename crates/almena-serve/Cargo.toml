@@ -22,6 +22,8 @@ http-body-util = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+# Reading the interface's own description back, to hold it to being JSON.
+serde_json = { workspace = true }
 # Building an act to hand over, and a socket to hand it over on.
 almena-format = { workspace = true }
 almena-store = { workspace = true }

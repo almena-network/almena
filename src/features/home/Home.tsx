@@ -1,16 +1,14 @@
 /**
  * The first screen: what this application is, and what it can honestly say today.
  *
- * It is not a dashboard. On a computer this application is the node, and the peer-to-peer
- * layer that would put it on a network is not written here — so there is nothing joined and
- * nothing measured, and a screen that filled the space with a peer count of zero, an empty
- * list of networks or a grey status dot would be reporting measurements nobody took. Each of
- * those reads as data; none would be.
+ * **It is a dashboard now, because there is something to report.** A node joins a network by
+ * itself and this is where what came of that is said: which network it is on, what it is called
+ * there, how much of the record it holds and the root over it. What it draws is what the node
+ * answered — `null` stays absent rather than becoming a nought, because a count nobody took and a
+ * count that came back nought are different things and only one of them is a measurement.
  *
- * What replaces the emptiness is the truth about it, said once. When this application is on a
- * network and has something to report, this is the screen that reports it — and until then it
- * says which of the two situations a reader is in, rather than dressing the first as the
- * second.
+ * A node with no network never reaches this screen: it is offered the one decision that has to be
+ * taken first instead.
  *
  * The second card is the other half of the same honesty. Notifications are something this
  * build can genuinely do, on all three platforms, so the screen says so and lets a person try
@@ -27,10 +25,10 @@
 import { useTranslation } from "react-i18next";
 
 import CardGrid from "@/components/CardGrid";
+import { useNetwork } from "@/hooks/useNetwork";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -39,23 +37,36 @@ import NotifyButton from "@/features/home/NotifyButton";
 /** The application's first screen. */
 function Home() {
   const { t } = useTranslation();
+  const { reading } = useNetwork();
+
+  /** One fact, or the mark that says the node did not give one. */
+  const fact = (what: string, said: string | null) => (
+    <Card key={what}>
+      <CardHeader>
+        <CardTitle>{what}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="font-mono text-sm break-all">{said ?? "—"}</p>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="screen">
       <h1 className="screen__title">{t("section.home")}</h1>
 
       <CardGrid>
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("home.notJoined.title")}</CardTitle>
-            <CardDescription>{t("home.notJoined.body")}</CardDescription>
-          </CardHeader>
-        </Card>
+        {fact(t("home.on.network"), reading?.network ?? null)}
+        {fact(t("home.on.identity"), reading?.identity ?? null)}
+        {fact(
+          t("home.on.written"),
+          reading?.written == null ? null : String(reading.written),
+        )}
+        {fact(t("home.on.root"), reading?.root ?? null)}
 
         <Card>
           <CardHeader>
             <CardTitle>{t("home.notify.heading")}</CardTitle>
-            <CardDescription>{t("home.notify.body")}</CardDescription>
           </CardHeader>
           <CardContent>
             <NotifyButton />

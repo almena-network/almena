@@ -1724,6 +1724,21 @@ impl Node {
         Ok(node)
     }
 
+    /// When the network these acts opened began, in seconds since the Unix epoch.
+    ///
+    /// **What a node arriving from nothing has to know before it can date anything.** Every epoch
+    /// on this platform is whole hours from this instant (`SPECS.md §4.9`), and it is written inside
+    /// the act that opened the network (`§4.13`) precisely so that a newcomer counts from the same
+    /// place as everybody else instead of from its own clock.
+    ///
+    /// It reads the first act and nothing else: the genesis is the first, or these are not a
+    /// record. [`None`] when they are not.
+    #[must_use]
+    pub fn began_in(acts: &[Vec<u8>]) -> Option<u64> {
+        let opening = operation_from(acts.first()?)?;
+        almena_store::genesis::began(&opening)
+    }
+
     /// A node built by replaying acts, with nothing written down and no roots taken back.
     fn replaying(acts: &[Vec<u8>], key: ed25519::SigningKey) -> Result<Self, record::NotReadable> {
         let first = acts.first().ok_or(record::NotReadable::Unreadable)?;

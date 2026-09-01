@@ -12,6 +12,7 @@ import ScreenNav from "@/components/ScreenNav";
 import NetworkFacts from "@/features/network/NetworkFacts";
 import NodeControls from "@/features/network/NodeControls";
 import Peers from "@/features/network/Peers";
+import Published from "@/features/network/Published";
 import { screensOf, type ScreensOf } from "@/features/shell/sections";
 import { useNetwork } from "@/hooks/useNetwork";
 
@@ -34,6 +35,7 @@ function Network() {
     about: (
       <>
         <NetworkFacts reading={reading} />
+        <Published reading={reading} />
         <NodeControls
           onNetwork={reading?.network !== null && reading?.network !== undefined}
           onChanged={refresh}
