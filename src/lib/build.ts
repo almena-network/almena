@@ -1,17 +1,29 @@
 /**
- * Which build this is.
+ * Which build this is, and therefore which network its node is for.
  *
- * One question, and it is not the one `@/lib/platform` answers. That one is about what a
- * platform *has*; this one is about the binary in front of the person: whether it is one built
- * for whoever is writing it, or one somebody was given. Everything drawn from it says exactly
- * that and nothing more.
+ * # One question, and it decides something now
  *
- * It is asked once, before anything is drawn, because it cannot change while the application
- * runs. A marker that arrived a moment after the first screen would read as something
- * happening rather than as a fact about the build.
+ * It used to draw a marker on the status strip and nothing else. It decides **which network a
+ * start joins**: a development build is for the development network, and a build somebody was
+ * given is for the real one. Nobody is asked, because there is nothing here a person arriving can
+ * judge — and because the answer is a property of the binary in front of them rather than a
+ * preference.
+ *
+ * **It is the same decision the terminal takes with `--network`**, which defaults to development
+ * for the same reason: what is in front of whoever is writing the software is not the real network.
+ *
+ * # Why this is safe in the direction that matters
+ *
+ * A shipped build has no way to reach a development network, and a development build has no way to
+ * open a production one — the node refuses that on the argument, before anything happens. The two
+ * mistakes that would cost something are both closed, and neither is closed by this file being
+ * careful: one is the absence of a path, the other is a refusal below the interface.
+ *
+ * It is asked once, before anything is drawn, because it cannot change while the application runs.
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import type { Which } from "@/lib/network";
 
 /** Whether this is a development build. Settled by {@link loadBuild}, and `false` until it is. */
 let development = false;
@@ -35,4 +47,14 @@ export async function loadBuild(): Promise<void> {
 /** Whether this is a development build rather than one somebody was given. */
 export function isDevelopmentBuild(): boolean {
   return development;
+}
+
+/**
+ * Which network this build's node is for.
+ *
+ * The whole of the decision, in one place, so that the screen that starts the node and anything
+ * that ever reports which network it meant cannot disagree about it.
+ */
+export function networkOfThisBuild(): Which {
+  return development ? "development" : "production";
 }

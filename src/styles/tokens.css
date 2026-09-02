@@ -108,6 +108,28 @@
   --primary: var(--identity);
   --primary-foreground: #080a0e;
 
+  /* **The development network's own colour, and it is none of the four below.** Being on
+     development is not one of the four states a node is in — a development node runs, starts and
+     fails like any other — so borrowing a state colour for it would cost that colour its meaning.
+     It is a violet because nothing else in this palette is: the identity colour is orange, the
+     states are green, amber, red and grey, and what this marker has to do is be noticed
+     immediately by somebody who thought they were on production.
+
+     The text on it is the darkest rung rather than white, for the same reason `--primary` above
+     takes one: it is a light colour, and white on it is unreadable. */
+  --development: #c084fc;
+  --development-foreground: #080a0e;
+
+  /* **The two directions of record traffic, and they are neither a state nor the identity.**
+     A series colour has one job — be told apart from the series beside it — and two constraints
+     this palette imposes: it may not be one of the four states, and it may not be the identity
+     colour. The second is the one that is easy to miss: a series drawn in `--identity` changes
+     hue when somebody chooses a different accent, and the same chart would then mean one thing on
+     this machine and another on the next. Cool is what comes in, warm is what goes out, which is
+     the pairing every node application draws and the one a person already knows.  */
+  --traffic-in: #6cb6d9;
+  --traffic-out: #d9a05b;
+
   /* States. Only these four, so that a colour on screen always means the same thing. */
   --ok: #3fb950;
   --warn: #d29922;
@@ -170,13 +192,21 @@
   --radius: 10px;
 
   /* The narrowest a column of a screen's grid is still worth having: a card of prose below
-     360 points is a column of two-word lines, and a figure below 160 is a label that wraps.
+     360 points is a column of two-word lines, and a figure below 120 is a label that wraps.
      Both are the minimum of a `repeat(auto-fit, …)`, which is the whole of how this project
      reflows: a grid that finds its own column count from the width it is given needs no
      breakpoint of its own, which is why there is only one below. They are values rather than
-     utilities because Tailwind has no auto-fit grid to hang them off. */
+     utilities because Tailwind has no auto-fit grid to hang them off.
+
+     The figure was 160 while every figure shared these columns, identifiers included, and it
+     was too narrow for those and too wide for the rest — a sixty-two character name painted
+     over the three figures beside it, and three counts each took a row of their own at 400
+     points. A figure whose value is an identifier now spans the whole grid instead, so what is
+     left in a column is a label and a number, and 120 is what the longest label in either
+     catalog needs. It is what puts the counts two abreast in the narrow window and three in
+     the middling one, instead of one. */
   --width-card-min: 360px;
-  --width-figure-min: 160px;
+  --width-figure-min: 120px;
 
   /* The sidebar, in the expanded shape. Wide enough for the longest section name in either
      catalog beside its icon, and no wider: it is the frame, not a panel. */
@@ -232,6 +262,15 @@
   /* The five identity colours are dark on this palette, so what reads on them is white —
      the mirror of the dark palette's near-black. */
   --primary-foreground: #ffffff;
+
+  /* Dark on this palette and white on it, the mirror of the dark one — and still the only
+     violet on the screen. */
+  --development: #7e22ce;
+  --development-foreground: #ffffff;
+
+  /* Darker on this palette, so that a line of either is readable against white. */
+  --traffic-in: #2b7ea6;
+  --traffic-out: #a8681f;
 
   /* Darker than their dark-mode counterparts, and the same four meanings. A state colour that
      cannot be read is a state nobody knows about. */
@@ -343,6 +382,14 @@
   --color-identity-red: var(--identity-red);
   --color-identity-yellow: var(--identity-yellow);
   --color-identity-green: var(--identity-green);
+
+  /* What comes in and what goes out, which are series colours and not states. */
+  --color-traffic-in: var(--traffic-in);
+  --color-traffic-out: var(--traffic-out);
+
+  /* The development network's marker, which is not a state and never shares one's colour. */
+  --color-development: var(--development);
+  --color-development-foreground: var(--development-foreground);
 
   /* The four states, and the danger tone that shares the last one's red. */
   --color-ok: var(--ok);

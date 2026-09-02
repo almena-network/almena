@@ -17,12 +17,19 @@
  * screen would be two conversations rather than one, and moving between the screens would
  * throw away whichever one was not showing.
  *
- * # Four nothings, and each says which one it is
+ * # Five nothings, and each says which one it is
  *
- * There is no agent in this build; there is one and nobody has asked it anything; there is one
- * and it will not start; there was one and it stopped. A screen that answered all four with
- * *nothing to show* would be telling a reader the wrong one three times out of four, so each
- * has an icon, a title and a reason of its own.
+ * There is no agent in this build; there is one and it has not been started; there is one and it
+ * will not start; there was one and it stopped; and there is one **running** that nobody has
+ * asked anything yet. A screen that answered all five with *nothing to show* would be telling a
+ * reader the wrong one four times out of five, so each has an icon, a title and a reason of its
+ * own.
+ *
+ * The last of them was the one that drew nothing at all: a running agent is not one of the
+ * states, so the screen fell through to a conversation with no turns in it and left the gap
+ * between the badge and the box empty. An empty gap is not a nothing that says which one it is —
+ * it is the screen not answering — and the ordinary opening of this screen, on a build with an
+ * agent in it, is exactly that case.
  */
 
 import { CircleSlash, MessageSquare, PowerOff, TriangleAlert } from "lucide-react";
@@ -76,11 +83,23 @@ const NOTHING = {
     title: "ai.empty.stoppedTitle",
     reason: "ai.empty.stopped",
   },
+  running: {
+    Mark: MessageSquare,
+    title: "ai.empty.readyTitle",
+    reason: "ai.empty.ready",
+  },
 } as const;
 
-/** Which of the four emptinesses a state is, or `null` where the agent is simply running. */
-function nothingYet(state: Where): keyof typeof NOTHING | null {
-  return state === "running" ? null : state;
+/**
+ * Which of the five emptinesses a state is.
+ *
+ * Total over the states, and that is the point: it returned `null` for a running agent once, and
+ * a running agent that has been asked nothing is the commonest of the five rather than the
+ * absence of one. What decides whether an emptiness is drawn at all is the conversation being
+ * empty, which is a fact about the turns and is asked separately below.
+ */
+function nothingYet(state: Where): keyof typeof NOTHING {
+  return state;
 }
 
 /** One of this section's screens. */
@@ -96,18 +115,22 @@ function Ai() {
   const { t } = useTranslation();
   const { status, turns, saying, stage, running, adopted, failure, ask, stop } = useAgent();
 
-  // Before the first look nothing is known, and nothing is claimed: the conversation is drawn
-  // empty and the composer waits. `notStarted` is what a person meets on an ordinary opening,
-  // and it is the one emptiness that is not a problem.
+  // Before the first look nothing is known, and nothing is claimed: `notStarted` is what a
+  // person meets before the answer is back, and it is one of the two emptinesses that are not a
+  // problem.
   const where = status?.state ?? null;
   const ready = where !== "notBundled" && where !== "willNotStart";
 
   // Which nothing this screen is showing, or `null` where there is a conversation to draw.
   // A conversation outlives the run that produced it: an agent that has stopped still has
   // everything it said, and replacing that with *the agent stopped* would take an answer off
-  // the screen to report something the badge already says.
-  const state = where === null ? "notStarted" : nothingYet(where);
-  const nothing = turns.length > 0 || state === null ? null : NOTHING[state];
+  // the screen to report something the badge already says. So what is on the screen decides
+  // whether an emptiness is drawn, and the state decides which one it is.
+  //
+  // A run in flight counts as something on the screen even with no turns behind it: that is the
+  // run this page adopted from the one before it, and it has a line of its own saying so.
+  const nothing =
+    turns.length > 0 || running ? null : NOTHING[nothingYet(where ?? "notStarted")];
 
   const conversation = (
     <Card>

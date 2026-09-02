@@ -39,6 +39,11 @@ vars:
   # `true` to hold post for other people, and say so in the record.
   MEDIATOR: ""
 
+  # What the windowed node binds, which is not a flag on anything: it is compiled in, at
+  # src-tauri/src/node.rs. Repeated here only so `task dev` can name whoever holds it.
+  WINDOW_API: "127.0.0.1:8791"
+  WINDOW_MESH: "4002"
+
 
 tasks:
   # Announce the project and the operation about to run. Every task calls it as
@@ -100,6 +105,39 @@ tasks:
         echo ""
         draw '{{.OPERATION}}'
         echo ""
+
+  # Refuse to start where something is already answering, and say what holds it. Every port here
+  # is written down — in a config, in the table of what answers where, in an instruction — so a
+  # busy one is not a thing to work around: Astro quietly takes the next port up and leaves every
+  # instruction naming this one wrong, Vite refuses with a message that names no process, and a
+  # second node fails to bind at all. Each of those is the same fact said badly, and the fact is
+  # that the last run never stopped.
+  #
+  # PORTS is a list, each entry a port or a `host:port`. Where there is no `lsof` — Windows, where
+  # Task runs these commands itself — nothing is asked and nothing is said, because a check that
+  # cannot run is not a reason to refuse.
+  ports:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        command -v lsof >/dev/null 2>&1 || exit 0
+        held=""
+        for entry in {{.PORTS}}; do
+          port="${entry##*:}"
+          # `|| true` twice: lsof exits 1 where it matches nothing, and a free port is the
+          # ordinary case rather than a failure.
+          pids="$({ lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true; lsof -nP -iUDP:"$port" -t 2>/dev/null || true; } | sort -u)"
+          [ -n "$pids" ] || continue
+          [ -n "$held" ] || printf '\nSomething is already answering:\n\n'
+          for pid in $pids; do
+            printf '  %-5s  pid %-7s %s\n' "$port" "$pid" "$(ps -p "$pid" -o user=,etime=,command= 2>/dev/null | cut -c1-86)"
+            case " $held " in *" $pid "*) ;; *) held="$held $pid" ;; esac
+          done
+        done
+        [ -n "$held" ] || exit 0
+        printf '\nThe ports are fixed, so nothing here moves to the next one up. Stop that and run\nthis again:\n\n  kill%s\n\nStill there a moment later:\n\n  kill -9%s\n\n' "$held" "$held"
+        exit 1
 
   default:
     desc: List available tasks
@@ -369,6 +407,10 @@ tasks:
     cmds:
       - task: banner
         vars: { OPERATION: dev }
+      # 1420 is the frontend Vite serves and refuses to move off; the other two are the node
+      # inside the window. A second window is a second node, and it cannot have either.
+      - task: ports
+        vars: { PORTS: "1420 {{.WINDOW_API}} {{.WINDOW_MESH}}" }
       # Two `--` and both are load-bearing: the first ends what is meant for the Tauri CLI, the
       # second ends what is meant for cargo, and what is left over is the application's own
       # command line. Without them `task dev ARGS="--hidden"` hands `--hidden` to cargo, which
@@ -382,6 +424,8 @@ tasks:
     cmds:
       - task: banner
         vars: { OPERATION: "dev:cli" }
+      - task: ports
+        vars: { PORTS: "{{.API}} {{.MESH}}" }
       # **Everything a node needs to be a node, because a node that does none of it is not one to
       # develop against.** Left to a bare `cargo run` this comes up holding no network, answering
       # nobody and reachable by nobody — which is a state worth being able to reach, and a poor

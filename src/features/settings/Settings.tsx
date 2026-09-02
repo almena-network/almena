@@ -34,6 +34,7 @@ import CardGrid from "@/components/CardGrid";
 import ScreenNav from "@/components/ScreenNav";
 import Appearance from "@/features/settings/Appearance";
 import Language from "@/features/settings/Language";
+import LeaveTheNetwork from "@/features/settings/LeaveTheNetwork";
 import Model from "@/features/settings/Model";
 import OpenAtLogin from "@/features/settings/OpenAtLogin";
 import { screensOf, type ScreensOf } from "@/features/shell/sections";
@@ -61,6 +62,10 @@ function Settings() {
         <Language />
         <Model />
         <OpenAtLogin />
+        {/* Last, and it is the only thing on this screen that destroys anything. Nothing about the
+            grid ranks its cards, so being last in source is the whole of what puts it last on
+            screen — which is where the one irreversible control belongs. */}
+        <LeaveTheNetwork />
       </CardGrid>
     ),
   };

@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "Almena",
+    "name": "Almena Node",
     "version": "versión {{version}}"
   },
   "control": {
@@ -8,6 +8,12 @@
     "off": "Desactivado",
     "unmeasured": "Sin medir",
     "working": "En curso"
+  },
+  "copy": {
+    "action": "Copiar {{what}}",
+    "copied": "{{what}} está en el portapapeles.",
+    "refused": "El portapapeles lo rechazó, así que no se copió nada.",
+    "challenge": "Desafío"
   },
   "language": {
     "name": "Español"
@@ -36,32 +42,45 @@
     "nav": "Secciones"
   },
   "tray": {
+    "looking": "Mirando…",
+    "show": "Mostrar la ventana",
     "quit": "Salir"
   },
   "status": {
     "label": "Estado",
     "development": "Desarrollo",
-    "licence": "Apache 2.0"
+    "licence": "Apache 2.0",
+    "peers": "Pares {{peers}}",
+    "node": {
+      "stopped": "Detenido",
+      "starting": "Arrancando",
+      "running": "En marcha",
+      "failing": "Con fallos"
+    }
   },
   "home": {
-    "notJoined": {
-      "title": "Fuera de la red."
+    "state": {
+      "looking": "Mirando este nodo…",
+      "stopped": "Fuera de la red.",
+      "starting": "Uniéndose a la red…",
+      "running": "En la red Almena.",
+      "failing": "Fuera de la red."
     },
-    "notify": {
-      "heading": "Notificaciones.",
-      "action": "Enviar una notificación",
-      "message": "Las notificaciones llegan en este dispositivo. Nada más tiene aún nada que anunciar.",
-      "outcome": {
-        "sent": "Enviada. Algunos dispositivos no la dibujan mientras esta ventana es la que está delante.",
-        "refused": "Este dispositivo no permite notificaciones de Almena.",
-        "failed": "No se pudo enviar, y esta versión no puede decir por qué."
-      }
+    "wrong": "Algo no terminó. La pantalla Red dice qué.",
+    "keeping": {
+      "said": "Guardando {{size}}",
+      "unmeasured": "Sin medir todavía lo que guarda"
+    },
+    "peers": {
+      "said_one": "conectado a {{count}} par",
+      "said_other": "conectado a {{count}} pares",
+      "unmeasured": "nadie contó"
     },
     "on": {
       "network": "Red",
       "identity": "Este nodo",
-      "written": "Actos escritos",
-      "root": "Raíz sobre ellos"
+      "peer": "Clave pública",
+      "agent": "Agente"
     }
   },
   "network": {
@@ -72,11 +91,41 @@
         "identity": "Este nodo",
         "written": "Actos registrados",
         "root": "Raíz",
-        "peer": "Nombre en la malla",
+        "peer": "Clave pública",
         "peers": "Pares",
         "silent": "En silencio",
         "interface": "Interfaz",
         "link": "Enlace para el cliente"
+      },
+      "reason": {
+        "unknown": "Algo de lo que esta versión no ha oído hablar. El identificador está en los records.",
+        "alreadyOnANetwork": "Este nodo ya está en una red.",
+        "noSuchNetwork": "Ésa no es ninguna de las dos redes.",
+        "nobodyIsThere": "La zona no nombra a nadie, así que todavía no hay red a la que unirse.",
+        "zoneSilent": "La zona no contestó, así que no se sabe si hay alguien.",
+        "theZoneIsUnreadable": "La zona contestó algo que no es un registro que esta versión sepa leer.",
+        "seedUnreachable": "No se pudo alcanzar al nodo que nombró la zona.",
+        "seedWouldNotAnswer": "El nodo que nombró la zona no quiso entregar la red.",
+        "seedTooSlow": "El nodo que nombró la zona no contestó a tiempo.",
+        "notThePromisedNetwork": "Lo que llegó no es la red que prometió la zona.",
+        "thereIsANetwork": "Aquí ya hay una red.",
+        "noRandomness": "El sistema no produjo aleatoriedad, así que no hay clave que ser.",
+        "noClock": "Esta máquina se sitúa antes de 1970, así que no hay instante desde el que contar épocas.",
+        "noDirectory": "El sistema no dice dónde guarda sus cosas este nodo.",
+        "unreadableIdentity": "Hay una clave en el directorio y no se puede leer.",
+        "unreadableRecord": "Hay un registro en el directorio y no se puede leer.",
+        "recordDoesNotAddUp": "El registro ya no contiene todo lo que este nodo ha firmado.",
+        "recordWouldNotStart": "El registro no aceptó los actos que lo inician.",
+        "formatIsNotFrozen": "El formato de esta versión no es uno sobre el que abrir una red para siempre.",
+        "directoryHeld": "Ya hay otro siendo el nodo de este directorio.",
+        "directoryCannotBeHeld": "Este sistema de ficheros no dice si hay alguien más en el directorio.",
+        "noTransport": "No hay forma de alcanzar esa dirección.",
+        "meshAddressUnavailable": "No se pudo escuchar en el puerto de malla — normalmente lo tiene otro.",
+        "addressUnavailable": "La dirección del interfaz no se pudo enlazar.",
+        "noNetwork": "No hay red sobre la que hacer esto.",
+        "governmentKeyNotKept": "La red se abrió y su clave de gobierno no se pudo guardar junto al registro.",
+        "resolverNotAnAddress": "ALMENA_RESOLVER no es una dirección.",
+        "notErased": "El directorio no se pudo borrar, así que el nodo queda entero."
       }
     },
     "peers": {
@@ -85,11 +134,26 @@
       "looking": "Todavía no ha contado nadie.",
       "noNetworkTitle": "Ninguna red.",
       "noNetwork": "Este nodo no está en ninguna red.",
+      "noMeshTitle": "Sin sitio en la malla.",
+      "noMesh": "Este nodo está en una red y no ha tomado puerto, así que nadie ha contado.",
       "noneTitle": "Ningún par.",
       "none": "Este nodo está en una red y no habla con nadie en ella.",
       "refresh": "Actualizar",
       "lookedAt": "Consultado a las {{time}}, y de nuevo cada diez segundos.",
-      "connected": "Conectado a {{count}} en la malla."
+      "connected": "Conectado a {{count}} en la malla.",
+      "counted_one": "par",
+      "counted_other": "pares",
+      "filter": "Filtrar pares",
+      "noMatchTitle": "No hay coincidencias.",
+      "noMatch": "Ningún par conectado tiene eso en su nombre ni en su dirección.",
+      "column": {
+        "peer": "Par",
+        "connection": "Conexión",
+        "address": "Dirección",
+        "far": "Latencia"
+      },
+      "unmeasuredFar": "aún sin medir",
+      "ms": "{{ms}} ms"
     },
     "health": {
       "ok": "Conectado",
@@ -97,68 +161,21 @@
       "bad": "Caído",
       "idle": "En reposo"
     },
-    "control": {
-      "heading": "Operar este nodo",
-      "open": "Abrir una red de desarrollo",
-      "zone": "Zona, o vacío para la de esta red",
-      "serve": "Servir el API",
-      "mesh": "Puerto de malla",
-      "joinTheMesh": "Tomar sitio en la malla",
-      "carry": "Llevar el tráfico de otros nodos",
-      "carriedBy": "Relé que lo lleve, o vacío para ser marcado directamente",
-      "claimHeading": "Quién aportó este nodo",
-      "showChallenge": "Mostrar un desafío",
-      "challengeShown": "Enséñaselo a quien aportó el nodo. Vale un día, y nada salvo este nodo lo recuerda.",
-      "challenge": "El desafío que se mostró",
-      "approval": "Lo que devolvió",
-      "recordClaim": "Dejarlo escrito",
-      "letGo": "Ya no lo aporta nadie",
-      "closeEpoch": "Cerrar la época ahora",
-      "certificate": "Certificado (PEM), o nada para responder en claro",
-      "privateKey": "Clave privada (PEM)",
-      "address": "Dirección en la que servir",
-      "reason": {
-        "alreadyOnANetwork": "Este nodo ya está en una red.",
-        "noRandomness": "El sistema no ha dado aleatoriedad, así que no hay clave que ser.",
-        "noClock": "El sistema no dice qué hora es, y una red tiene que dejar escrito cuándo empezó su primera época.",
-        "noDirectory": "Este ordenador no dice dónde guarda sus cosas el nodo, así que no tiene dónde ser un nodo.",
-        "unreadableIdentity": "Hay una clave en el directorio del nodo y no se puede leer.",
-        "recordWouldNotStart": "El registro no admitió los actos que lo inician, así que la red no se abrió.",
-        "formatIsNotFrozen": "El formato que escribe esta versión no es uno sobre el que abrir una red para siempre, así que no se abrió nada.",
-        "unreadableRecord": "Hay un registro en el directorio del nodo y no se puede leer.",
-        "recordDoesNotAddUp": "El registro ya no contiene todo lo que este nodo ha firmado.",
-        "directoryHeld": "Ya hay otro nodo funcionando sobre este directorio.",
-        "directoryCannotBeHeld": "Este sistema de ficheros no dice si otro nodo está usando el directorio.",
-        "noCertificate": "El fichero del certificado no está, no se puede leer, o no contiene un certificado.",
-        "noPrivateKey": "La clave privada no está, no se puede leer, o no contiene una clave.",
-        "certificateAndKeyAreNotAPair": "Esa clave no pertenece a ese certificado.",
-        "zoneSilent": "La zona no ha contestado, así que no se sabe si ya hay alguien.",
-        "thereIsANetwork": "La zona dice que ya hay una red.",
-        "notThePromisedNetwork": "Alguien listado como parte de esta red resultó estar en otra, o hacer pasar por red una que se inventó.",
-        "noTransport": "Esta máquina no le ha dado al nodo ninguna forma de salir a la malla.",
-        "meshAddressUnavailable": "No se ha podido escuchar en ese puerto — normalmente porque ya lo tiene otro.",
-        "noNetwork": "Todavía no hay red que servir.",
-        "notAClaim": "Eso no es un desafío y su aprobación.",
-        "notTheirs": "Se leyó, y no ata: la aprobación no está firmada por la clave que autoriza su propio registro, o el desafío había dejado de valer.",
-        "notWrittenDown": "El registro no lo aceptó, y eso no debería poder pasar.",
-        "addressUnavailable": "Nada ha podido escuchar en esa dirección.",
-        "unknown": "No ha funcionado, y esta versión no sabe leer lo que ha vuelto.",
-        "noNetworkYet": "Todavía no hay red: no hay nadie a quien unirse, y no se ha abierto ninguna.",
-        "governmentKeyNotKept": "La clave del gobierno no se ha podido guardar junto al registro, así que no se ha abierto nada.",
-        "nobodyIsThereIsForDevelopment": "Producción se abre con la palabra de la zona y nunca con la tuya.",
-        "resolverNotAnAddress": "ALMENA_RESOLVER no es una dirección."
-      },
-      "mediator": "Guardar correo para otras personas",
-      "closeThisNode": "Cerrar este nodo para siempre",
-      "closeThisNodeArmed": "Pulsa otra vez. No vuelve."
-    },
     "published": {
       "title": "Lo que publica este nodo",
       "body": "Dónde se le alcanza, y dónde el interfaz se describe a sí mismo.",
       "interface": "Interfaz",
       "mesh": "Malla",
       "description": "Descripción",
-      "link": "Enlace para el cliente"
+      "link": "Enlace para el cliente",
+      "beASeed": "Ser nodo semilla",
+      "beASeedWhy": "Dibuja los registros que tendría que publicar quien lleva la zona. Pulsarlo no publica nada.",
+      "seedRecord": "Envía esto a quien lleva la zona",
+      "seedRecordCheck": "El nombre lo elige quien lleva la zona, y comprueba antes de publicar: que la clave que contesta es la de peer=, y que el registro que entrega empieza por el acto que nombra net=.",
+      "noSeedRecord": "Este nodo no tiene sitio en la malla, así que no hay puerto sobre el que ser semilla."
+    },
+    "claim": {
+      "shown": "Muestra esto a quien aportó este nodo. Lo aprueba con su propia clave."
     }
   },
   "ai": {
@@ -179,7 +196,9 @@
       "willNotStartTitle": "El agente no arranca.",
       "willNotStart": "Está en esta compilación y no ha querido ejecutarse.",
       "stoppedTitle": "El agente se detuvo.",
-      "stopped": "Estaba en marcha y ya no lo está. Preguntar otra cosa arranca uno nuevo."
+      "stopped": "Estaba en marcha y ya no lo está. Preguntar otra cosa arranca uno nuevo.",
+      "readyTitle": "Aún no hay conversación.",
+      "ready": "El agente está en marcha y no se le ha preguntado nada. Lo que escribas abajo empieza una."
     },
     "conversation": {
       "person": "Tú",
@@ -241,7 +260,7 @@
     },
     "openAtLogin": {
       "heading": "Abrir al iniciar sesión.",
-      "label": "Abrir Almena al iniciar sesión",
+      "label": "Abrir Almena Node al iniciar sesión",
       "refused": "El sistema no aceptó el cambio, así que el ajuste queda como estaba."
     },
     "model": {
@@ -252,6 +271,14 @@
       "inForceNone": "En marcha ahora: nada. El agente arranca cuando le preguntas algo por primera vez.",
       "restartHeading": "Esto se aplica la próxima vez que arranque el agente.",
       "restart": "Reiniciar el agente"
+    },
+    "leave": {
+      "heading": "Salir de la red.",
+      "erase": "Borrar este nodo de esta máquina",
+      "armed": "Pulsa otra vez. Se van la clave, el registro y las raíces, y esto empieza de nuevo.",
+      "whileDown": "Se avisa a la red primero, donde este nodo aún pueda decirlo. Donde no pueda, se borra igual y la red lo encuentra en silencio.",
+      "notErased": "El directorio no se pudo borrar, así que el nodo queda entero.",
+      "notErasedWhy": "No se pudo borrar, y esta versión no puede decir por qué."
     }
   },
   "cli": {
@@ -261,73 +288,15 @@
     "quit": "Pulsa q para salir."
   },
   "onboarding": {
-    "title": "Qué red",
-    "lead": "La única decisión que merece preguntarse. Todo lo demás lo hace el nodo solo.",
-    "joining": "Entrando…",
-    "production": {
-      "title": "Producción",
-      "body": "La red. Lo que se firma aquí queda, y no se deshace.",
-      "go": "Entrar en producción"
-    },
-    "development": {
-      "title": "Desarrollo",
-      "body": "Donde se prueba algo antes de que sea real. Se abre de nuevo cada vez que el formato se mueve.",
-      "go": "Entrar en desarrollo"
-    },
-    "says": {
-      "alreadyOnANetwork": "Este nodo ya está en una red.",
-      "noSuchNetwork": "No existe esa red.",
-      "zoneSilent": "La zona no ha contestado, así que nadie sabe quién hay.",
-      "nobodyIsThere": "Todavía no hay nadie en esa red.",
-      "noTransport": "Este nodo no ha podido tomar sitio en la malla.",
-      "seedUnreachable": "No se ha podido alcanzar el nodo que nombra la zona.",
-      "seedWouldNotAnswer": "El nodo que nombra la zona no ha entregado el registro.",
-      "seedTooSlow": "No ha llegado nada a tiempo.",
-      "notThePromisedNetwork": "Lo que ha llegado no es la red que nombraba la zona.",
-      "recordDoesNotAddUp": "Lo que ha llegado no cuadra.",
-      "unreadableRecord": "Lo que ha llegado no se ha podido leer.",
-      "noDirectory": "No se ha podido escribir en el directorio de este nodo.",
-      "directoryHeld": "Otro proceso tiene tomado el directorio de este nodo.",
-      "noRandomness": "El sistema no ha producido aleatoriedad.",
-      "unreadableIdentity": "No se ha podido leer la clave de este nodo.",
-      "somethingElse": "No ha funcionado, y esta versión no tiene palabras para explicar por qué. El motivo está en los registros.",
-      "thereIsANetwork": "La zona nombra a alguien, así que hay una red a la que unirse y no una que abrir.",
-      "formatIsNotFrozen": "El formato de esta compilación todavía se mueve, y una red de producción no debe abrirse sobre uno que se mueve. No se ha escrito nada.",
-      "recordWouldNotStart": "No se ha podido iniciar el registro de este nodo.",
-      "noClock": "No se ha podido leer el reloj del sistema, y el comienzo de una red es la única lectura de reloj de pared que esta plataforma escribe.",
-      "directoryCannotBeHeld": "No se ha podido saber si otro proceso tiene tomado el directorio de este nodo.",
-      "theZoneIsUnreadable": "La zona de esa red publica un registro seed que esta compilación no puede leer, así que no hay a quién unirse — y tampoco se puede abrir nada, porque hay algo publicado. Hay que corregir la zona antes de que ningún nodo pueda levantarse en ella.",
-      "meshAddressUnavailable": "No se ha podido escuchar en el puerto de la malla. Normalmente lo tiene otro.",
-      "addressUnavailable": "Nada ha podido escuchar en la dirección del interfaz.",
-      "noNetworkYet": "Todavía no hay red.",
-      "governmentKeyNotKept": "La clave del gobierno no se ha podido guardar junto al registro, así que no se ha abierto nada.",
-      "nobodyIsThereIsForDevelopment": "Producción se abre con la palabra de la zona y nunca con la tuya.",
-      "resolverNotAnAddress": "ALMENA_RESOLVER no es una dirección."
-    },
     "name": "Almena Node",
-    "next": "Siguiente",
-    "back": "Atrás",
-    "claim": {
-      "title": "Quién ha contribuido este nodo",
-      "onProduction": "Este nodo está en producción.",
-      "onDevelopment": "Este nodo está en desarrollo.",
-      "scan": "Escanea con el cliente",
-      "body": "Escanear firma, desde tu propio dispositivo, que este nodo es tuyo. Es opcional: un nodo sin reclamar funciona igual, solo que no acredita a nadie.",
-      "drawing": "Dibujando el código…",
-      "none": "Sin código: este nodo no ha podido crear un reto.",
-      "expires": "Vale {{hours}} hora. Pasada, pide otro desde la pantalla de Red.",
-      "done": "Hecho"
-    },
-    "advanced": {
-      "title": "Avanzado",
-      "zone": "Zona, o vacío para la propia de esta red",
-      "seed": "Un registro semilla, o vacío para preguntar a la zona",
-      "nobodyIsThere": "No hay nadie: abrir desarrollo sin preguntar a la zona"
-    },
-    "checklist": {
-      "title": "¿Se puede congelar este formato?",
-      "holds": "se cumple",
-      "looking": "Preguntando a esta compilación."
-    }
+    "start": "Empezar",
+    "starting": "Empezando…"
+  },
+  "traffic": {
+    "heading": "Tráfico de registro",
+    "in": "Entrada",
+    "out": "Salida",
+    "measuring": "Midiendo… un ritmo necesita dos lecturas.",
+    "noMesh": "Sin sitio en la malla, así que no cruza nada."
   }
 }

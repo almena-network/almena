@@ -35,7 +35,8 @@ use almena_node::SigningKey;
 use libp2p::core::ConnectedPoint;
 use libp2p::futures::StreamExt as _;
 use libp2p::identity::Keypair;
-use libp2p::multiaddr::Protocol;
+/// The parts a multiaddress is made of, so a face can read one without depending on libp2p.
+pub use libp2p::multiaddr::Protocol;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
 // Re-exported so that a face can hold an address without reaching past this crate for the type.
@@ -107,6 +108,12 @@ mod doing {
         pub(crate) relaying: libp2p::swarm::behaviour::toggle::Toggle<libp2p::relay::Behaviour>,
         /// Being carried, for when this node is the one that cannot be dialled.
         pub(crate) carried: libp2p::relay::client::Behaviour,
+        /// How far away each peer is, asked over and over for as long as it is connected.
+        ///
+        /// **The only measurement this node takes of a connection.** Everything else it knows
+        /// about a peer it was told or observed; a round trip is a thing it goes and finds out,
+        /// and it is what makes a list of peers something a person can read rather than count.
+        pub(crate) far: libp2p::ping::Behaviour,
     }
 }
 
@@ -117,9 +124,11 @@ pub use doing::{Doing, DoingEvent};
 /// Holding one means it is reachable. Dropping it stops it, and nothing else does.
 pub struct Listening {
     /// What the operating system actually gave it, which is not always what was asked for.
-    addresses: Vec<Multiaddr>,
+    addresses: Addresses,
     /// The swarm, kept because dropping it is what closes the listener.
     swarm: Swarm<Doing>,
+    /// What has crossed, counted by the codec every byte goes through.
+    crossed: crate::sync::Crossed,
     /// The questions put and not yet answered, and who each went to.
     ///
     /// Emptied as answers arrive and when a peer goes, so it holds what is genuinely outstanding.
@@ -148,17 +157,94 @@ pub struct Listening {
     peers: Peers,
 }
 
+/// Where this node is listening, readable from anywhere.
+///
+/// **The addresses the operating system granted, not the ones asked for.** A node told to listen on
+/// port zero is given one, and a machine with several addresses is reachable at each — so what a
+/// zone should carry is what was granted, and publishing what was requested is how a record ends up
+/// pointing somewhere nothing is listening.
+///
+/// It is a handle for the same reason [`Peers`] is: the socket is handed to whatever keeps the mesh
+/// up, and afterwards nothing else holds it. **Reported and never written down** — what a node says
+/// about where it is stays its operator's decision (`SPECS.md §17.18`), and this is what lets a face
+/// show them the answer without the node having taken it.
+///
+/// Cloning it clones the handle, not the list.
+#[derive(Debug, Clone, Default)]
+pub struct Addresses(Arc<RwLock<Vec<Multiaddr>>>);
+
+impl Addresses {
+    /// Every address it is listening on, as a copy taken at this moment.
+    #[must_use]
+    pub fn all(&self) -> Vec<Multiaddr> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The port it is actually listening on, if it got one.
+    ///
+    /// This is the value a `_seed` record cannot be written without.
+    #[must_use]
+    pub fn port(&self) -> Option<u16> {
+        self.all().iter().find_map(|address| {
+            address.iter().find_map(|part| match part {
+                Protocol::Tcp(port) => Some(port),
+                _ => None,
+            })
+        })
+    }
+
+    /// Whether it already holds this one.
+    fn has(&self, address: &Multiaddr) -> bool {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(address)
+    }
+
+    /// One more.
+    fn add(&self, address: Multiaddr) {
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(address);
+    }
+
+    /// Keep only the ones this says to keep.
+    fn keep(&self, wanted: impl FnMut(&Multiaddr) -> bool) {
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(wanted);
+    }
+}
+
+/// What is known about one connected peer.
+#[derive(Debug, Clone)]
+pub struct Reached {
+    /// The address this connection is on.
+    pub address: Multiaddr,
+    /// The last round trip measured to it, or nothing where none has come back yet.
+    ///
+    /// **Absent for a while after connecting, and that is not a fault.** The first ping goes out
+    /// after the connection settles, so a peer that has just arrived has no round trip and a face
+    /// drawing a nought would be inventing the fastest connection on the list.
+    pub far: Option<std::time::Duration>,
+}
+
 /// Who a node is connected to right now, readable from anywhere.
 ///
 /// **Cheap on purpose, and never behind the mesh.** A face that draws a peer count has to read it
 /// on every frame, from a thread that is not running the mesh and must not wait for it — so this
-/// is a shared set behind a plain lock rather than a question put to the socket. It says who is
+/// is a shared map behind a plain lock rather than a question put to the socket. It says who is
 /// connected, which is a fact about sockets; who is a node the record knows is a different
 /// question, and is answered in the record.
 ///
-/// Cloning it clones the handle, not the set: every copy sees the same peers.
+/// Cloning it clones the handle, not the map: every copy sees the same peers.
 #[derive(Debug, Clone, Default)]
-pub struct Peers(Arc<RwLock<BTreeSet<PeerId>>>);
+pub struct Peers(Arc<RwLock<BTreeMap<PeerId, Reached>>>);
 
 impl Peers {
     /// How many are connected right now.
@@ -173,15 +259,50 @@ impl Peers {
         self.0
             .read()
             .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .copied()
+            .collect()
+    }
+
+    /// Who is connected and at which address, as a copy taken at this moment.
+    ///
+    /// **The address the connection is actually on**, which is a different fact from any address
+    /// the record or the zone carries: those say where a node said it could be reached, and this
+    /// says where this node is talking to it — dialled, or answered and observed. It is what lets
+    /// a face say *ip4/tcp* beside a peer instead of only counting it.
+    ///
+    /// It is a fact about a socket and it is never written down anywhere (§17.18): where a peer
+    /// was reached in fact stays with the node that reached it.
+    #[must_use]
+    pub fn reached(&self) -> BTreeMap<PeerId, Reached> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
-    /// Somebody connected.
-    fn met(&self, peer: PeerId) {
+    /// Somebody connected, at the address the connection is on.
+    fn met(&self, peer: PeerId, address: Multiaddr) {
         self.0
             .write()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(peer);
+            .insert(peer, Reached { address, far: None });
+    }
+
+    /// A round trip to somebody came back.
+    ///
+    /// **The last one, not an average.** What a person reads a latency for is *how far away is it
+    /// now*, and a mean over a connection that has been up for an hour hides the minute it went
+    /// bad. A measurement for a peer that has since gone is dropped rather than kept.
+    fn far(&self, peer: &PeerId, took: std::time::Duration) {
+        if let Some(reached) = self
+            .0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(peer)
+        {
+            reached.far = Some(took);
+        }
     }
 
     /// Somebody's last connection ended.
@@ -203,6 +324,15 @@ impl Listening {
         self.peers.clone()
     }
 
+    /// A handle on what has crossed this node's mesh, for reading from anywhere.
+    ///
+    /// Taken the same way and for the same reason as [`Listening::peers`]: afterwards nothing else
+    /// holds it, and a face that wanted the figure then would have nobody to ask.
+    #[must_use]
+    pub fn crossed(&self) -> crate::sync::Crossed {
+        self.crossed.clone()
+    }
+
     /// Where this node can be reached, as the addresses it really got.
     ///
     /// **Asked for rather than assumed.** A node told to listen on port zero is given one by the
@@ -210,8 +340,18 @@ impl Listening {
     /// one — publishing what was requested instead of what was granted is how a zone ends up
     /// pointing somewhere nothing is listening.
     #[must_use]
-    pub fn addresses(&self) -> &[Multiaddr] {
-        &self.addresses
+    pub fn addresses(&self) -> Vec<Multiaddr> {
+        self.addresses.all()
+    }
+
+    /// A handle on where this node is listening, for reading from anywhere.
+    ///
+    /// Taken the same way and for the same reason as [`Listening::peers`]: afterwards nothing else
+    /// holds it, and a face that wanted to show an operator where their node can be reached would
+    /// have nobody to ask.
+    #[must_use]
+    pub fn where_it_listens(&self) -> Addresses {
+        self.addresses.clone()
     }
 
     /// The port it is actually listening on, if it got one.
@@ -219,12 +359,7 @@ impl Listening {
     /// This is the value a `_seed` record cannot be written without.
     #[must_use]
     pub fn port(&self) -> Option<u16> {
-        self.addresses.iter().find_map(|address| {
-            address.iter().find_map(|part| match part {
-                Protocol::Tcp(port) => Some(port),
-                _ => None,
-            })
-        })
+        self.addresses.port()
     }
 
     /// Wait for the next thing worth telling somebody about.
@@ -274,6 +409,18 @@ impl Listening {
                 num_established,
                 ..
             } => self.closed(peer_id, num_established),
+            // A round trip came back, or did not. Nothing is said to whoever drives this: it is
+            // not something that happened to the node, it is a number about a peer that already
+            // exists, and it is read off `peers()` beside everything else about that peer.
+            SwarmEvent::Behaviour(DoingEvent::Far(libp2p::ping::Event {
+                peer,
+                result: Ok(took),
+                ..
+            })) => {
+                self.peers.far(&peer, took);
+                None
+            }
+            SwarmEvent::Behaviour(DoingEvent::Far(_)) => None,
             SwarmEvent::Behaviour(DoingEvent::Sync(event)) => self.spoken(event),
             _ => None,
         }
@@ -315,7 +462,7 @@ impl Listening {
         endpoint: &ConnectedPoint,
     ) -> Happened {
         self.dialled.remove(&connection);
-        self.peers.met(peer);
+        self.peers.met(peer, on(endpoint));
         Happened::Met(peer, met(endpoint))
     }
 
@@ -381,7 +528,7 @@ impl Listening {
         listener: libp2p::core::transport::ListenerId,
         address: Multiaddr,
     ) -> Option<Happened> {
-        if self.addresses.contains(&address) {
+        if self.addresses.has(&address) {
             return None;
         }
         // **A node that carries has to say where it is, or it has nothing to lend.** What a relay
@@ -391,7 +538,7 @@ impl Listening {
         if self.carries() && !borrowed(&address) && worth_publishing(&address) {
             self.swarm.add_external_address(address.clone());
         }
-        self.addresses.push(address.clone());
+        self.addresses.add(address.clone());
         Some(if borrowed(&address) {
             self.lent.push((listener, address.clone()));
             Happened::Carried(address)
@@ -419,7 +566,7 @@ impl Listening {
         // Only what came through **that** listener. A node carried by two relays that lost one has
         // lost one, and withdrawing the other's address would be withdrawing a door somebody is
         // still behind.
-        self.addresses.retain(|address| {
+        self.addresses.keep(|address| {
             !self
                 .lent
                 .iter()
@@ -555,6 +702,18 @@ fn why(error: &request_response::OutboundFailure) -> Unanswerable {
 }
 
 /// What a connection says about where the other end can be reached.
+/// The address a connection is on, whichever end opened it.
+///
+/// A dial knows where it went. A connection this node answered knows where the other end appeared
+/// to come from — `send_back_addr` — which is what the transport observed and not a claim anybody
+/// made about themselves. Neither is written down; both are what a face draws beside a peer.
+fn on(endpoint: &ConnectedPoint) -> Multiaddr {
+    match endpoint {
+        ConnectedPoint::Dialer { address, .. } => address.clone(),
+        ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr.clone(),
+    }
+}
+
 fn met(endpoint: &ConnectedPoint) -> Meeting {
     match endpoint {
         ConnectedPoint::Dialer { address, .. } => Meeting::Dialled(address.clone()),
@@ -697,9 +856,117 @@ impl Listening {
     /// — the router opened, the machine moved — should say so rather than keep a place it no longer
     /// needs, and the addresses it publishes should stop including the circuit at the same time.
     pub fn carry_me_no_longer(&mut self, through: &Multiaddr) {
-        self.addresses.retain(|address| address != through);
+        self.addresses.keep(|address| address != through);
         self.swarm.remove_external_address(through);
     }
+}
+
+/// Whether an address is one anybody on the internet could reach this node at.
+///
+/// **A stricter question than [`worth_publishing`], and they are not the same one.** That one asks
+/// whether an address is worth putting in the *record*, where a node on a household network is
+/// genuinely reachable by the other nodes on it — a development network on one LAN works because
+/// of exactly that. This asks whether an address is worth putting in a **public zone**, where the
+/// people reading it are anywhere, and there a private address is two things at once: useless,
+/// because nobody outside can dial it, and a small leak, because it describes somebody's LAN to
+/// everybody who looks.
+///
+/// So the private ranges go, and so do the ones that look public and are not: carrier-grade NAT
+/// (`100.64/10`), unique local addresses (`fc00::/7`) and the documentation ranges, which is what
+/// an overlay network or a mistyped example leaves behind.
+#[must_use]
+pub fn reachable_from_anywhere(address: &Multiaddr) -> bool {
+    // Written as *not any of these* rather than as a run of negations: the list is what is being
+    // kept out, and reading it that way is reading what it is for.
+    address.iter().all(|part| match part {
+        Protocol::Ip4(at) => {
+            let [first, second, ..] = at.octets();
+            !(at.is_loopback()
+                || at.is_unspecified()
+                || at.is_link_local()
+                || at.is_broadcast()
+                || at.is_private()
+                || at.is_documentation()
+                // Carrier-grade NAT, and what an overlay hands out. Not private by the letter of
+                // the word, and not dialable from outside either.
+                || (first == 100 && (64..128).contains(&second))
+                // Benchmarking, which is nobody's address and turns up in copied configuration.
+                || (first == 198 && (18..20).contains(&second)))
+        }
+        Protocol::Ip6(at) => {
+            let [first, second, ..] = at.segments();
+            !(at.is_loopback()
+                || at.is_unspecified()
+                || at.is_multicast()
+                // Unique local: the IPv6 answer to a private range, and what overlays hand out.
+                || (first & 0xfe00) == 0xfc00
+                // Link local.
+                || (first & 0xffc0) == 0xfe80
+                // Documentation.
+                || (first == 0x2001 && second == 0x0db8))
+        }
+        _ => true,
+    })
+}
+
+/// Where the host name goes, which is whoever keeps the zone's to choose and nobody else's.
+pub const HOST: &str = "<name>";
+
+/// What a zone would have to carry for this node to be a seed.
+///
+/// # It is composed here and not on a screen
+///
+/// The shape of these records is the platform's (`ZONES.md`), not a face's. Composed on each face
+/// it would be composed twice and the two would drift — and for a record that **newcomers verify
+/// against** that is worse than it sounds: a `_seed` carrying the wrong `net=` sends whoever reads
+/// it to a network that is not this one. So the node says it and the faces only carry it.
+///
+/// # What goes in, and the one thing that cannot
+///
+/// The port actually bound, this node's own public key, and the name of its network are the parts
+/// nobody else can produce. **The host name is not among them** — it is the zone keeper's choice,
+/// so [`HOST`] stands in its place rather than being guessed at.
+///
+/// Only addresses **anybody could reach this node at** are listed — which is stricter than what the
+/// record carries: a private address is genuinely reachable by the other nodes on that LAN and is
+/// useless in a public zone, besides describing somebody's network to everybody who looks. See
+/// [`reachable_from_anywhere`].
+///
+/// A relayed address is left out too, even though it is reachable: a circuit answers for as long as
+/// another node agrees to carry this one and stops without it being told, so a zone pointing at one
+/// points at a door nobody is behind.
+///
+/// # It says where this node thinks it is
+///
+/// A node knows what it bound, which behind a household router is not what anybody else can dial.
+/// Whoever keeps the zone checks the record before publishing it — dial the address, see that the
+/// handshake key is the `peer=`, see that the record handed over starts with the act `net=` names.
+/// That is what they have to do anyway, and it is why this is a draft and not a publication.
+#[must_use]
+pub fn seed_record(
+    peer: &str,
+    network: &str,
+    port: u16,
+    serving_on: Option<u16>,
+    addresses: &[Multiaddr],
+) -> String {
+    let mut lines = vec![format!(
+        "_seed  v=1 host={HOST} port={port} peer={peer} net={network}"
+    )];
+    if let Some(at) = serving_on {
+        lines.push(format!("_api   v=1 url=https://{HOST}:{at} peer={peer}"));
+    }
+    for address in addresses {
+        if !reachable_from_anywhere(address) || borrowed(address) {
+            continue;
+        }
+        match address.iter().next() {
+            Some(Protocol::Ip4(at)) => lines.push(format!("{HOST}  A     {at}")),
+            Some(Protocol::Ip6(at)) => lines.push(format!("{HOST}  AAAA  {at}")),
+            _ => {}
+        }
+    }
+    lines.join("\n")
 }
 
 /// Whether an address is one somebody else could reach this node at.
@@ -773,6 +1040,7 @@ fn swarm_of(
     key: &SigningKey,
     network: &str,
     carrying: Carrying,
+    crossed: crate::sync::Crossed,
 ) -> Result<Swarm<Doing>, NotListening> {
     let offering = syncing(network);
     Ok(libp2p::SwarmBuilder::with_existing_identity(identity(key)?)
@@ -804,7 +1072,9 @@ fn swarm_of(
                 offering.clone(),
                 keys.public(),
             )),
-            sync: request_response::Behaviour::new(
+            far: libp2p::ping::Behaviour::default(),
+            sync: request_response::Behaviour::with_codec(
+                crate::sync::Talking { crossed },
                 [(offering, request_response::ProtocolSupport::Full)],
                 request_response::Config::default(),
             ),
@@ -869,7 +1139,8 @@ pub fn listening(
     port: u16,
     carrying: Carrying,
 ) -> Result<Listening, NotListening> {
-    let mut swarm = swarm_of(key, network, carrying)?;
+    let crossed = crate::sync::Crossed::default();
+    let mut swarm = swarm_of(key, network, carrying, crossed.clone())?;
 
     // Both, because a machine that has an address of each kind is reachable at each, and which one
     // a caller can use is the caller's business rather than this node's.
@@ -884,7 +1155,7 @@ pub fn listening(
     }
 
     Ok(Listening {
-        addresses: Vec::new(),
+        addresses: Addresses::default(),
         swarm,
         outstanding: BTreeMap::new(),
         put: 0,
@@ -892,11 +1163,60 @@ pub fn listening(
         lent: Vec::new(),
         dialled: BTreeMap::new(),
         peers: Peers::default(),
+        crossed,
     })
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_seed_record_carries_only_addresses_anybody_could_dial() {
+        // **What this is protecting.** A node on a household network is reachable by the other
+        // nodes on it, so the record may carry `192.168.…` — and a public zone may not: nobody
+        // outside can dial it, and it describes somebody's network to everybody who looks. The
+        // overlay ranges are here because they are the ones that look public and are not.
+        let record = crate::seed_record(
+            "12D3KooWtest",
+            "zQmnetwork",
+            4001,
+            Some(8443),
+            &[
+                "/ip4/88.12.34.56/tcp/4001".parse().expect("an address"),
+                "/ip4/192.168.1.220/tcp/4001".parse().expect("an address"),
+                "/ip4/100.100.212.57/tcp/4001".parse().expect("an address"),
+                "/ip6/2a0c:5a81::1/tcp/4001".parse().expect("an address"),
+                "/ip6/fd7a:115c:a1e0::1/tcp/4001"
+                    .parse()
+                    .expect("an address"),
+                "/ip6/::1/tcp/4001".parse().expect("an address"),
+            ],
+        );
+
+        assert!(record.contains("88.12.34.56"), "the public one is in");
+        assert!(record.contains("2a0c:5a81::1"), "and the public v6");
+        for kept_out in ["192.168.1.220", "100.100.212.57", "fd7a:115c", "::1/"] {
+            assert!(
+                !record.contains(kept_out),
+                "{kept_out} reached a public zone"
+            );
+        }
+        // The three parts only this node can produce, and the one it cannot.
+        assert!(record.contains("port=4001 peer=12D3KooWtest net=zQmnetwork"));
+        assert!(record.contains("url=https://<name>:8443"));
+        assert!(
+            record.contains("host=<name>"),
+            "the name is whoever keeps the zone's to choose"
+        );
+    }
+
+    #[test]
+    fn a_node_serving_nothing_says_no_api_line() {
+        // Absent rather than invented: what the zone is told this node serves is what it serves.
+        let record = crate::seed_record("12D3KooWtest", "zQmnetwork", 4001, None, &[]);
+        assert!(!record.contains("_api"), "it is not serving one");
+        assert!(record.contains("_seed"));
+    }
     use super::{identity, syncing};
     use almena_node::SigningKey;
 

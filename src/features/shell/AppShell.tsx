@@ -34,6 +34,7 @@ import { Separator } from "@/components/ui/separator";
 import NavItem from "@/features/shell/NavItem";
 import StatusBar from "@/features/shell/StatusBar";
 import { SECTIONS, type SectionId } from "@/features/shell/sections";
+import type { NodeState } from "@/lib/network";
 
 /** The frame, and the screen inside it. */
 interface AppShellProps {
@@ -41,12 +42,19 @@ interface AppShellProps {
   section: SectionId;
   /** Called with the section the user chose. */
   onSelect: (section: SectionId) => void;
+  /**
+   * What the node is doing, for the strip along the bottom, or `null` before the first look.
+   *
+   * Handed down rather than looked up here: it is read once, above, so that the strip, the tray
+   * and the screens all draw one moment instead of three a second apart.
+   */
+  state: NodeState | null;
   /** The screen for that section. */
   children: ReactNode;
 }
 
 /** The application's frame, filling the screen or the window. */
-function AppShell({ section, onSelect, children }: AppShellProps) {
+function AppShell({ section, onSelect, state, children }: AppShellProps) {
   const { t } = useTranslation();
 
   return (
@@ -56,10 +64,10 @@ function AppShell({ section, onSelect, children }: AppShellProps) {
       <main className="shell__screen">{children}</main>
 
       <nav className="shell__nav" aria-label={t("shell.nav")}>
-        {/* The head of the sidebar, and the only place the mark wears the identity
-            colour now that the first screen has stopped carrying it. There is no room for
-            it in the compact shape — the menu there is a bar the width of a thumb — so it is
-            drawn only where there is, and below 600 the mark is in the status strip and
+        {/* The head of the sidebar: the mark in the identity colour, beside the name, which
+            is the same pairing the first screen opens with at four times the size. There is no
+            room for it in the compact shape — the menu there is a bar the width of a thumb — so
+            it is drawn only where there is, and below 600 the mark is in the status strip and
             nowhere else. */}
         <div className="hidden flex-col gap-3 pt-2 pb-3 expanded:flex">
           <div className="flex items-center gap-2.5 px-3">
@@ -80,7 +88,7 @@ function AppShell({ section, onSelect, children }: AppShellProps) {
         ))}
       </nav>
 
-      <StatusBar />
+      <StatusBar state={state} />
     </div>
   );
 }

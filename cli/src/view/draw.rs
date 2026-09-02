@@ -33,7 +33,7 @@ pub const KEYS: &[&str] = &[
     "network.about.figure.link",
     "network.peers.noNetworkTitle",
     "network.peers.noNetwork",
-    "network.control.challengeShown",
+    "network.claim.shown",
     "cli.running",
     "cli.records",
     "cli.recordsNone",
@@ -147,7 +147,7 @@ fn draw_figures(frame: &mut Frame<'_>, area: Rect, rows: &[(String, Option<Strin
 /// draws the same challenge as a code; the text is the same string and approves the same thing.
 fn draw_challenge(frame: &mut Frame<'_>, area: Rect, challenge: &str, catalog: &Catalog) {
     let lines = vec![
-        Line::from(Span::from(catalog.text("network.control.challengeShown")).bold()),
+        Line::from(Span::from(catalog.text("network.claim.shown")).bold()),
         Line::from(challenge.to_owned()),
     ];
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);

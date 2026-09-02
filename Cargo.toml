@@ -76,6 +76,10 @@ libp2p = { version = "0.56", default-features = false, features = [
   "macros",
   "identify",
   "request-response",
+  # **What puts a number on how far away a peer is.** A round trip is the only thing about a
+  # connection that a person reading a list of peers can act on — it is the difference between a
+  # node beside them and one on another continent — and nothing else on the wire measures it.
+  "ping",
   # **What lets a node behind a household router be part of the network at all.** Without it only a
   # machine with an address anybody can dial may join, which would make *open and without
   # permission* true only for people who have one. Carrying somebody else's traffic is a capability

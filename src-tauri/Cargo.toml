@@ -1,6 +1,6 @@
 [package]
 name = "almena-app"
-description = "Almena, the windowed application"
+description = "Almena Node, the windowed application"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

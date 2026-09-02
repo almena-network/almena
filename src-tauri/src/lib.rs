@@ -197,18 +197,17 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
         open_at_login::opens_at_login,
         open_at_login::set_opens_at_login,
         node::node_facts,
-        node::open_a_network,
-        node::freeze_checklist,
         node::join_a_network,
+        node::open_a_network,
         node::interface_at,
+        node::node_state,
+        node::peers_connected,
+        node::stored,
+        node::crossed,
+        node::seed_record,
         node::come_back,
-        node::serve_interface,
-        node::close_epoch,
-        node::join_the_mesh,
-        node::who_contributed_me,
-        node::contributed_by,
-        node::contributed_by_nobody,
-        node::close_this_node,
+        node::come_up,
+        node::erase_this_node,
         preferences::preferences,
         preferences::set_preferences,
         agent::commands::agent_status,
@@ -245,6 +244,13 @@ pub fn run() {
                 // instead, which the single-instance plugin turns into the very same call.
                 match event {
                     tauri::RunEvent::Exit => {
+                        // The node first, because it is the only one of the three with somebody
+                        // else on the other end: it shuts the door, leaves the mesh and lets go
+                        // of its directory, and every moment spent elsewhere first is a moment
+                        // other nodes are still being told to call this one. Ending the
+                        // application is what stops the node — closing the window is not, and
+                        // that difference is the whole reason there is a tray.
+                        node::stop(handle);
                         // Before the geometry, because ending the agent means closing its
                         // input and waiting a moment for it to go — and a child left running
                         // past this point is one nothing will ever ask to stop again.

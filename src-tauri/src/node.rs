@@ -183,11 +183,98 @@ pub struct Running {
     /// Taken off the socket before it is handed to whatever keeps the mesh up, because afterwards
     /// nothing else holds it. Absent until then, which is *nobody counted*.
     peers: tokio::sync::Mutex<Option<almena_mesh::Peers>>,
+    /// What has crossed this node's mesh, once it has a place on it.
+    ///
+    /// Taken off the socket beside the peers and for the same reason. Absent until then, which is
+    /// *nothing has crossed because there is nothing for it to cross* — and not a total of nought.
+    crossed: tokio::sync::Mutex<Option<almena_mesh::sync::Crossed>>,
+    /// Where this node listens, once it has a place on the mesh.
+    ///
+    /// Taken off the socket beside the peers. **Reported and never written down**: what a node says
+    /// about where it is stays its operator's decision (§17.18), and this is what lets the window
+    /// show them the answer without the node having taken it.
+    where_it_listens: tokio::sync::Mutex<Option<almena_mesh::Addresses>>,
     /// Which network the running node is for, and therefore which directory it lives in.
     ///
     /// Kept because every later command that reaches the directory — the mesh reading the key, the
     /// interface serving under it — has to reach the same one the node came up from.
     which: tokio::sync::Mutex<Option<almena_node::Which>>,
+    /// How far a start got, and what stopped it where something did.
+    ///
+    /// **Decided here and read above.** Whether a node is up is not a thing an interface can work
+    /// out from the facts it happens to have: a node holding a record, off the mesh and serving
+    /// nothing looks exactly like one that has not finished starting, and the difference between
+    /// those two is the whole of what somebody watching wants to know.
+    phase: std::sync::Mutex<Phase>,
+    /// The three tasks a running node is made of, so that ending the application can stop them.
+    ///
+    /// Kept rather than let go of, for the reason the directory is: a spawned task nothing holds
+    /// is one nothing can ever ask to stop, and this application now ends by stopping its node
+    /// rather than by having its process taken away mid-sentence.
+    tasks: tokio::sync::Mutex<Tasks>,
+}
+
+/// How far a start got, in the vocabulary the strip, the tray and the Network screen all read.
+///
+/// Four and only four, because this state is drawn as a badge and the four tones are the only
+/// four. **Failing carries what went wrong** — the same stable identifier every other refusal here
+/// carries — because *something is wrong* is not something anybody can act on.
+///
+/// It does not serialise. What crosses is [`State`], where the word and the identifier are two
+/// plain fields: an enum's wire shape is a decision serde would be making on this face's behalf,
+/// and the shape the interface reads is worth writing out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Phase {
+    /// No node: this directory holds no record yet, or the application has stopped the one it had.
+    #[default]
+    Stopped,
+    /// A start is under way and has not finished.
+    Starting,
+    /// Up: on its network, and as far onto the mesh and the interface as it was asked to get.
+    Running,
+    /// Up, and something a start needed did not happen. The identifier says which.
+    ///
+    /// **It is not the opposite of running.** A node whose mesh port was taken still holds its
+    /// record and still answers for it; what it does not do is what this names.
+    Failing(&'static str),
+}
+
+impl Phase {
+    /// The word for it, which is one of exactly four and is never translated here.
+    ///
+    /// The interface reads it as an identifier and looks the sentence up in its own catalogue, the
+    /// way it does with every refusal this face reports.
+    const fn worded(self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Failing(_) => "failing",
+        }
+    }
+
+    /// What went wrong, where something did.
+    const fn failing(self) -> Option<&'static str> {
+        match self {
+            Self::Failing(why) => Some(why),
+            _ => None,
+        }
+    }
+}
+
+/// The long-running work a node is made of, held so that it can be ended.
+///
+/// Three, in the order they are stopped: the door shuts, the node leaves the mesh, and only then
+/// does it stop counting — an epoch is owed whether or not anybody is asking, so timekeeping is
+/// the last thing to go rather than the first.
+#[derive(Default)]
+struct Tasks {
+    /// The loop accepting interface connections.
+    serving: Option<tokio::task::JoinHandle<()>>,
+    /// Whatever is keeping this node's place on the mesh.
+    mesh: Option<tokio::task::JoinHandle<()>>,
+    /// The clock closing this node's epochs.
+    timekeeping: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// The word a network is called by in a path, the same as the terminal's.
@@ -232,7 +319,8 @@ fn directory_of(
         .join(worded(which)))
 }
 
-/// The resolver the zone is asked through: the machine's own, or the one `ALMENA_RESOLVER` names.
+/// Which servers the zone is asked of: none for the machine's own, or the one `ALMENA_RESOLVER`
+/// names.
 ///
 /// **A development knob, read by nothing a deployment sets.** A zone emulated on this machine
 /// answers on a port of its own, and this is how the window is pointed at it — the same reading
@@ -240,15 +328,73 @@ fn directory_of(
 ///
 /// # Errors
 ///
-/// `zone_silent` when no resolver can be built: a machine with no resolver is a zone that cannot be
-/// asked, which is a silence and never an empty zone.
-fn resolver() -> Result<almena_lookup::Dns, &'static str> {
+/// `resolver_not_an_address` for something that is not one. A name is not an address here: finding
+/// the resolver by name would take the very thing being named.
+fn asking() -> Result<Vec<std::net::SocketAddr>, &'static str> {
     match std::env::var("ALMENA_RESOLVER") {
-        Ok(named) if !named.trim().is_empty() => {
-            let server = almena_lookup::server(&named).map_err(|_| "resolver_not_an_address")?;
-            almena_lookup::Dns::asking(&[server]).map_err(|_| "zone_silent")
-        }
-        _ => almena_lookup::Dns::of_this_machine().map_err(|_| "zone_silent"),
+        Ok(named) if !named.trim().is_empty() => Ok(vec![
+            almena_lookup::server(&named).map_err(|_| "resolver_not_an_address")?,
+        ]),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// How long the zone is given to answer before this node calls it a silence.
+///
+/// The same ten seconds the terminal waits, and for the same reason: long enough for a resolver
+/// that has to go and ask, short enough that a node which cannot come up says so while somebody is
+/// still watching it try.
+const ASKING_FOR: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// One look at the zone, on a thread and a runtime of its own.
+///
+/// # Why it is not simply awaited here
+///
+/// **A resolver keeps its connections on work of its own and has to make progress while the
+/// question waits.** Handed to a runtime that is busy drawing an application, it answers nothing —
+/// which looks exactly like a zone that is down, and a node that read that as *nobody is there*
+/// would open a second network beside the one it should have joined. The terminal learned this and
+/// gives the look a whole runtime; this face asked on the one the window runs on and got a silence
+/// every time, against a resolver the terminal reads in milliseconds.
+///
+/// So the look gets a thread and a multi-thread runtime of its own, and the limit lives **outside**
+/// the work it is limiting: a timer nothing polls does not go off, which is the other half of the
+/// same lesson.
+///
+/// # Errors
+///
+/// `zone_silent` when nothing came back inside [`ASKING_FOR`], and whatever [`asking`] refused.
+/// **A zone that answered with nothing is not this**: it comes back as a `Looked` holding nothing,
+/// because *nobody is there* is an answer and only an answer may be acted on.
+async fn looked_at(zone: &str) -> Result<almena_lookup::Looked, &'static str> {
+    let servers = asking()?;
+    let zone = zone.to_owned();
+    let (tell, hear) = tokio::sync::oneshot::channel();
+
+    std::thread::Builder::new()
+        .name("almena-zone".to_owned())
+        .spawn(move || {
+            let Ok(looking) = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+            else {
+                let _ = tell.send(None);
+                return;
+            };
+            let found = looking.block_on(async move {
+                let dns = match servers.is_empty() {
+                    true => almena_lookup::Dns::of_this_machine().ok()?,
+                    false => almena_lookup::Dns::asking(&servers).ok()?,
+                };
+                almena_lookup::look(&dns, &zone).await
+            });
+            let _ = tell.send(found);
+        })
+        .map_err(|_| "zone_silent")?;
+
+    match tokio::time::timeout(ASKING_FOR, hear).await {
+        Ok(Ok(Some(looked))) => Ok(looked),
+        _ => Err("zone_silent"),
     }
 }
 
@@ -294,6 +440,93 @@ impl Running {
     fn now(&self) -> almena_node::Epoch {
         (self.clock())()
     }
+
+    /// Say where a start has got to, so that whoever is watching sees it there.
+    fn now_at(&self, phase: Phase) {
+        *self
+            .phase
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = phase;
+    }
+
+    /// Where a start has got to.
+    fn phase(&self) -> Phase {
+        *self
+            .phase
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// What this node is doing, decided here and read above.
+///
+/// # Why this is one answer and not five the interface adds up
+///
+/// Everything on it can be asked separately — the facts say which network, the mesh handle says
+/// whether there is a place on it, the origin says whether the door is open. Asked separately they
+/// are five moments, and an interface drawing them together draws a node that never existed. Asked
+/// as one they are one moment, decided where the node is run rather than where it is drawn, which
+/// is the same rule [`Facts`] is written under.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct State {
+    /// One of `stopped`, `starting`, `running`, `failing` — never anything else.
+    pub state: &'static str,
+    /// What went wrong, as the identifier the interface looks its sentence up by.
+    ///
+    /// `None` unless `state` is `failing`, and never a sentence: the node has no idea what
+    /// language anybody reads in.
+    pub failing: Option<&'static str>,
+    /// Which network this node is on — `development` or `production` — or `None` where it is on
+    /// none.
+    ///
+    /// **The word and not the network's own name.** The name is a fact about the network and is in
+    /// [`Facts`]; this is which of the two, which is what a person reads and what the directory is
+    /// named after.
+    pub which: Option<&'static str>,
+    /// Whether this node has a place on the mesh.
+    pub mesh: bool,
+    /// Whether this node is serving its interface.
+    pub serving: bool,
+    /// How many peers it is connected to, or `None` where nobody counted.
+    ///
+    /// The same figure [`Facts`] carries, on the same answer, so that the strip and the screen
+    /// cannot draw two counts a second apart and disagree.
+    pub peers: Option<usize>,
+}
+
+/// What this node is doing: where a start got to, and what is up.
+///
+/// Answered whether or not there is a node — a directory holding no record is `stopped`, which is a
+/// state and not a failure — so the interface never has to tell a gap from an answer.
+///
+/// # Errors
+///
+/// None. A node that cannot be asked anything is one this reports as stopped.
+#[tauri::command]
+pub async fn node_state(running: tauri::State<'_, Running>) -> Result<State, ()> {
+    Ok(state_of(&running).await)
+}
+
+/// What this node is doing, taken in one pass.
+///
+/// Apart from the command so that [`come_up`] can answer with it too: the press that brings a node
+/// up and the poll that watches it must not be able to describe the same node differently.
+async fn state_of(running: &Running) -> State {
+    let phase = running.phase();
+    // Each lock held once and read from the binding. Two reads of one lock inside one expression
+    // is a deadlock, because the first guard lives until the expression ends.
+    let which = *running.which.lock().await;
+    let peers = running.peers.lock().await;
+    let serving = running.serving_at.lock().await.is_some();
+    State {
+        state: phase.worded(),
+        failing: phase.failing(),
+        which: which.map(named),
+        mesh: peers.is_some(),
+        serving,
+        peers: peers.as_ref().map(almena_mesh::Peers::count),
+    }
 }
 
 /// What the node this application is running reports about itself.
@@ -307,87 +540,6 @@ pub async fn node_facts(running: tauri::State<'_, Running>) -> Result<Facts, ()>
         return Ok(almena_node::Facts::default().into());
     };
     Ok(facts_of(serving, &running).await)
-}
-
-/// Open a network, on the zone's word that there is nobody to join.
-///
-/// # Opening is not joining, and the difference is the whole of this
-///
-/// **A node opens a network only when nobody is there**, and it learns that by reading that
-/// network's zone — the same question asked of a different name. Development is opened again as
-/// often as the format moves; **production is opened once in the history of the platform**, not
-/// once per machine, so what stops a second one is not this function's manners but the zone
-/// answering that somebody is already there.
-///
-/// # The freeze gate is the core's and is not enforced here
-///
-/// `Node::open_in` refuses to open production on a format that is still moving, and answers
-/// `TheFormatIsNotFrozen`. Nothing in this layer repeats that check: a second implementation of a
-/// rule is two rules that will one day disagree. What the interface above does with
-/// [`freeze_checklist`] is show **why** before it happens, which is a different job.
-///
-/// # Errors
-///
-/// The reason it could not, as a stable identifier the interface translates — never a sentence.
-#[tauri::command]
-pub async fn open_a_network(
-    app: tauri::AppHandle,
-    running: tauri::State<'_, Running>,
-    which: String,
-    zone: Option<String>,
-    nobody_is_there: Option<bool>,
-) -> Result<Facts, &'static str> {
-    let (wanted, theirs) = which_of(&which)?;
-    // **Somebody's word instead of the zone's reaches development alone.** The whole defence
-    // against a second production network is the zone being asked, and this is the one place
-    // that defence is set aside — where a second network costs an afternoon.
-    let nobody_is_there = nobody_is_there.unwrap_or(false);
-    if nobody_is_there && wanted == almena_node::Which::Production {
-        return Err("nobody_is_there_is_for_development");
-    }
-    let mut held = running.held.write().await;
-    if held.is_some() {
-        return Err("already_on_a_network");
-    }
-
-    // This node's own key belongs to the directory and outlives every run. Making one afresh each
-    // time would be a different node every time, and anything published about it stale without
-    // anybody being told. The directory is taken before any of it is read or written.
-    let (directory, holding, key) = ready_to_come_back(&app, wanted)?;
-    // Opening a network and coming back to the one already here are different acts, and doing the
-    // first where the second belonged is how a directory ends up on a second network.
-    let opened = match almena_node::record::holding(&directory) {
-        almena_node::record::Holding::Unreadable(_) => return Err("unreadable_record"),
-        almena_node::record::Holding::ARecord { .. } => almena_node::Node::rejoin(&directory, key)
-            .map_err(|why| match why {
-                almena_node::record::NotReadable::NotWritable => "no_directory",
-                almena_node::record::NotReadable::DoesNotAddUp => "record_does_not_add_up",
-                almena_node::record::NotReadable::AnotherNetwork => "not_the_promised_network",
-                almena_node::record::NotReadable::Unreadable
-                | almena_node::record::NotReadable::Refused => "unreadable_record",
-            })?,
-        almena_node::record::Holding::Nothing => {
-            // The check that makes opening safe, and it is only a check if somebody looks.
-            let seeds = if nobody_is_there {
-                log::info!("zone_not_asked reason=nobody_is_there");
-                Vec::new()
-            } else {
-                who_is_there(zone.as_deref().unwrap_or(theirs), &running).await?
-            };
-            first_time(&directory, wanted, &seeds, key)?
-        }
-    };
-    Ok(taking_up(
-        &app,
-        &running,
-        &mut held,
-        Up {
-            node: opened,
-            holding,
-            which: wanted,
-        },
-    )
-    .await)
 }
 
 /// A node that has come up, the directory it holds, and which network it is for.
@@ -432,13 +584,16 @@ async fn taking_up(
     *running.which.lock().await = Some(which);
     crate::preferences::remember_network(app, named(which));
     let serving = almena_serve::Serving::new(node, limits());
-    tokio::spawn(
+    running.tasks.lock().await.timekeeping = Some(tokio::spawn(
         running
             .timekeeping
             .clone()
             .keeping_time(serving.clone(), running.clock(), LOOK),
-    );
+    ));
     *held = Some(serving);
+    // On its network. Whether it is also on the mesh and serving is what `coming_up` settles next,
+    // and until it has this is a node that has not finished starting rather than one that is up.
+    running.now_at(Phase::Starting);
     facts.into()
 }
 
@@ -472,10 +627,7 @@ pub const DEVELOPMENT_ZONE: &str = "dev.almena.network";
 ///
 /// The reason it could not, as a stable identifier the interface translates.
 async fn who_is_there(zone: &str, running: &Running) -> Result<Vec<String>, &'static str> {
-    let dns = resolver()?;
-    let looked = almena_lookup::look_patiently(&dns, zone)
-        .await
-        .ok_or("zone_silent")?;
+    let looked = looked_at(zone).await?;
 
     // Kept as somewhere to dial, so that taking a place on the mesh does not ask the zone a second
     // time and get a different answer.
@@ -488,101 +640,149 @@ async fn who_is_there(zone: &str, running: &Running) -> Result<Vec<String>, &'st
     Ok(looked.seeds)
 }
 
-/// Open a network in a directory that is holding none, keeping the government's key beside it.
+/// The port a node takes on the mesh where nothing is remembered.
 ///
-/// **The key is written before the record and taken away if the record does not start**, so the
-/// two are never apart: a record without its government key is a network nobody can publish the
-/// core on, and a key without a record is a file that would refuse the next open. Almena
-/// Government's key belongs to the network and is made with it — opening a development network
-/// again makes a new one, which is what opening a new network means.
-fn first_time(
-    directory: &std::path::Path,
-    which: almena_node::Which,
-    seeds: &[String],
-    key: almena_node::SigningKey,
-) -> Result<almena_node::Node, &'static str> {
-    if !seeds.is_empty() {
-        return Err("there_is_a_network");
-    }
-    let government = almena_node::fresh_key().map_err(|_| "no_randomness")?;
-    let kept = almena_node::government::keep(directory, &government)
-        .map_err(|_| "government_key_not_kept")?;
+/// **Chosen and not discovered**, because it is the one that gets published in the zone: a node
+/// that took whatever was free would be a node whose published record is wrong the next time it
+/// starts. Not 4001, which is what a terminal node on the same computer takes while developing.
+const MESH: u16 = 4002;
 
-    // The one wall clock reading this platform ever writes down. Everything afterwards counts whole
-    // hours from it, so it is read once, here, and never again.
-    let began = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "no_clock")?
-        .as_secs();
+/// The address a node serves its interface on where nothing is remembered. Not the terminal's.
+const INTERFACE: &str = "127.0.0.1:8791";
 
-    let opening = almena_node::Opening {
-        which,
-        beginning: almena_node::Epoch::GENESIS,
-        began,
-    };
-    let opened =
-        almena_node::Node::open_in(directory, &opening, seeds, &government, key).map_err(|why| {
-            match why {
-                almena_node::NotOpened::ThisNodeAlreadyHasOne => "already_on_a_network",
-                almena_node::NotOpened::ThereIsAlreadyANetwork(_) => "there_is_a_network",
-                almena_node::NotOpened::TheRecordWouldNotStart => "record_would_not_start",
-                // Production only: the core holds the format to its freeze checklist before opening
-                // one, and refuses rather than opening a network on a format that is still moving. The
-                // screen above shows the same checklist beforehand so that this is never the first
-                // anybody hears of it.
-                almena_node::NotOpened::TheFormatIsNotFrozen(_) => "format_is_not_frozen",
+/// Bring a node that is on its network the rest of the way up: onto the mesh, and serving.
+///
+/// # Why a start does this and does not ask
+///
+/// A node holding a record, answering nobody and serving nothing is not a node anybody wanted. It
+/// was the state every start after the first left this application in, because taking the mesh
+/// place and opening the door happened once, in the walk, and never again. They are not decisions:
+/// which network was the decision, and the port and the address were settled the first time and
+/// **remembered**, because they are what somebody publishes.
+///
+/// # A failure here does not stop the application
+///
+/// A mesh port somebody else has taken, or an address that will not bind, leaves a node that still
+/// holds its record and still answers for it. So neither is raised: the node stays up, the phase
+/// says what did not happen by its identifier, and the interface draws it. The first thing that did
+/// not happen is the one named — a second reason underneath the first is noise on a status strip.
+///
+/// Each half is skipped where it has already happened, so that this is safe to run over a node that
+/// is partly up.
+async fn coming_up(app: &tauri::AppHandle, running: &Running, serving: &almena_serve::Serving) {
+    let (mesh, interface) = crate::preferences::remembered_place(app);
+    let port = mesh.unwrap_or(MESH);
+    let address = interface.unwrap_or_else(|| INTERFACE.to_owned());
+    let mut wanting: Option<&'static str> = None;
+
+    if running.peers.lock().await.is_none() {
+        let asked = Place {
+            port,
+            carry: false,
+            mediator: false,
+            carried_by: Vec::new(),
+        };
+        match taking_a_place(app, running, serving, &asked).await {
+            Ok(()) => log::info!("mesh_place_taken port={port}"),
+            Err(why) => {
+                log::error!("mesh_place_not_taken port={port} reason={why}");
+                wanting = Some(why);
             }
-        });
-    match opened {
-        Ok(node) => {
-            log::info!("government_key_at path={}", kept.display());
-            Ok(node)
-        }
-        Err(why) => {
-            let _ = std::fs::remove_file(&kept);
-            Err(why)
         }
     }
+
+    if running.serving_at.lock().await.is_none() {
+        // The node's own key, always. Every node has one, so every node has a certificate; a pair
+        // of files is for an operator who already has one, and asking a start to know about that
+        // would be asking a start to be a decision.
+        let under = Under {
+            certificate: None,
+            private_key: None,
+        };
+        match serving_on(app, running, serving.clone(), &address, under).await {
+            Ok(()) => log::info!("interface_up address={address}"),
+            Err(why) => {
+                log::error!("interface_not_up address={address} reason={why}");
+                wanting = wanting.or(Some(why));
+            }
+        }
+    }
+
+    running.now_at(wanting.map_or(Phase::Running, Phase::Failing));
 }
 
-/// One line of the format's freeze checklist, as the interface draws it.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct Line {
-    /// What is being asked.
-    pub called: String,
-    /// What went wrong, where something did. `None` is a line that holds.
-    ///
-    /// **The reason travels and is not reduced to a flag.** Whoever is about to open a production
-    /// network needs to know what to go and fix, and *something is wrong* is not that.
-    pub wanting: Option<String>,
-}
-
-/// Whether this build's format may be frozen, item by item.
+/// Bring the node the rest of the way up, for the one press that puts a node on a network.
 ///
-/// # The question, without the act
-///
-/// **Nothing is opened, joined or written.** Every item is a probe against this build rather than a
-/// line somebody ticked, and reading it is how whoever is about to open a production network finds
-/// out what would happen before it happens.
-///
-/// It is the same list the core holds a production network to when one is opened, so this is a
-/// preview of that answer and never a second opinion about it.
+/// **The walk's press and a start run the same code.** Joining or opening leaves a node on its
+/// network and nothing more; this is what makes it a node somebody can reach, and it is the very
+/// call [`come_back`] makes — so the two cannot drift into doing different things to the same
+/// directory.
 ///
 /// # Errors
 ///
-/// None. It answers about this build and asks nothing of anybody.
+/// `no_network` where there is no node to bring up. Nothing else: what the mesh and the interface
+/// did is in the state rather than in a refusal.
 #[tauri::command]
-pub fn freeze_checklist() -> Vec<Line> {
-    almena_frozen::checklist()
-        .into_iter()
-        .map(|item| Line {
-            called: item.called,
-            wanting: match item.answered {
-                almena_frozen::Answered::Holds => None,
-                almena_frozen::Answered::Wanting(why) => Some(why),
-            },
-        })
-        .collect()
+pub async fn come_up(
+    app: tauri::AppHandle,
+    running: tauri::State<'_, Running>,
+) -> Result<State, &'static str> {
+    let held = running.held.read().await;
+    let serving = held.as_ref().ok_or("no_network")?;
+    coming_up(&app, &running, serving).await;
+    Ok(state_of(&running).await)
+}
+
+/// Stop this node, before the process this application is goes.
+///
+/// # The order is the whole of it
+///
+/// The door shuts first, so that nothing arrives for a node that is on its way out. Then the mesh,
+/// so that this node stops being somewhere other nodes are told to call. Then the clock, and the
+/// node with it. The directory is last, because letting go of it is what lets the next process be
+/// this node — and doing that while any of the three above were still running would be two
+/// processes over one record, which is the one thing the lock exists to refuse.
+///
+/// It is safe to run over a node that never came up: every step is a `take`, and taking nothing is
+/// nothing.
+pub async fn stopping(running: &Running) {
+    let mut tasks = running.tasks.lock().await;
+
+    if let Some(serving) = tasks.serving.take() {
+        serving.abort();
+    }
+    *running.serving_at.lock().await = None;
+
+    if let Some(mesh) = tasks.mesh.take() {
+        mesh.abort();
+    }
+    *running.peers.lock().await = None;
+    *running.crossed.lock().await = None;
+    *running.where_it_listens.lock().await = None;
+
+    if let Some(timekeeping) = tasks.timekeeping.take() {
+        timekeeping.abort();
+    }
+    let was_up = running.held.write().await.take().is_some();
+
+    // The lock is the open file and nothing else, so dropping this is letting go of the directory.
+    drop(running.held_directory.lock().await.take());
+    *running.which.lock().await = None;
+    running.now_at(Phase::Stopped);
+
+    if was_up {
+        log::info!("node_stopped");
+    }
+}
+
+/// Stop the node this application is running, from where there is no `async` to be had.
+///
+/// The platform hands the exit back on the thread it was started on, so the wait for the node to
+/// let go happens here rather than being spawned — a stop nobody waited for is a process that ends
+/// with its directory still held.
+pub fn stop(app: &tauri::AppHandle) {
+    let running = tauri::Manager::state::<Running>(app);
+    tauri::async_runtime::block_on(stopping(&running));
 }
 
 /// Come back to the network this directory already holds, if it holds one.
@@ -598,11 +798,16 @@ pub fn freeze_checklist() -> Vec<Line> {
 /// nothing, which is what sends somebody to the one decision that does have to be taken. Opening a
 /// network from a start would be how a restart becomes a second network.
 ///
+/// **A start also brings it the rest of the way up**, through [`coming_up`]: the mesh place and the
+/// interface, on what the preferences remember. Neither is a decision, and a start that left them
+/// undone left a node holding a record and answering nobody.
+///
 /// # Errors
 ///
 /// The reason it could not, as a stable identifier the interface translates. **A directory that
 /// holds nothing is not one of them**: it is `Ok(None)`, because having no network yet is a state
-/// and not a failure.
+/// and not a failure. Neither is a mesh port that was taken or an address that would not bind: the
+/// node comes back and the state says what is wrong.
 #[tauri::command]
 pub async fn come_back(
     app: tauri::AppHandle,
@@ -616,17 +821,31 @@ pub async fn come_back(
         return Ok(Some(facts_of(serving, &running).await));
     }
 
+    // Said before anything is read, so that a start somebody is watching says it is starting rather
+    // than staying stopped until it has finished.
+    running.now_at(Phase::Starting);
+
     let Some(which) = which_to_come_back_to(&app) else {
+        // A directory holding nothing: not a failure, and the walk is what happens next.
+        running.now_at(Phase::Stopped);
         return Ok(None);
     };
-    let (directory, holding, key) = ready_to_come_back(&app, which)?;
-    let node = almena_node::Node::rejoin(&directory, key).map_err(|why| match why {
-        almena_node::record::NotReadable::NotWritable => "no_directory",
-        almena_node::record::NotReadable::DoesNotAddUp => "record_does_not_add_up",
-        almena_node::record::NotReadable::AnotherNetwork => "not_the_promised_network",
-        almena_node::record::NotReadable::Unreadable
-        | almena_node::record::NotReadable::Refused => "unreadable_record",
+    let (directory, holding, key) = ready_to_come_back(&app, which).inspect_err(|why| {
+        running.now_at(Phase::Failing(why));
     })?;
+    let node = almena_node::Node::rejoin(&directory, key)
+        .map_err(|why| match why {
+            almena_node::record::NotReadable::NotWritable => "no_directory",
+            almena_node::record::NotReadable::DoesNotAddUp => "record_does_not_add_up",
+            almena_node::record::NotReadable::AnotherNetwork => "not_the_promised_network",
+            almena_node::record::NotReadable::Unreadable
+            | almena_node::record::NotReadable::Refused => "unreadable_record",
+        })
+        .inspect_err(|why| {
+            // A start that could not read the record is a failure that stays on screen: there is no
+            // node, and the identifier is the whole of what anybody can act on.
+            running.now_at(Phase::Failing(why));
+        })?;
 
     // **Best effort, and silence is not fatal here.** The record is what this node is on; the zone
     // only says who else to dial once it takes its place on the mesh, and a node that refused to
@@ -636,19 +855,24 @@ pub async fn come_back(
         Ok(seeds) => log::info!("zone_read_on_rejoin seeds={}", seeds.len()),
         Err(why) => log::info!("zone_silent_on_rejoin zone={zone} reason={why}"),
     }
-    Ok(Some(
-        taking_up(
-            &app,
-            &running,
-            &mut held,
-            Up {
-                node,
-                holding,
-                which,
-            },
-        )
-        .await,
-    ))
+    let facts = taking_up(
+        &app,
+        &running,
+        &mut held,
+        Up {
+            node,
+            holding,
+            which,
+        },
+    )
+    .await;
+
+    // The rest of the way up, on what the preferences remember. The same call the walk's press
+    // makes, so that a first start and every start after it leave the same node running.
+    if let Some(serving) = held.as_ref() {
+        coming_up(&app, &running, serving).await;
+    }
+    Ok(Some(facts))
 }
 
 /// Which network a launch comes back to: the remembered one, else whichever directory holds a
@@ -723,6 +947,25 @@ pub async fn join_a_network(
     running: tauri::State<'_, Running>,
     asked: Joining,
 ) -> Result<Facts, &'static str> {
+    // **A join that failed is a fact about this node, not only an answer to whoever asked.**
+    // Since the walk stopped choosing networks, the press that joins hands over to the frame
+    // whatever happens — so the reason has to survive the call that produced it, and the state
+    // is where every screen already reads one from. Written here rather than at each `?` above:
+    // one place that cannot be forgotten by the next refusal added below.
+    joining(app, &running, asked).await.inspect_err(|why| {
+        running.now_at(Phase::Failing(why));
+    })
+}
+
+/// Join a network, with every refusal on its way out reported by the caller.
+///
+/// It is the body of [`join_a_network`] and nothing else. Separated so that the phase is written
+/// once, over every path that fails, instead of at each of the dozen places one can.
+async fn joining(
+    app: tauri::AppHandle,
+    running: &tauri::State<'_, Running>,
+    asked: Joining,
+) -> Result<Facts, &'static str> {
     let mut held = running.held.write().await;
     if held.is_some() {
         return Err("already_on_a_network");
@@ -736,7 +979,11 @@ pub async fn join_a_network(
     *running.dialling.lock().await = dialling;
 
     let (directory, holding, key) = ready(&app, wanted)?;
-    let acts = pulled(&key, &network, asked.port, &address).await?;
+    let port = asked
+        .port
+        .or_else(|| crate::preferences::remembered_place(&app).0)
+        .unwrap_or(MESH);
+    let acts = pulled(&key, &network, port, &address).await?;
 
     // The instant the network began, out of the act that opened it — which is the only place it is
     // written and the reason a newcomer counts epochs from where everybody else does.
@@ -769,7 +1016,7 @@ pub async fn join_a_network(
 
     Ok(taking_up(
         &app,
-        &running,
+        running,
         &mut held,
         Up {
             node: joined,
@@ -792,7 +1039,12 @@ pub struct Joining {
     /// Which network: `development` or `production`.
     pub which: String,
     /// The port to pull the record on, which is the one that gets published in the zone.
-    pub port: u16,
+    ///
+    /// Absent is what the preferences remember, and [`MESH`] where they remember nothing — the
+    /// same port a start takes, so that the port this node is reachable on is decided in one
+    /// place rather than typed again by whoever is joining.
+    #[serde(default)]
+    pub port: Option<u16>,
     /// Another zone to look in, or nothing for the network's own.
     #[serde(default)]
     pub zone: Option<String>,
@@ -855,10 +1107,7 @@ fn told_where_to_join(
 async fn where_to_join(
     zone: &str,
 ) -> Result<(almena_node::zone::Seed, Vec<almena_mesh::Multiaddr>), &'static str> {
-    let dns = resolver()?;
-    let looked = almena_lookup::look_patiently(&dns, zone)
-        .await
-        .ok_or("zone_silent")?;
+    let looked = looked_at(zone).await?;
     let Some(seed) = looked.answer.seeds.first().cloned() else {
         // **Nothing readable is not the same as nothing at all**, and telling them apart is the
         // difference between *open one* and *go and fix the zone*. A zone that published a seed
@@ -1004,29 +1253,25 @@ async fn pulled(
     }
 }
 
-/// Take a place on the mesh, listening on `port`.
+/// Taking that place, with the node already in hand.
 ///
-/// The port is chosen and not discovered, because it is the one somebody publishes in the zone. A
-/// node that took whatever was free would be a node whose published record is wrong the next time
-/// it starts.
-///
-/// # Errors
-///
-/// The reason it could not, as a stable identifier the interface translates.
-#[tauri::command]
-pub async fn join_the_mesh(
-    app: tauri::AppHandle,
-    running: tauri::State<'_, Running>,
-    asked: Place,
+/// **The one implementation, and the reason it is not the command.** A start brings the node up
+/// by itself and an operator can ask for the same thing from the Network screen; two
+/// implementations of it would be two nodes' worth of behaviour to keep in step. The command above
+/// takes the lock; a start already holds it, and calling the command from inside one would be a
+/// deadlock rather than a shortcut.
+async fn taking_a_place(
+    app: &tauri::AppHandle,
+    running: &Running,
+    serving: &almena_serve::Serving,
+    asked: &Place,
 ) -> Result<(), &'static str> {
-    let held = running.held.read().await;
-    let serving = held.as_ref().ok_or("no_network")?;
     let network = serving.node().read().await.network().as_str().to_owned();
 
     let which = running.which.lock().await.ok_or("no_network")?;
-    let directory = directory_of(&app, which)?;
+    let directory = directory_of(app, which)?;
     let key = almena_node::identity::load_or_make(&directory).map_err(|_| "unreadable_identity")?;
-    let listening = listening_on(&key, &network, &asked).await?;
+    let listening = listening_on(&key, &network, asked).await?;
 
     // **Said in the record, where it is counted, before anybody is told to come here.** A client
     // picks a mediator from what the record says a node offers, and a mailbox that answered
@@ -1050,14 +1295,25 @@ pub async fn join_the_mesh(
     // Taken before the socket goes: afterwards nothing else holds it, and a reading that wanted a
     // peer count would have nobody to ask.
     *running.peers.lock().await = Some(listening.peers());
+    // Both handles come off the socket here, before it is handed away: afterwards nothing
+    // else holds either, and a screen wanting a figure then would have nobody to ask.
+    *running.crossed.lock().await = Some(listening.crossed());
+    *running.where_it_listens.lock().await = Some(listening.where_it_listens());
 
-    tokio::spawn(almena_mesh::keeping::keeping_up(
+    // Held rather than let go of, so that ending the application can leave the mesh instead of
+    // having the process taken away with a socket still open.
+    running.tasks.lock().await.mesh = Some(tokio::spawn(almena_mesh::keeping::keeping_up(
         listening,
         std::sync::Arc::clone(serving.node()),
         running.dialling.lock().await.clone(),
         running.clock(),
         ASK_EVERY,
-    ));
+    )));
+
+    // Written down where it happened, so that the next start takes the same port without being
+    // told. The port is the one somebody publishes: a start that took a different one would make
+    // the published record wrong.
+    crate::preferences::remember_mesh(app, asked.port);
     Ok(())
 }
 
@@ -1123,145 +1379,38 @@ async fn listening_on(
     Ok(listening)
 }
 
-/// Close whatever epochs this node owes, without waiting for its own clock to come round.
+/// The pair an operator names to serve under a certificate of their own, or nothing for the
+/// node's own key.
 ///
-/// The clock does this on its own; asking is for the moment somebody does not want to wait for it.
-/// Both go through one record of what has been closed, so asking twice is not two answers about
-/// one epoch.
-///
-/// # Errors
-///
-/// The reason it could not, as a stable identifier the interface translates.
-#[tauri::command]
-pub async fn close_epoch(running: tauri::State<'_, Running>) -> Result<usize, &'static str> {
-    let held = running.held.read().await;
-    let Some(serving) = held.as_ref() else {
-        return Err("no_network");
-    };
-    let closed = running.timekeeping.catch_up(serving, running.now()).await;
-    Ok(closed)
-}
-
-/// Show a challenge for whoever contributed this node to approve.
-///
-/// **Whoever sustains the network earns the right to write on it, and that has to attach to
-/// somebody.** A node nobody claimed is a machine, and a machine cannot be credited — so the node
-/// asks, and approving it is somebody else's to do with the key their own chain authorises.
-///
-/// Good for `for_epochs` and then not: one that ended up in a screenshot or a support bundle must
-/// not bind somebody's machine a year later. Nothing but this node remembers it was shown.
-///
-/// # Errors
-///
-/// The reason there is none to show, as a stable identifier.
-#[tauri::command]
-pub async fn who_contributed_me(
-    running: tauri::State<'_, Running>,
-    for_epochs: u64,
-) -> Result<String, &'static str> {
-    let held = running.held.read().await;
-    let serving = held.as_ref().ok_or("no_network")?;
-    let until = running
-        .now()
-        .plus(almena_node::Epochs(for_epochs))
-        .ok_or("no_network")?;
-    let challenge = serving
-        .node()
-        .read()
-        .await
-        .asking_who_contributed_me(until)
-        .map_err(|_| "no_randomness")?;
-    Ok(challenge.to_text())
-}
-
-/// Write down that somebody contributed this node, from what they handed back.
-///
-/// Both halves go in: the challenge this node showed, and their approval of it. One alone binds
-/// nothing — the node saying it is the node's word about somebody, and an approval alone is
-/// somebody claiming a machine they may not hold.
-///
-/// # Errors
-///
-/// `not_a_claim` when the text is not a challenge and an approval, and `not_theirs` when it read
-/// and does not bind. **A binding that cannot be checked is not a weaker binding**: it would be
-/// this node's word about somebody who never agreed.
-#[tauri::command]
-pub async fn contributed_by(
-    running: tauri::State<'_, Running>,
-    challenge: String,
-    approval: String,
-) -> Result<(), &'static str> {
-    let held = running.held.read().await;
-    let serving = held.as_ref().ok_or("no_network")?;
-    let now = running.now();
-    match serving
-        .node()
-        .write()
-        .await
-        .contributed_by_text(&challenge, &approval, now)
-    {
-        almena_node::Claimed::Written => Ok(()),
-        almena_node::Claimed::NotAClaim => Err("not_a_claim"),
-        almena_node::Claimed::NotTheirs => Err("not_theirs"),
-    }
-}
-
-/// Say this node is no longer contributed by anybody.
-///
-/// **The node alone.** Whoever claimed it agreed to be credited for what it served, and giving that
-/// up costs them nothing anybody could hold them to. Credit stops from here and never in arrears:
-/// what was served was served.
-///
-/// # Errors
-///
-/// The reason it could not be written down, as a stable identifier.
-#[tauri::command]
-pub async fn contributed_by_nobody(running: tauri::State<'_, Running>) -> Result<(), &'static str> {
-    let held = running.held.read().await;
-    let serving = held.as_ref().ok_or("no_network")?;
-    let now = running.now();
-    serving
-        .node()
-        .write()
-        .await
-        .contributed_by_nobody(now)
-        .then_some(())
-        .ok_or("not_written_down")
-}
-
-/// Serve the interface on `address`, so clients and portals can ask.
-///
-/// Reading is not authenticated and writing is handing over a signed act, so there is nothing to
-/// configure about who may ask — only where to listen.
-///
-/// **Serving in the clear is not a mode.** Every node has a key, so every node has a certificate:
-/// one whose subject public key is the node's own, signed by that key, which whoever dials it pins
-/// against the identity the zone or the record told them. An operator who already has a
-/// certificate for the machine names two files instead.
-///
-/// # Errors
-///
-/// The reason it could not, as a stable identifier.
-#[tauri::command]
-pub async fn serve_interface(
-    app: tauri::AppHandle,
-    running: tauri::State<'_, Running>,
-    address: String,
+/// Grouped because they are one decision and one refusal: one without the other is a node that
+/// would answer under its own key having been asked to answer under somebody's certificate.
+struct Under {
+    /// The certificate chain, as a path to a PEM file.
     certificate: Option<String>,
+    /// The key that belongs to it, as a path to a PEM file.
     private_key: Option<String>,
+}
+
+/// Opening that door, with the node already in hand.
+///
+/// The other half of what [`taking_a_place`] is: one implementation for the start that does it by
+/// itself and the operator who asks for it, and not the command, because a start already holds the
+/// lock the command takes.
+async fn serving_on(
+    app: &tauri::AppHandle,
+    running: &Running,
+    serving: almena_serve::Serving,
+    address: &str,
+    under: Under,
 ) -> Result<(), &'static str> {
-    let held = running.held.read().await;
-    let Some(serving) = held.as_ref().cloned() else {
-        return Err("no_network");
-    };
-    let (under, how) = under_which(&app, &running, certificate, private_key).await?;
+    let (under, how) = under_which(app, running, under).await?;
 
     let listener = tokio::net::TcpListener::bind(&address)
         .await
         .map_err(|_| "address_unavailable")?;
 
     log::info!("interface_serving address={address} under={how}");
-    *running.serving_at.lock().await = Some(origin_of(&listener, &address));
+    *running.serving_at.lock().await = Some(origin_of(&listener, address));
 
     // **Said in the record, where it is counted, once the door is open.** What a network has is
     // counted from what its nodes say they offer, and a node answering on an interface it never
@@ -1286,7 +1435,9 @@ pub async fn serve_interface(
     // one here would be this face deciding what epoch it is, which is a fact and not a face's.
     let telling = running.clock();
 
-    tokio::spawn(async move {
+    // Held rather than let go of, so that ending the application shuts the door instead of
+    // leaving it open until the process is taken away.
+    running.tasks.lock().await.serving = Some(tokio::spawn(async move {
         while let Ok((io, _)) = listener.accept().await {
             let Some(room) = serving.room() else {
                 continue;
@@ -1303,7 +1454,11 @@ pub async fn serve_interface(
                 }
             });
         }
-    });
+    }));
+
+    // For the same reason the port is: the address is the one that gets published, so the next
+    // start serves where this one did.
+    crate::preferences::remember_interface(app, address);
     Ok(())
 }
 
@@ -1315,10 +1470,9 @@ pub async fn serve_interface(
 async fn under_which(
     app: &tauri::AppHandle,
     running: &Running,
-    certificate: Option<String>,
-    private_key: Option<String>,
+    under: Under,
 ) -> Result<(almena_tls::Accepting, &'static str), &'static str> {
-    match (certificate, private_key) {
+    match (under.certificate, under.private_key) {
         (Some(certificate), Some(key)) => Ok((
             almena_tls::accepting(
                 std::path::Path::new(&certificate),
@@ -1361,28 +1515,408 @@ fn origin_of(listener: &tokio::net::TcpListener, asked: &str) -> String {
     format!("https://{bound}")
 }
 
-/// Close this node, so that it stops counting.
+/// Erase this node from this machine, and leave a machine that is not a node.
 ///
-/// **The one way out of a node whose key is somebody else's**, and not how a node is taken down
-/// for the afternoon: a closed node does not come back, and coming back means announcing a new one
-/// with a new key and a new name. What it said stays said — its roots and summaries are in the
-/// record for ever — and what changes is the census the share-out is drawn from.
+/// # The order is the whole of it, again
+///
+/// **The network is told first, while there is still a node to tell it with.** Closing is an act
+/// this node signs and appends to its own chain; once the files are gone there is no key to sign
+/// it with and nothing to append it to, so an erase that deleted first would leave a node that
+/// everybody else goes on expecting until the observers give up on it.
+///
+/// Then the node is stopped — the door, the mesh, the clock, and the directory let go — because
+/// deleting files out from under a running node is the two-processes-over-one-record failure seen
+/// from the other side. Then the directory goes: the key, the acts, the roots and the lock, which
+/// is everything this node was. Then the notes the node kept in the preferences, so that the next
+/// launch does not come back to a directory that is not there.
+///
+/// # It does not refuse over a node that is down
+///
+/// **A way out that needs a working node is not a way out.** The one person most likely to want
+/// this is the one whose node will not come up, so nothing here is conditional on the node being
+/// on a network, running, or reachable: what could not be said is logged and the erase goes on. A
+/// node that was never announced as closed is one the record's observers will find silent, which
+/// is a worse outcome than a clean close and a better one than a machine somebody cannot leave.
+///
+/// Erasing a machine that is not a node is not a failure. It is the state being asked for, and it
+/// is already the case; the preferences are cleared anyway, because a note about a node that is
+/// not there is the thing that would send the next launch somewhere strange.
+///
+/// # What goes with it that nobody asked about
+///
+/// **The government key, on the one machine that has one.** A node that opened its network keeps
+/// that network's government key beside its record, and the directory is what this takes away — so
+/// erasing the machine that opened a network is also giving up the ability to publish its core or
+/// certify anybody on it, for ever. It is said rather than refused: a way out that some machines
+/// cannot take is not a way out, and the machine that opened the network is not the one this
+/// should be hardest for. What it must not be is silent, so it is logged when it happens.
 ///
 /// # Errors
 ///
-/// `no_network` where there is none, and `not_written_down` where the record would not take it.
+/// `no_directory` where the platform will not say where the data lives, and `not_erased` where
+/// the files would not go — a directory somebody else has open, or one this process may not
+/// write. Both leave the node where it was rather than half of it.
 #[tauri::command]
-pub async fn close_this_node(running: tauri::State<'_, Running>) -> Result<(), &'static str> {
+pub async fn erase_this_node(
+    app: tauri::AppHandle,
+    running: tauri::State<'_, Running>,
+) -> Result<(), &'static str> {
+    // Whichever node is being erased: the one that is up, or — where none came up — whichever
+    // directory still holds a record, which is the case this exists for.
+    let which = match *running.which.lock().await {
+        Some(which) => Some(which),
+        None => which_to_come_back_to(&app),
+    };
+    let Some(which) = which else {
+        // Nothing on disk to take away. The preferences are still cleared: a remembered network
+        // over a directory that holds nothing is the one thing that could still be wrong here.
+        crate::preferences::forget_the_node(&app);
+        log::info!("node_erased_nothing_to_erase");
+        return Ok(());
+    };
+
+    // Said first, and only where there is a node up to say it with. The guard is dropped before
+    // stopping, which takes the same lock for writing.
+    {
+        let held = running.held.read().await;
+        match held.as_ref() {
+            Some(serving) => {
+                let now = running.now();
+                if serving.node().write().await.close_itself(now) {
+                    log::info!("node_closed_before_erasing");
+                } else {
+                    log::warn!("node_not_closed_before_erasing reason=not_written_down");
+                }
+            }
+            None => log::warn!("node_not_closed_before_erasing reason=no_network"),
+        }
+    }
+
+    stopping(&running).await;
+
+    let directory = directory_of(&app, which)?;
+    // Said before it goes, because afterwards there is nothing to read it off.
+    if almena_node::government::load(&directory).is_ok() {
+        log::warn!("erasing_the_government_key which={}", worded(which));
+    }
+    match std::fs::remove_dir_all(&directory) {
+        Ok(()) => log::info!("node_erased which={}", worded(which)),
+        // Already gone is the state being asked for, not a failure to reach it.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            log::info!("node_erased_already_gone which={}", worded(which));
+        }
+        Err(error) => {
+            log::error!("node_not_erased which={} reason={error}", worded(which));
+            return Err("not_erased");
+        }
+    }
+
+    crate::preferences::forget_the_node(&app);
+    Ok(())
+}
+
+/// Open a network in a directory that is holding none, keeping the government's key beside it.
+///
+/// **The key is written before the record and taken away if the record does not start**, so the
+/// two are never apart: a record without its government key is a network nobody can publish the
+/// core on, and a key without a record is a file that would refuse the next open. Almena
+/// Government's key belongs to the network and is made with it — opening a development network
+/// again makes a new one, which is what opening a new network means.
+fn first_time(
+    directory: &std::path::Path,
+    which: almena_node::Which,
+    seeds: &[String],
+    key: almena_node::SigningKey,
+) -> Result<almena_node::Node, &'static str> {
+    if !seeds.is_empty() {
+        return Err("there_is_a_network");
+    }
+    let government = almena_node::fresh_key().map_err(|_| "no_randomness")?;
+    let kept = almena_node::government::keep(directory, &government)
+        .map_err(|_| "government_key_not_kept")?;
+
+    // The one wall clock reading this platform ever writes down. Everything afterwards counts whole
+    // hours from it, so it is read once, here, and never again.
+    let began = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "no_clock")?
+        .as_secs();
+
+    let opening = almena_node::Opening {
+        which,
+        beginning: almena_node::Epoch::GENESIS,
+        began,
+    };
+    let opened =
+        almena_node::Node::open_in(directory, &opening, seeds, &government, key).map_err(|why| {
+            match why {
+                almena_node::NotOpened::ThisNodeAlreadyHasOne => "already_on_a_network",
+                almena_node::NotOpened::ThereIsAlreadyANetwork(_) => "there_is_a_network",
+                almena_node::NotOpened::TheRecordWouldNotStart => "record_would_not_start",
+                // Production only: the core holds the format to its freeze checklist before
+                // opening one, and refuses rather than opening a network on a format that is
+                // still moving.
+                almena_node::NotOpened::TheFormatIsNotFrozen(_) => "format_is_not_frozen",
+            }
+        });
+    match opened {
+        Ok(node) => {
+            log::info!("government_key_at path={}", kept.display());
+            Ok(node)
+        }
+        Err(why) => {
+            let _ = std::fs::remove_file(&kept);
+            Err(why)
+        }
+    }
+}
+
+/// Open a development network, on the zone's word that there is nobody to join.
+///
+/// # Why the window opens development and never production
+///
+/// **A development network is opened as often as it needs to be; a production one is opened once
+/// in the history of the platform** (`SPECS.md §4.5`). A window that opened whichever network it
+/// found empty would give every fresh install its own production network the first time the zone
+/// was quiet — the accident that section calls the one that costs the most, and one an append-only
+/// log does not undo.
+///
+/// So this refuses production **before anything happens**, on the argument rather than on what the
+/// zone said: there is no ordering of events, no slow resolver and no mistyped word that reaches
+/// the opening of a production network from this face. Opening production is a deliberate act at a
+/// terminal, by whoever is doing it, and it stays there.
+///
+/// The zone is asked and its answer is what decides: nobody there means there is a network to open,
+/// and **silence is not nobody**. That rule is the core's and is applied below the interface; what
+/// this refuses on its own is only the network.
+///
+/// # Errors
+///
+/// `nobody_is_there_is_for_development` for production, and otherwise whatever the core said —
+/// `there_is_a_network` where the zone names somebody, `zone_silent` where it did not answer at
+/// all, and the directory's own refusals.
+#[tauri::command]
+pub async fn open_a_network(
+    app: tauri::AppHandle,
+    running: tauri::State<'_, Running>,
+    which: String,
+) -> Result<Facts, &'static str> {
+    opening(app, &running, which).await.inspect_err(|why| {
+        running.now_at(Phase::Failing(why));
+    })
+}
+
+/// Open a network, with every refusal on its way out reported by the caller.
+async fn opening(
+    app: tauri::AppHandle,
+    running: &tauri::State<'_, Running>,
+    which: String,
+) -> Result<Facts, &'static str> {
+    let (wanted, zone) = which_of(&which)?;
+    // Refused on the word and not on the answer. See above: there is no path from this face to a
+    // production network being opened, and it is closed here rather than anywhere it could be
+    // reached by an ordering of events.
+    if matches!(wanted, almena_node::Which::Production) {
+        return Err("nobody_is_there_is_for_development");
+    }
+
+    let mut held = running.held.write().await;
+    if held.is_some() {
+        return Err("already_on_a_network");
+    }
+
+    // Asked, and its answer is what decides. A zone naming somebody is a network to join rather
+    // than one to open, and the core is what says so.
+    let seeds = who_is_there(zone, running).await?;
+    let (directory, holding, key) = ready(&app, wanted)?;
+    running.reading_the_clock_for(wanted);
+    let opened = first_time(&directory, wanted, &seeds, key)?;
+
+    Ok(taking_up(
+        &app,
+        running,
+        &mut held,
+        Up {
+            node: opened,
+            holding,
+            which: wanted,
+        },
+    )
+    .await)
+}
+
+/// One peer this node is connected to, as a face draws it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Peer {
+    /// What it answers to on the mesh: its `PeerId`, which **is** its key with a prefix.
+    pub peer: String,
+    /// The address this connection is on, as a multiaddress.
+    ///
+    /// Where this node is talking to it in fact — dialled, or answered and observed — and not any
+    /// address the record or the zone carries. It is never written down anywhere (§17.18).
+    pub address: String,
+    /// The last round trip to it in milliseconds, or nothing where none has come back yet.
+    ///
+    /// **Absent is not nought.** The first ping goes out after a connection settles, so a peer
+    /// that has just arrived has no round trip — and a zero there would be the fastest connection
+    /// on the list, invented.
+    pub far: Option<u128>,
+}
+
+/// Who this node is connected to right now.
+///
+/// **A fact about sockets, and only that.** Who is a node the record knows is a different question
+/// with a different answer — the census is in the log — and this is who is on the other end of a
+/// connection at this moment. A node it has never heard of is not in the record; a node in the
+/// record it is not talking to is not here.
+///
+/// An empty list and no list are different answers and both are drawn: `None` is a node with no
+/// place on the mesh, where nobody has counted anything, and `Some([])` is a node that has taken
+/// its place and is talking to nobody. A face that showed them the same way would be claiming a
+/// measurement nobody took.
+#[tauri::command]
+pub async fn peers_connected(running: tauri::State<'_, Running>) -> Result<Option<Vec<Peer>>, ()> {
+    Ok(running.peers.lock().await.as_ref().map(|peers| {
+        peers
+            .reached()
+            .into_iter()
+            .map(|(peer, reached)| Peer {
+                peer: peer.to_string(),
+                address: reached.address.to_string(),
+                far: reached.far.map(|took| took.as_millis()),
+            })
+            .collect()
+    }))
+}
+
+/// What has crossed this node's mesh, in bytes each way.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Crossed {
+    /// Bytes of record traffic read off the wire since this node came up.
+    pub taken: u64,
+    /// Bytes of record traffic written to the wire since this node came up.
+    pub given: u64,
+}
+
+/// What an operator hands to whoever keeps the zone, so that this node can be a seed.
+///
+/// # Why the node writes it and not the screen
+///
+/// The shape of these records is the platform's (`ZONES.md`), not a face's. Composed on a screen it
+/// would be composed twice — once per face — and the two would drift, which for a record that is
+/// **a commitment newcomers verify against** is worse than it sounds: a `_seed` with the wrong
+/// `net=` sends whoever reads it to a network that is not this one.
+///
+/// # What it knows, and the one thing it does not
+///
+/// The port it actually bound, its own public key, and the name of its network: those three are
+/// the parts nobody else can produce. **The host name is not among them** — it is the zone
+/// keeper's to choose, so it is left as a placeholder rather than guessed at.
+///
+/// The addresses are what the operating system granted, with loopback and private ones dropped and
+/// **relayed ones dropped too**: an address a relay lends answers for as long as somebody else
+/// agrees to carry this node and stops without it being told, so a zone pointing at one is a zone
+/// pointing at a door nobody is behind.
+///
+/// # It says where it thinks it is, not where the world sees it
+///
+/// A node knows what it bound. Behind a household router that is not what anybody else can dial,
+/// and this node does not learn its observed address. So whoever keeps the zone checks the record
+/// before publishing it — dial the address, see that the handshake key is the `peer=`, see that the
+/// record handed over starts with the act `net=` names — which is what they have to do anyway.
+///
+/// `None` where there is no place on the mesh: a node that is not listening has no `_seed` to be.
+#[tauri::command]
+pub async fn seed_record(running: tauri::State<'_, Running>) -> Result<Option<String>, ()> {
+    let Some(where_it_listens) = running.where_it_listens.lock().await.clone() else {
+        return Ok(None);
+    };
     let held = running.held.read().await;
-    let serving = held.as_ref().ok_or("no_network")?;
-    let now = running.now();
-    serving
-        .node()
-        .write()
+    let Some(serving) = held.as_ref() else {
+        return Ok(None);
+    };
+    let facts = serving.node().read().await.facts();
+    let (Some(peer), Some(network)) = (facts.peer, facts.network) else {
+        return Ok(None);
+    };
+    let Some(port) = where_it_listens.port() else {
+        return Ok(None);
+    };
+
+    // Composed below the interface, so that the terminal and this window hand whoever keeps the
+    // zone the very same record. What the interface adds is a button.
+    Ok(Some(almena_mesh::seed_record(
+        &peer,
+        &network,
+        port,
+        running
+            .serving_at
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|origin| origin.rsplit(':').next()?.parse().ok()),
+        &where_it_listens.all(),
+    )))
+}
+
+/// How much record traffic has crossed this node, or nothing where there is no mesh.
+///
+/// **Record traffic and not every byte on the wire**, which is what the counters count: the acts,
+/// the pages and the roots this node asked for and answered with. The handshake, the identify
+/// exchange, the pings and anything a relay carries for somebody else are outside it — counting
+/// those would mean wrapping the transport, and one figure mixing *what this node moved* with
+/// *what its sockets cost* would answer neither question.
+///
+/// **Totals since this node came up, and never a rate.** A rate is two of these a moment apart,
+/// and how far apart is a decision for whoever is drawing it. `None` is a node with no place on
+/// the mesh: nothing has crossed because there is nothing for it to cross.
+#[tauri::command]
+pub async fn crossed(running: tauri::State<'_, Running>) -> Result<Option<Crossed>, ()> {
+    Ok(running
+        .crossed
+        .lock()
         .await
-        .close_itself(now)
-        .then_some(())
-        .ok_or("not_written_down")
+        .as_ref()
+        .map(|crossed| Crossed {
+            taken: crossed.taken(),
+            given: crossed.given(),
+        }))
+}
+
+/// How many bytes this node is keeping on disk, or nothing where there is no node.
+///
+/// **What it costs to be this node**, which is the one figure about a node that a person running
+/// one on their own machine actually wants: the key, the record, the roots and the entries, as
+/// they are on disk right now. Measured rather than remembered — a stored figure would be wrong
+/// the moment an epoch closed — and it is a walk of one directory, which holds a handful of files.
+///
+/// `None` is a node with no directory, which is not a size of nought: nothing was measured.
+#[tauri::command]
+pub async fn stored(
+    app: tauri::AppHandle,
+    running: tauri::State<'_, Running>,
+) -> Result<Option<u64>, ()> {
+    let Some(which) = *running.which.lock().await else {
+        return Ok(None);
+    };
+    let Ok(directory) = directory_of(&app, which) else {
+        return Ok(None);
+    };
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return Ok(None);
+    };
+    // Flat on purpose: a node's directory is a key, a lock and three record files, and a walk that
+    // recursed would be describing a shape this node does not have.
+    Ok(Some(
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.metadata().ok())
+            .filter(std::fs::Metadata::is_file)
+            .map(|metadata| metadata.len())
+            .sum(),
+    ))
 }
 
 /// Where this node serves its interface, or nothing where it serves none.
@@ -1416,39 +1950,51 @@ const COMMANDS: &[(&str, &[almena_node::facade::Capability])] = {
     &[
         ("node_facts", &[Capability::Watch]),
         ("interface_at", &[Capability::Watch]),
+        // What this node is doing is *seeing what this node is*, which is the capability the
+        // terminal draws as its own status. No row of its own in the table: a second capability
+        // for the same question would be a second answer to it.
+        ("node_state", &[Capability::Watch]),
+        // Who this node is talking to and what it keeps on disk are both *seeing what this
+        // node is*, which is the one capability the terminal draws as its own status. No
+        // rows of their own: a second capability for the same question would be a second
+        // answer to it.
+        ("peers_connected", &[Capability::Watch]),
+        ("stored", &[Capability::Watch]),
+        ("crossed", &[Capability::Watch]),
+        ("seed_record", &[Capability::SayHowToFindMe]),
+        // A start takes the mesh place and opens the door by itself, which is the same two
+        // capabilities the terminal takes as flags. **They reach the window only this way now** —
+        // there is no control that takes a port or an address — so the window offers them without
+        // ever asking anybody about them, which is what the rows in the table say.
+        ("come_up", &[Capability::JoinTheMesh, Capability::Serve]),
+        // The one press on the first screen. It joins production and names no zone and no seed,
+        // which is why `WhereToLook` is no longer on this row: the window has nowhere to say
+        // where to look any more, and a row claiming otherwise would be this table lying.
+        ("join_a_network", &[Capability::JoinNetwork]),
+        // Development alone, and refused for production on the argument itself. The one
+        // press a start makes falls through to it where the development zone names nobody,
+        // which is what a network opened as often as it needs to be is for.
+        ("open_a_network", &[Capability::OpenNetwork]),
         (
-            "open_a_network",
+            "come_back",
             &[
-                Capability::OpenNetwork,
-                Capability::WhereToLook,
-                Capability::NobodyIsThere,
+                Capability::ComeBack,
+                // A start is the whole of coming up, and the mesh and the interface are part of
+                // it. Named here because this table is what the window really offers, and a
+                // command that quietly does a third thing is exactly what it exists to catch.
+                Capability::JoinTheMesh,
+                Capability::Serve,
             ],
         ),
-        ("freeze_checklist", &[Capability::FreezeChecklist]),
-        (
-            "join_a_network",
-            &[Capability::JoinNetwork, Capability::WhereToLook],
-        ),
-        ("come_back", &[Capability::ComeBack]),
-        (
-            "serve_interface",
-            &[Capability::Serve, Capability::Certificate],
-        ),
-        ("close_epoch", &[Capability::CloseEpoch]),
-        (
-            "join_the_mesh",
-            &[Capability::JoinTheMesh, Capability::Mediator],
-        ),
-        ("who_contributed_me", &[Capability::SayWhoContributedIt]),
-        ("contributed_by", &[Capability::SayWhoContributedIt]),
-        ("contributed_by_nobody", &[Capability::SayWhoContributedIt]),
-        ("close_this_node", &[Capability::CloseThisNode]),
+        // Not operating a node — the opposite, and the only thing in this application a person
+        // cannot get out of any other way. It is in Settings.
+        ("erase_this_node", &[Capability::EraseThisNode]),
     ]
 };
 
 #[cfg(test)]
 mod tests {
-    use super::{COMMANDS, Facts, Running};
+    use super::{COMMANDS, Facts, Phase, Running, state_of, stopping};
 
     /// The wall clock's seconds since the Unix epoch, for a network that began just now.
     fn just_now() -> u64 {
@@ -1495,6 +2041,153 @@ mod tests {
             almena_node::Epoch::GENESIS,
             "an absent file is nought, and a clock handed out reads the same file"
         );
+    }
+
+    #[tokio::test]
+    async fn a_node_that_never_started_is_stopped_and_nothing_else() {
+        // Stopped is a state and not a failure, and it is what a directory holding no record
+        // answers. Nothing on it is invented: no network, no mesh, no door, and a peer count
+        // nobody took stays absent rather than becoming a nought.
+        let state = state_of(&Running::default()).await;
+        assert_eq!(state.state, "stopped");
+        assert_eq!(state.failing, None);
+        assert_eq!(state.which, None);
+        assert!(!state.mesh);
+        assert!(!state.serving);
+        assert_eq!(state.peers, None, "nobody counted, which is not nought");
+    }
+
+    #[tokio::test]
+    async fn a_start_that_went_wrong_says_which_thing_by_its_identifier() {
+        // The whole point of carrying the reason: *something is wrong* is not something anybody
+        // can act on, and the word has to be the same word two operators comparing notes see.
+        let running = Running::default();
+        running.now_at(Phase::Failing("mesh_address_unavailable"));
+        let state = state_of(&running).await;
+        assert_eq!(state.state, "failing");
+        assert_eq!(state.failing, Some("mesh_address_unavailable"));
+    }
+
+    #[test]
+    fn the_four_states_are_the_four_and_only_failing_carries_a_reason() {
+        // Four words, because the badge that draws them has four tones and no fifth. A state
+        // added here without one is a state nothing can draw.
+        assert_eq!(Phase::Stopped.worded(), "stopped");
+        assert_eq!(Phase::Starting.worded(), "starting");
+        assert_eq!(Phase::Running.worded(), "running");
+        assert_eq!(Phase::Failing("no_transport").worded(), "failing");
+        assert_eq!(Phase::Stopped.failing(), None);
+        assert_eq!(Phase::Starting.failing(), None);
+        assert_eq!(Phase::Running.failing(), None);
+        assert_eq!(
+            Phase::Failing("no_transport").failing(),
+            Some("no_transport")
+        );
+    }
+
+    #[tokio::test]
+    async fn what_crosses_to_the_webview_says_the_state_the_same_way_every_time() {
+        // The interface reads these keys by name, and `failing` has to arrive as `null` rather
+        // than as a missing key or an empty string: absent is a state.
+        let json = serde_json::to_string(&state_of(&Running::default()).await).expect("serialises");
+        assert_eq!(
+            json,
+            r#"{"state":"stopped","failing":null,"which":null,"mesh":false,"serving":false,"peers":null}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn stopping_lets_go_of_the_directory_so_the_next_process_can_be_this_node() {
+        // What ending the application has to achieve, and the one part of it a test can hold:
+        // the lock is the open file, so a directory this process can hold again is a directory
+        // it let go of. A second hold while the first is alive is what proves the test is real.
+        let directory = std::env::temp_dir().join("almena-app-node-stopping");
+        std::fs::create_dir_all(&directory).expect("made");
+        let holding = almena_node::directory::hold(&directory).expect("held");
+        assert!(
+            almena_node::directory::hold(&directory).is_err(),
+            "a directory somebody holds cannot be held twice"
+        );
+
+        let running = Running::default();
+        *running.held_directory.lock().await = Some(holding);
+        *running.which.lock().await = Some(almena_node::Which::Development);
+        *running.serving_at.lock().await = Some("https://127.0.0.1:8791".to_owned());
+        running.now_at(Phase::Running);
+        // A task standing in for the three a running node keeps: what matters is that stopping
+        // ends it rather than leaving it to be taken away with the process.
+        let forever = tokio::spawn(async { std::future::pending::<()>().await });
+        running.tasks.lock().await.serving = Some(forever);
+
+        stopping(&running).await;
+
+        assert!(
+            almena_node::directory::hold(&directory).is_ok(),
+            "stopping did not let go of the directory"
+        );
+        let state = state_of(&running).await;
+        assert_eq!(state.state, "stopped");
+        assert_eq!(state.which, None);
+        assert!(!state.serving, "the door is shut");
+        assert!(
+            running.tasks.lock().await.serving.is_none(),
+            "nothing is left holding a task nobody will ask to stop again"
+        );
+    }
+
+    #[tokio::test]
+    async fn erasing_takes_the_directory_away_and_lets_go_of_it_first() {
+        // The two halves that matter and that a test can hold without a Tauri app handle: the
+        // files go, and the lock is let go before they do — a directory this process is still
+        // standing in is one `remove_dir_all` fails on where the platform says so, and one that
+        // comes back held where it does not.
+        let directory = std::env::temp_dir().join("almena-app-node-erasing");
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("made");
+        std::fs::write(directory.join("identity.key"), b"not really a key").expect("written");
+        let holding = almena_node::directory::hold(&directory).expect("held");
+
+        let running = Running::default();
+        *running.held_directory.lock().await = Some(holding);
+        *running.which.lock().await = Some(almena_node::Which::Development);
+        running.now_at(Phase::Running);
+
+        // What the command does between announcing and deleting, which is the part under test.
+        stopping(&running).await;
+        std::fs::remove_dir_all(&directory).expect("the directory was let go before deleting");
+
+        assert!(
+            !directory.exists(),
+            "the key, the record and the roots are what erasing takes away"
+        );
+        assert_eq!(state_of(&running).await.state, "stopped");
+        assert_eq!(
+            state_of(&running).await.which,
+            None,
+            "nothing is left saying which network a node that is gone was on"
+        );
+    }
+
+    #[test]
+    fn erasing_a_directory_that_is_already_gone_is_the_state_being_asked_for() {
+        // A node erased twice, or one whose directory somebody removed by hand, must not be a
+        // refusal: the state asked for is *this machine is not a node*, and it is already true.
+        let directory = std::env::temp_dir().join("almena-app-node-never-there");
+        let _ = std::fs::remove_dir_all(&directory);
+        assert_eq!(
+            std::fs::remove_dir_all(&directory).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound,
+            "the case the command reads as success rather than as a failure to reach it"
+        );
+    }
+
+    #[tokio::test]
+    async fn stopping_a_node_that_never_came_up_is_nothing() {
+        // Ending the application runs this whether or not there was ever a node — a directory
+        // holding no record reaches `RunEvent::Exit` like any other.
+        let running = Running::default();
+        stopping(&running).await;
+        assert_eq!(state_of(&running).await.state, "stopped");
     }
 
     #[test]

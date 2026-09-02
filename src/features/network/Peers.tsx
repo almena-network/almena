@@ -20,7 +20,7 @@ import PeerList from "@/features/network/PeerList";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import type { NetworkReading } from "@/lib/network";
+import type { NetworkReading, Peer } from "@/lib/network";
 
 /** What the peers card is drawn from. */
 interface PeersProps {
@@ -30,12 +30,14 @@ interface PeersProps {
   lookedAt: Date | null;
   /** Whether a look is in flight, which is when the button cannot be pressed again. */
   looking: boolean;
+  /** Who is connected, `null` where nobody counted, `undefined` before the first look. */
+  peers: Peer[] | null | undefined;
   /** Takes another reading now. */
   onRefresh: () => void;
 }
 
 /** The list of peers, with what keeps it current. */
-function Peers({ reading, lookedAt, looking, onRefresh }: PeersProps) {
+function Peers({ reading, peers, lookedAt, looking, onRefresh }: PeersProps) {
   const { t, i18n } = useTranslation();
 
   return (
@@ -45,7 +47,7 @@ function Peers({ reading, lookedAt, looking, onRefresh }: PeersProps) {
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">
-        <PeerList reading={reading} />
+        <PeerList reading={reading} peers={peers} />
 
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="outline" disabled={looking} onClick={onRefresh}>

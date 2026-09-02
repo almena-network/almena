@@ -1,29 +1,55 @@
 /**
- * What a node with no network is shown: three screens, in the order the decisions come.
+ * What a node with no network is shown: one screen, one press, and then the application.
  *
- * # Why it is a walk and not one card
+ * # There was a walk here, and the choice in it is gone
  *
- * They are not one question. **What this application is** is something to recognise before anything
- * is asked; **which network** is the one decision that cannot be undone; and **who contributed this
- * node** is a claim somebody else signs, on their own device, and which the node works without.
- * Putting them on one screen would put a decision that costs nothing beside one that costs
- * everything, at the same weight.
+ * It asked three things — recognise the product, choose a network, say who contributed this node —
+ * and only the first was a question somebody arriving could answer. **Which network** was the one
+ * decision that could not be undone, and it was being put to a person in their first minute with
+ * the product, before they had anything to judge it by. It is not a question any more: the build
+ * says which, and the next section is how.
  *
- * **Where the zone names nobody, the chosen network is opened rather than joined**, and that
- * happens under the same press. There was a screen between the two that said so first; it is gone
- * because it asked for a decision that had already been taken — which network — and offered no
- * second one.
+ * **Who contributed this node** left with it, and it costs something: a node bound to whoever
+ * contributed it is how that person earns write credit (`SPECS.md §4.7`), and the window no longer
+ * shows the challenge at all. It is written down in the table both faces are held to, and a node
+ * run from this window goes uncredited unless its operator also has a terminal.
  *
- * **Back is always there and never costs anything until the network is chosen.** After that it is
- * gone from the screen it would undo: joining a network is written down, and a control that looked
- * like it could take that back would be lying about what it does.
+ * # Which network, and it is the build that says
  *
- * # What is persisted, and when
+ * **A development build is for the development network; a build somebody was given is for the real
+ * one.** It is the same decision the terminal takes with `--network`, defaulting the same way and
+ * for the same reason: what is in front of whoever is writing the software is not the real network.
+ * Nobody is asked, because it is a property of the binary rather than a preference.
  *
- * There is no *save* button, and the absence is deliberate. The directory is taken, the key is
- * written and the record is replayed **as part of joining** — a button afterwards would be a second
- * place a node can come from, and its failure mode is a node that joined and then was not saved.
- * What the last screen does instead is say what was written and where.
+ * # It opens development, and never production
+ *
+ * A zone that names nobody means there is a network to **open** rather than one to join, and what
+ * happens then depends entirely on which network it is:
+ *
+ * - **Development** is opened as often as it needs to be, so the press falls through and opens one.
+ *   It is what makes a machine with no network able to start at all.
+ * - **Production** is opened once in the history of the platform, not once per machine that started
+ *   while the zone was quiet. So the press does not fall through: it reports that nobody is there
+ *   and the frame says so. Automatic, it would be the accident `SPECS.md §4.5` calls the one that
+ *   costs the most, and an append-only log does not undo it.
+ *
+ * **Neither half of that is enforced here.** The node refuses to open production on the argument
+ * itself, before anything happens, so there is no ordering of events in this file that could reach
+ * it; what this file does is not ask.
+ *
+ * # A press that could not join still ends here
+ *
+ * The frame comes up either way. **A refusal is not a reason to hold somebody on a screen with one
+ * button on it** — the node wrote what went wrong into its own state on the way out
+ * (`join_a_network` and `open_a_network` both do), and the status strip and the Network screen
+ * read a reason out of the same table they read a failed start out of.
+ *
+ * The refusal a shipped build will meet until production is opened is `nobody_is_there`, and it is
+ * the true answer: there is no production network yet, and there will be exactly one, opened once,
+ * deliberately, by whoever opens it — from a terminal, which is the only face that can.
+ *
+ * It is the shape a person already knows from every other node application: the window opens on
+ * what the node is doing, and says so there rather than in front of it.
  */
 
 import { useState } from "react";
@@ -31,44 +57,61 @@ import { useTranslation } from "react-i18next";
 
 import Logo from "@/components/Logo";
 import { Button } from "@/components/ui/button";
-import Claiming from "@/features/onboarding/Claiming";
-import Choosing from "@/features/onboarding/Choosing";
-import type { Which } from "@/lib/network";
+import { networkOfThisBuild } from "@/lib/build";
+import { comeUp, joinANetwork, openADevelopmentNetwork } from "@/lib/network";
 
-/** Where the walk has got to. */
-type Step = "welcome" | "which" | "claim";
-
-/** The walk a node with no network is taken through. */
-function Onboarding({ onJoined }: { onJoined: () => void }) {
+/** The opening screen, and the press that starts the node. */
+function Onboarding({ onStarted }: { onStarted: () => void }) {
   const { t } = useTranslation();
-  const [step, setStep] = useState<Step>("welcome");
-  const [which, setWhich] = useState<Which | null>(null);
+  // The press takes a moment — a zone to ask, a record to pull and replay — so the button says it
+  // is working rather than sitting there looking unpressed.
+  const [starting, setStarting] = useState(false);
+
+  const start = () => {
+    setStarting(true);
+    void (async () => {
+      try {
+        const which = networkOfThisBuild();
+        try {
+          // The zone is that network's own, and nothing here names another.
+          await joinANetwork(which);
+        } catch (why) {
+          // **Nobody there is the other outcome, not a failure — and only on development.** A
+          // development zone naming nobody is a network to open; a production one naming nobody
+          // is a network that does not exist yet, and this is where that difference is kept.
+          if (why !== "nobody_is_there" || which !== "development") throw why;
+          await openADevelopmentNetwork();
+        }
+        // The same call every start after this one makes, so that a first start and every one
+        // after it leave the same node running.
+        await comeUp();
+      } catch {
+        // **Deliberately dropped, and this is the one place it is right to.** The identifier is
+        // already in the node's own state and in the records; catching it to draw it here would
+        // be a second copy of a sentence the frame is about to draw better, beside the controls
+        // that do something about it.
+      }
+      onStarted();
+    })();
+  };
 
   return (
-    <div className="screen">
-      {step === "welcome" && (
-        <div className="flex flex-col items-center gap-6 py-16 text-center">
-          {/* The application's own mark, at the size it is drawn everywhere else. It is here to be
-              recognised, which is a different job from decorating a heading. */}
-          <Logo size={96} />
-          <h1 className="text-2xl font-semibold">{t("onboarding.name")}</h1>
-          <Button onClick={() => setStep("which")}>{t("onboarding.next")}</Button>
-        </div>
-      )}
-
-      {step === "which" && (
-        <Choosing
-          onBack={() => setStep("welcome")}
-          onJoined={(joined) => {
-            setWhich(joined);
-            setStep("claim");
-          }}
-        />
-      )}
-
-      {step === "claim" && which !== null && (
-        <Claiming which={which} onDone={onJoined} />
-      )}
+    /*
+     * The screen takes the whole window and centres what is on it. There is one mark and one
+     * button: a column of two things pinned to the top of a window this tall reads as a page that
+     * failed to load the rest of itself.
+     */
+    <div className="screen h-full">
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 text-center">
+        {/* The application's own mark, larger here than anywhere else and in the identity colour,
+            because this is the one screen where it is the thing being looked at rather than a
+            label beside a title. */}
+        <Logo size={144} color="var(--identity)" />
+        <h1 className="text-2xl font-semibold">{t("onboarding.name")}</h1>
+        <Button disabled={starting} onClick={start}>
+          {starting ? t("onboarding.starting") : t("onboarding.start")}
+        </Button>
+      </div>
     </div>
   );
 }

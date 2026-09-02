@@ -83,6 +83,67 @@ pub fn remember_network(app: &AppHandle, network: &str) {
     }
 }
 
+/// Where the node last came up: the mesh port and the interface address, or nothing for either.
+///
+/// Both together, from one read, because a start reads them together and a file read twice is two
+/// moments. `None` for either is a node that has never come up that way, and the node is what
+/// decides what to do about that — the vocabulary of ports and addresses is not this file's.
+pub fn remembered_place(app: &AppHandle) -> (Option<u16>, Option<String>) {
+    let preferences = read(app);
+    (preferences.mesh, preferences.interface)
+}
+
+/// Write down which mesh port this node took, keeping every other choice as it was.
+pub fn remember_mesh(app: &AppHandle, port: u16) {
+    let mut preferences = read(app);
+    if preferences.mesh == Some(port) {
+        return;
+    }
+    preferences.mesh = Some(port);
+    if let Err(error) = write(app, &preferences) {
+        warn!("mesh_not_remembered reason={error}");
+    } else {
+        info!("mesh_remembered port={port}");
+    }
+}
+
+/// Write down where this node served its interface, keeping every other choice as it was.
+pub fn remember_interface(app: &AppHandle, address: &str) {
+    let mut preferences = read(app);
+    if preferences.interface.as_deref() == Some(address) {
+        return;
+    }
+    preferences.interface = Some(address.to_owned());
+    if let Err(error) = write(app, &preferences) {
+        warn!("interface_not_remembered reason={error}");
+    } else {
+        info!("interface_remembered address={address}");
+    }
+}
+
+/// Forget everything the node wrote down here, and keep everything a person chose.
+///
+/// **The file holds two kinds of thing and only one of them is being erased.** The palette, the
+/// identity colour, the language and the model are choices about how this application behaves, and
+/// somebody erasing a node did not ask to have their interface put back to how it looked on the
+/// first launch. The network, the mesh port and the interface address are the node's own notes
+/// about itself — the exception this file already draws — and they are exactly what would send the
+/// next launch back to a node that is no longer on disk.
+///
+/// Read-modify-write of the whole file, like everything else here, so that a choice made in
+/// another window between the read and the write is not what gets lost.
+pub fn forget_the_node(app: &AppHandle) {
+    let mut preferences = read(app);
+    preferences.network = None;
+    preferences.mesh = None;
+    preferences.interface = None;
+    if let Err(error) = write(app, &preferences) {
+        warn!("node_not_forgotten reason={error}");
+    } else {
+        info!("node_forgotten");
+    }
+}
+
 /// Where the file is, or nothing when the platform will not say.
 ///
 /// A failure here is not worth ending anything over: an application that cannot find its

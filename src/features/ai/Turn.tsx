@@ -41,8 +41,16 @@ function Turn({ said }: TurnProps) {
 
         {/* The one place in this application that draws prose somebody else wrote. It is
             whitespace-preserving because an answer arrives with its own line breaks in it,
-            and it is never markup: what a model wrote is text. */}
-        <ItemDescription className="whitespace-pre-wrap">{said.content}</ItemDescription>
+            and it is never markup: what a model wrote is text.
+
+            And it breaks inside a word, which those two do not do by themselves: an answer
+            with a long address in it is an answer with one word in it that no line may be
+            broken at, and a hundred and twenty characters of it took the whole screen
+            sideways — 991 points of text in a 300-point column, measured. Nothing here
+            chooses what an answer contains, so nothing here may assume it has spaces. */}
+        <ItemDescription className="whitespace-pre-wrap break-words">
+          {said.content}
+        </ItemDescription>
       </ItemContent>
     </Item>
   );

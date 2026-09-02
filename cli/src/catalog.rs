@@ -55,7 +55,7 @@ impl Catalog {
     /// ```
     /// use almena_cli::{catalog::Catalog, language::Language};
     ///
-    /// assert_eq!(Catalog::of(Language::source()).text("app.name"), "Almena");
+    /// assert_eq!(Catalog::of(Language::source()).text("app.name"), "Almena Node");
     /// ```
     #[must_use]
     pub fn text(&self, key: &str) -> String {
@@ -100,10 +100,13 @@ mod tests {
     fn both_catalogs_parse_and_answer() {
         // If either file stopped being the JSON shape every catalog shares, this is where it
         // would say so rather than at the moment somebody ran the program.
-        assert_eq!(Catalog::of(Language::source()).text("app.name"), "Almena");
+        assert_eq!(
+            Catalog::of(Language::source()).text("app.name"),
+            "Almena Node"
+        );
         assert_eq!(
             Catalog::of(Language::from_tag("es")).text("app.name"),
-            "Almena"
+            "Almena Node"
         );
     }
 

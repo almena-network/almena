@@ -1,78 +1,130 @@
 /**
- * The first screen: what this application is, and what it can honestly say today.
+ * The first screen: whether this node is on the network, and what it is called there.
  *
- * **It is a dashboard now, because there is something to report.** A node joins a network by
- * itself and this is where what came of that is said: which network it is on, what it is called
- * there, how much of the record it holds and the root over it. What it draws is what the node
- * answered — `null` stays absent rather than becoming a nought, because a count nobody took and a
- * count that came back nought are different things and only one of them is a measurement.
+ * # The shape is a status page, not a grid of cards
  *
- * A node with no network never reaches this screen: it is offered the one decision that has to be
- * taken first instead.
+ * It reads the way a node application reads everywhere: **one line saying whether it is connected**,
+ * a line of two figures under it, and a short block of names. Somebody opening the window is asking
+ * one question — *is it up* — and a grid of equal cards answers it in the same voice it answers
+ * everything else, which is to say it does not answer it at all. So the state is a heading, at
+ * heading size, and the names are a definition list under it.
  *
- * The second card is the other half of the same honesty. Notifications are something this
- * build can genuinely do, on all three platforms, so the screen says so and lets a person try
- * it — a capability that works, not a figure standing in for one that does not.
+ * # Only what the node measured
  *
- * It titles itself the way every section of one screen does. It carried the mark and the
- * product's name instead, once — the head of the first screen was one of the two places the
- * mark wore the identity colour — and that moved to the head of the navigation, where it is
- * bigger and where a person meets it before they meet any screen. What it costs is stated
- * rather than discovered: the navigation's head is drawn in the expanded shape alone, so below
- * 600 the mark now appears only in the status strip, in the strip's own faint grey.
+ * The two figures are **what it keeps on disk** and **how many peers it is connected to**, and both
+ * come from the node. Neither is drawn where it was not measured: a node with no directory has not
+ * been weighed, a node with no place on the mesh has counted nobody, and a nought in either place
+ * would be a measurement claimed rather than taken.
+ *
+ * **The traffic under them is record traffic and says so.** The mesh counts the bytes of the acts,
+ * the pages and the roots this node asked for and answered with, which is the whole reason it
+ * exists; the handshake, the identify exchange, the pings and whatever a relay carries for
+ * somebody else are outside it. One figure mixing *what this node moved* with *what its sockets
+ * cost* would answer neither question, so the chart is labelled as what it counts.
  */
 
 import { useTranslation } from "react-i18next";
 
-import CardGrid from "@/components/CardGrid";
+import Copyable from "@/components/Copyable";
+import { Card, CardContent } from "@/components/ui/card";
+import Traffic from "@/features/home/Traffic";
 import { useNetwork } from "@/hooks/useNetwork";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import NotifyButton from "@/features/home/NotifyButton";
+import { inBytes } from "@/lib/sizes";
+
+/** What this build is. Vite replaces it at build time from `package.json`. */
+const VERSION = __APP_VERSION__;
 
 /** The application's first screen. */
 function Home() {
-  const { t } = useTranslation();
-  const { reading } = useNetwork();
+  const { t, i18n } = useTranslation();
+  const { reading, state } = useNetwork();
 
-  /** One fact, or the mark that says the node did not give one. */
-  const fact = (what: string, said: string | null) => (
-    <Card key={what}>
-      <CardHeader>
-        <CardTitle>{what}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="font-mono text-sm break-all">{said ?? "—"}</p>
-      </CardContent>
-    </Card>
+  /** Which of the four sentences the heading is, or nothing before the first look. */
+  const heading = state === null ? null : t(`home.state.${state.state}`);
+
+  /**
+   * One name, with the button that puts the whole of it on the clipboard.
+   *
+   * A definition list rather than cards: these are labels and values, they are read down the left
+   * edge, and the shortest of them is a version. `—` keeps saying in words what it means, because
+   * a dash on its own tells a screen reader nothing about the difference between none and nobody
+   * looked.
+   */
+  const named = (label: string, said: string | null, copyable = true) => (
+    <div key={label} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-1.5">
+      <dt className="text-muted-foreground w-28 shrink-0 text-xs tracking-wide uppercase">
+        {label}
+      </dt>
+      <dd className="min-w-0 flex-1 font-mono text-sm">
+        {said === null ? (
+          <span className="text-faint">
+            <span aria-hidden="true">—</span>
+            <span className="sr-only">{t("control.unmeasured")}</span>
+          </span>
+        ) : copyable ? (
+          <Copyable value={said} what={label} className="text-sm" />
+        ) : (
+          <span className="break-all">{said}</span>
+        )}
+      </dd>
+    </div>
   );
 
   return (
     <div className="screen">
-      <h1 className="screen__title">{t("section.home")}</h1>
+      <Card>
+        <CardContent className="flex flex-col gap-6">
+          <div className="flex flex-col gap-2">
+            {/* The one question this screen answers, at the size of an answer. Nothing at all
+                until the first look has come back: a heading saying *not connected* over a node
+                that is starting would be an assertion nobody made. */}
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {heading ?? t("home.state.looking")}
+            </h1>
 
-      <CardGrid>
-        {fact(t("home.on.network"), reading?.network ?? null)}
-        {fact(t("home.on.identity"), reading?.identity ?? null)}
-        {fact(
-          t("home.on.written"),
-          reading?.written == null ? null : String(reading.written),
-        )}
-        {fact(t("home.on.root"), reading?.root ?? null)}
+            {/* What went wrong, where something did. Never a sentence from the node: the
+                identifier travels and the reading happens on the Network screen, which is where
+                the rest of what it means is. */}
+            {state?.failing != null && (
+              <p className="text-destructive text-sm">{t("home.wrong")}</p>
+            )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("home.notify.heading")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <NotifyButton />
-          </CardContent>
-        </Card>
-      </CardGrid>
+            {/* The two figures, on one line, in the order somebody asks them: what this costs me,
+                and who it is talking to. Each is absent where it was not measured. */}
+            <p className="text-muted-foreground text-sm">
+              {reading?.stored == null
+                ? t("home.keeping.unmeasured")
+                : t("home.keeping.said", { size: inBytes(reading.stored, i18n.language) })}
+              {" — "}
+              {reading?.peers == null
+                ? t("home.peers.unmeasured")
+                : t("home.peers.said", { count: reading.peers })}
+            </p>
+          </div>
+
+          <dl className="flex flex-col divide-y divide-border-soft">
+            {named(t("home.on.network"), reading?.network ?? null)}
+            {named(t("home.on.identity"), reading?.identity ?? null)}
+            {/* **It is the public key**, and the label says so rather than making somebody work it
+                out. The `PeerId` libp2p answers to *is* this node's Ed25519 public key with a
+                prefix in front of it — not a hash of it (`SPECS.md §4.5`) — which is what lets a
+                newcomer check it against the mesh handshake and against the certificate before it
+                has any record to look anything up in.
+
+                The row above it is the same key again, as the DID the record knows it by. Two
+                encodings of one key is not two facts, and neither is dropped: one is what somebody
+                pastes into a zone, the other is what they search the record for. */}
+            {named(t("home.on.peer"), reading?.peer ?? null)}
+            {/* The one row that is about this program rather than about the node, which is why it
+                is last and why nobody copies it. */}
+            {named(t("home.on.agent"), `almena ${VERSION}`, false)}
+          </dl>
+
+          {/* Last, because it is the one thing here that is not a fact but a shape: the figures
+              above are true the moment they are read, and this is a few minutes of them. */}
+          <Traffic />
+        </CardContent>
+      </Card>
     </div>
   );
 }

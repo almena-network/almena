@@ -102,7 +102,11 @@ function Model() {
           </Select>
         </Field>
 
-        <FieldDescription>
+        {/* `break-words` because the name in this sentence is the one thing on the card that
+            this build did not choose: it is whatever the running agent called itself, and a
+            name with nothing in it a line may break at took the whole screen sideways at 400
+            points. The list below is ours and is short; this is not. */}
+        <FieldDescription className="break-words">
           {running === null
             ? t("settings.model.inForceNone")
             : t("settings.model.inForce", { model: running })}

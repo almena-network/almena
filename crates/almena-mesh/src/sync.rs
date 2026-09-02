@@ -280,12 +280,70 @@ impl Said {
 /// length arriving from somewhere else cannot ask for an allocation the size of the machine.
 const LARGEST: u64 = 8 * 1024 * 1024;
 
+/// How many bytes of record traffic have crossed this node, each way.
+///
+/// **Record traffic, and it says so.** What it counts is the acts, the pages and the roots this
+/// node asked for and answered with — the whole reason the mesh exists — and not every byte on the
+/// wire: the handshake, the identify exchange, the pings and whatever a relay carries for somebody
+/// else are all outside it. Counting those would mean wrapping the transport, and a figure that
+/// mixed *what this node moved* with *what its sockets cost* would answer neither question.
+///
+/// Two counters and nothing else. No history is kept here: a rate is somebody sampling this twice
+/// and taking the difference, and where that happens is a decision for whoever is drawing it, not
+/// a shape to force on every reader.
+///
+/// Cloning it clones the handle: every copy counts into the same pair.
+#[derive(Debug, Clone, Default)]
+pub struct Crossed(std::sync::Arc<Counters>);
+
+/// The pair itself. Relaxed throughout: two counters that are read a moment apart are a rate, and
+/// nothing anywhere depends on them being consistent with each other or with anything else.
+#[derive(Debug, Default)]
+struct Counters {
+    taken: std::sync::atomic::AtomicU64,
+    given: std::sync::atomic::AtomicU64,
+}
+
+impl Crossed {
+    /// Bytes of record traffic read off the wire since this node came up.
+    #[must_use]
+    pub fn taken(&self) -> u64 {
+        self.0.taken.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Bytes of record traffic written to the wire since this node came up.
+    #[must_use]
+    pub fn given(&self) -> u64 {
+        self.0.given.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Count what was read.
+    fn took(&self, bytes: usize) {
+        self.0
+            .taken
+            .fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Count what was written.
+    fn gave(&self, bytes: usize) {
+        self.0
+            .given
+            .fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Reading and writing the two messages, length first.
 ///
 /// The length has to be on the wire because a stream has no edges: without it a reader cannot tell
 /// where one message stops, and a message that ran into the next would be neither.
+///
+/// **It carries the counters**, because this is the one place every byte of record traffic passes
+/// through in both directions. A counter anywhere else would be a second count of the same thing.
 #[derive(Debug, Clone, Default)]
-pub struct Talking;
+pub struct Talking {
+    /// What has crossed, counted as it crosses.
+    pub crossed: Crossed,
+}
 
 #[async_trait::async_trait]
 impl libp2p::request_response::Codec for Talking {
@@ -298,6 +356,7 @@ impl libp2p::request_response::Codec for Talking {
         T: futures::AsyncRead + Unpin + Send,
     {
         let bytes = framed(io).await?;
+        self.crossed.took(bytes.len());
         Ask::read(&bytes).map_err(|_| std::io::Error::other("not a question this build reads"))
     }
 
@@ -306,6 +365,7 @@ impl libp2p::request_response::Codec for Talking {
         T: futures::AsyncRead + Unpin + Send,
     {
         let bytes = framed(io).await?;
+        self.crossed.took(bytes.len());
         Said::read(&bytes).map_err(|_| std::io::Error::other("not an answer this build reads"))
     }
 
@@ -318,7 +378,9 @@ impl libp2p::request_response::Codec for Talking {
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
-        frame(io, &ask.to_bytes()).await
+        let bytes = ask.to_bytes();
+        self.crossed.gave(bytes.len());
+        frame(io, &bytes).await
     }
 
     async fn write_response<T>(
@@ -330,7 +392,9 @@ impl libp2p::request_response::Codec for Talking {
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
-        frame(io, &said.to_bytes()).await
+        let bytes = said.to_bytes();
+        self.crossed.gave(bytes.len());
+        frame(io, &bytes).await
     }
 }
 

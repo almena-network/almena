@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use log::{error, info};
+use log::{error, info, warn};
 
 use crate::IDENTIFIER;
 use crate::clock::Offset;
@@ -262,6 +262,11 @@ pub enum Opening {
     GovernmentKeyNotKept,
     /// This node did not open the network, so it holds no government key to act with.
     NoGovernmentKey,
+    /// The directory would not go: somebody else has it open, or this process may not write there.
+    ///
+    /// The node is left whole rather than half erased. Half of a directory is a node that cannot
+    /// be read and cannot be left, which is worse than the one that would not go.
+    NotErased,
     /// The record would not take the government's act, for the reason named.
     ///
     /// Carried as the store's own word, because a ceremony's refusal is worth reading exactly:
@@ -466,6 +471,12 @@ pub struct Node {
     /// nothing else holds it. [`None`] until there is a mesh to count over — and that is *nobody
     /// counted*, which a zero would misreport.
     peers: Option<almena_mesh::Peers>,
+    /// Where this node listens, once it has a place on the mesh.
+    ///
+    /// Taken off the socket beside the peers, and for the same reason: afterwards the socket has
+    /// been handed to whatever keeps the mesh up. Reported and never written down — what a node
+    /// says about where it is stays its operator's decision (§17.18).
+    where_it_listens: Option<almena_mesh::Addresses>,
     /// The address the interface was asked to serve on, once it was.
     ///
     /// Kept because nothing else knows it: it is the caller's, and the one half of the link a
@@ -520,6 +531,7 @@ impl Node {
             runtime: None,
             timekeeping: None,
             peers: None,
+            where_it_listens: None,
             interface: None,
             challenge: None,
         }
@@ -1027,6 +1039,7 @@ impl Node {
         // Taken before the socket goes: afterwards nothing else holds it, and a frame that wanted a
         // peer count would have nobody to ask.
         self.peers = Some(listening.peers());
+        self.where_it_listens = Some(listening.where_it_listens());
 
         let seeds = self.dialling.clone();
         let node = std::sync::Arc::clone(serving.node());
@@ -1150,6 +1163,27 @@ impl Node {
         let address = self.interface.as_deref()?;
         let peer = self.facts().peer?;
         Some(format!("almena://node?address={address}&peer={peer}"))
+    }
+
+    /// What a zone would have to carry for this node to be a seed, or nothing where it has no
+    /// place on the mesh.
+    ///
+    /// **Not publishing**, and it is composed below this face: the record's shape is the
+    /// platform's, and a face that wrote its own would be a second implementation of a format
+    /// newcomers verify against.
+    #[must_use]
+    pub fn seed_record(&self) -> Option<String> {
+        let where_it_listens = self.where_it_listens.as_ref()?;
+        let facts = self.facts();
+        Some(almena_mesh::seed_record(
+            &facts.peer?,
+            &facts.network?,
+            where_it_listens.port()?,
+            self.interface
+                .as_deref()
+                .and_then(|at| at.rsplit(':').next()?.parse().ok()),
+            &where_it_listens.all(),
+        ))
     }
 
     /// The challenge shown this run, if one was asked for.
@@ -1388,6 +1422,73 @@ impl Node {
             .ok_or(Opening::NotWrittenDown)
     }
 
+    /// Erase this node from this machine, and leave a machine that is not a node.
+    ///
+    /// **The network is told first, while there is still a node to tell it with**, and then the
+    /// directory goes: the key, the acts, the roots and the lock. Once the files are gone there is
+    /// no key to sign a close with and nothing to append it to, so the order is not a preference.
+    ///
+    /// **It does not refuse over a node that is down.** A way out that needs a working node is not
+    /// a way out, and the person most likely to want this is the one whose node will not come up —
+    /// so a close that could not be said is logged and the erase goes on. What that costs is a node
+    /// the record's observers find silent instead of one that said it was leaving.
+    ///
+    /// A directory that is already gone is the state being asked for and not a failure to reach it.
+    ///
+    /// # What goes with it that nobody asked about
+    ///
+    /// **The government key, on the one machine that has one.** A node that opened its network keeps
+    /// that network's government key beside its record, and the directory is what this takes away — so
+    /// erasing the machine that opened a network is also giving up the ability to publish its core or
+    /// certify anybody on it, for ever. It is said rather than refused: a way out that some machines
+    /// cannot take is not a way out, and the machine that opened the network is not the one this
+    /// should be hardest for. What it must not be is silent, so it is logged when it happens.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening::NoDirectory`] where the platform will not say where this node lives, and
+    /// [`Opening::NotErased`] where the directory would not go.
+    pub fn erase_this_node(&mut self) -> Result<(), Opening> {
+        match (self.holds.as_ref(), self.now()) {
+            (Some(serving), Some(now)) => {
+                if serving.node().blocking_write().close_itself(now) {
+                    info!("node_closed_before_erasing");
+                } else {
+                    warn!("node_not_closed_before_erasing reason=not_written_down");
+                }
+            }
+            _ => warn!("node_not_closed_before_erasing reason=no_network"),
+        }
+
+        let directory = self.application_data().map_err(|_| Opening::NoDirectory)?;
+
+        // Let go before deleting. The lock is the open file, so dropping it is what makes the
+        // directory something this process may take away rather than something it is standing in.
+        self.holds = None;
+        self.runtime = None;
+        drop(self.held.take());
+
+        // Said before it goes, because afterwards there is nothing to read it off.
+        if almena_node::government::load(&directory).is_ok() {
+            warn!("erasing_the_government_key path={}", directory.display());
+        }
+
+        match std::fs::remove_dir_all(&directory) {
+            Ok(()) => info!("node_erased path={}", directory.display()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                info!("node_erased_already_gone path={}", directory.display());
+            }
+            Err(error) => {
+                error!(
+                    "node_not_erased path={} reason={error}",
+                    directory.display()
+                );
+                return Err(Opening::NotErased);
+            }
+        }
+        Ok(())
+    }
+
     /// Takes the node down, saying so.
     pub fn stop(self) {
         info!("node_stopped");
@@ -1434,6 +1535,41 @@ mod tests {
             intent,
             nobody_is_there: true,
         }
+    }
+
+    #[test]
+    fn erasing_takes_the_directory_away_and_needs_no_network_to_do_it() {
+        // **The promise this exists for.** A node that never came up, or one whose record will
+        // not read, still has to be leavable — so erasing is held to working over a node on no
+        // network at all, which is the weakest one there is.
+        let scratch = Scratch::new("erasing");
+        std::fs::create_dir_all(&scratch.0).expect("made");
+        std::fs::write(scratch.0.join("identity.key"), b"not really a key").expect("written");
+        std::fs::write(scratch.0.join("record.acts"), b"not really a record").expect("written");
+
+        let mut node = in_scratch(&scratch);
+        assert!(node.facts().network.is_none(), "on no network, as intended");
+
+        node.erase_this_node()
+            .expect("a node on no network is still erasable");
+        assert!(
+            !scratch.0.exists(),
+            "the key and the record are what erasing takes away"
+        );
+    }
+
+    #[test]
+    fn erasing_a_node_that_is_already_gone_is_not_a_refusal() {
+        // The state being asked for is *this machine is not a node*, and asking twice for a state
+        // that is already true is not a failure to reach it. A refusal here would leave somebody
+        // reading an error over a directory that is exactly as they wanted it.
+        let scratch = Scratch::new("erasing-twice");
+        std::fs::create_dir_all(&scratch.0).expect("made");
+        let mut node = in_scratch(&scratch);
+
+        node.erase_this_node().expect("erased");
+        node.erase_this_node()
+            .expect("and erasing nothing is nothing");
     }
 
     #[test]

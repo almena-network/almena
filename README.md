@@ -122,6 +122,12 @@ Every task installs dependencies first, so a fresh checkout needs only `task dev
 staging the agent: `task dev` and `task build` both run `task agent:stage`, which copies one in
 if there is one built and says so if there is not.
 
+Every port is fixed, and a `dev` task that finds one already answering stops and names the
+process holding it, with the `kill` to type. The window is a node — 1420 for its frontend,
+`127.0.0.1:8791` and mesh `4002` for the node inside it — so a second window is a second node
+asking for ports the first one has. `task dev:cli` checks whatever `API` and `MESH` were set
+to, which is how the second terminal node is told it needs its own.
+
 With no suffix, `dev` and `build` mean the windowed application; the node is always named —
 `dev:cli`, `build:cli`. Both target the computer you are sitting at, which is the only kind of
 machine anything here is built for.
@@ -412,7 +418,20 @@ problem. What is left is `std::env::args` in `src-tauri/src/launch.rs`, which ne
 
 On a computer this application has a tray icon, and having one changes what its window means.
 **Closing the window no longer ends the application**: it puts it away, and the application
-goes on running. It ends from **Quit**, in the tray's own menu, and from nowhere else.
+goes on running — and so does its node. It ends from **Quit**, in the tray's own menu, and from
+nowhere else.
+
+**Ending the application stops the node**, and that is the other half of the same distinction.
+On the way out — `RunEvent::Exit`, before the agent is ended and before the window's geometry is
+written down — the node shuts its interface, leaves the mesh and lets go of its directory, in
+that order: the directory is last because letting go of it is what lets the next process be this
+node, and doing that while any of the rest were still running would be two processes over one
+record. Closing the window does none of it.
+
+The menu says so. Its first entry is **what the node is doing** — one of *stopped*, *starting*,
+*running* or *failing* — and it cannot be pressed, because it is a reading and not a control:
+with the window put away the tray is all that is left on screen, and whether the node is still up
+is the first thing anybody wants from it. Then a way back to the window, and **Quit** last.
 
 There are three ways back to a window that is not on screen, and they are three because no one
 of them works everywhere:
@@ -780,9 +799,41 @@ which makes the *reason* a required prop — "Nothing to show" is not a sentence
 are absent until there is something to say and are read out by arriving.
 
 `src/components/` beside it holds what shadcn/ui has no answer for, built out of the elements
-that it does: `Logo`, `Figure`, `StateBadge`, `Setting`, `CardGrid` and `EmptyState`. Nothing in
-there invents a second way of drawing a surface or a control, and a component that the registry
-turns out to have an element for is deleted in favour of it.
+that it does: `Logo`, `Figure`, `StateBadge`, `Setting`, `CardGrid`, `EmptyState`, `ScreenNav`,
+`Copyable` and `ClaimCode`. Nothing in there invents a second way of drawing a surface or a
+control, and a component that the registry turns out to have an element for is deleted in favour
+of it.
+
+**Nothing in the window can be selected, and everything worth taking out of it leaves by a
+button.** An application is not a document: a drag across a sixty-two character identifier gets
+whatever the gesture happened to cover, so `base.css` turns selection off as an element rule and
+gives it back to fields alone. `Copyable` is what replaces it — the value, and beside it a ghost
+icon button that puts **the whole** value on the clipboard rather than the wrapped lines it is
+drawn as. It is a button and never something that appears under a pointer, because one of the
+platforms is a laptop with a touch screen; its accessible name says *what* it copies rather than
+"copy", because a screen reader hearing "copy" seven times down the Network screen has been told
+nothing; and a clipboard that refuses says so in a sentence, because a control that looks like it
+worked and did not is worse than one that will not. It goes on the network's name, this node's
+identifier, the root, the mesh name, the four addresses the node publishes and the challenge —
+`navigator.clipboard.writeText` and no plugin, since a dependency taken on for one call is a
+dependency this project refuses.
+
+### What every screen is held to
+
+Three rules, and they are checked by looking at every screen at 420, 700 and 1100 points across
+rather than by a test — the frontend has no test runner here yet.
+
+- **No screen scrolls sideways at 400 points and up.** Every value that can be long wraps, and a
+  field beside a button wraps onto two lines rather than pushing the card past the window.
+  `document.body.scrollWidth <= document.body.clientWidth` is the whole of it.
+- **Anything this project draws and a person presses is at least 44 points**, which is what a
+  finger is entitled to on a laptop with a touch screen. It is spent at the call site — the two
+  navigations, a setting's row, a disclosure's summary, the label naming a checkbox, the copy
+  button — because the registry's own button is 36 and it is vendored as it arrived.
+- **No colour is written in place.** Everything comes from `src/styles/tokens.css`; an arbitrary
+  Tailwind value naming a variable this project never defined does not fail loudly, it draws the
+  text colour or nothing at all, and four of them did exactly that on the walk and the Network
+  screen until they were found by looking.
 
 Two of the registry's own answers are deliberately **not** taken. `sidebar` would bring five
 elements no screen draws — `sheet`, `tooltip`, `input`, `skeleton` and a `use-mobile` hook with
@@ -833,10 +884,17 @@ screen: it is pinned rather than scrolled to, it is the same strip whichever sec
 and in the compact shape the floating menu sits above it instead of over it.
 
 It has two groups. The right one holds what does not change while the application runs: whether
-this is a development build, the version, and the licence. **The left one is where what the
-application is doing will go** — which network, how many peers, what it is waiting on — and it
-is empty today rather than filled with something plausible, because a status strip is the worst
-place in an interface to invent a value.
+this is a development build, the version, and the licence. **The left one is what the
+application is doing**: which network the node is on, which of the four states it is in, and how
+many peers it has. Nothing on it is invented — before the first look has come back there is no
+state and none of it is drawn, and a peer count nobody took is a dash rather than a nought.
+
+The strip never wraps and never scrolls, so in the compact shape three of those come off it: the
+network's word, the peer count, and — from the right group — the licence. Below 600 points there
+is no room for all of them without every item becoming an ellipsis, and *what does not fit does
+not go on it* is the rule rather than a squeeze. **The state badge is what always stays**, because
+*is anything wrong* is the question a strip is read for; the network and the peer count are on
+the Network screen, two presses away.
 
 **A development build says so, on that strip, always.** The word *Development* is there whenever
 the binary was built with `debug_assertions` — `task dev`, `task dev:cli`, `task build:debug` —
@@ -851,8 +909,16 @@ A node with no network is shown the walk instead of the application: what this i
 network — the one decision that does not come undone — and who contributed it. **One press puts
 it on a network and makes it a node**: it joins through the zone, or opens where the zone names
 nobody, takes its place on the mesh on port 4002 and serves the interface on `127.0.0.1:8791`
-(both remembered, both changed from the Network screen), and the last screen draws the challenge
-somebody with the client scans. Behind a disclosure on the choosing screen are the things the
+(both remembered by the node itself, both changed from the Network screen), and the last screen
+draws the challenge somebody with the client scans.
+
+**Every start after the first does the same two things**, through the very call that press makes.
+Coming back to the record was once all a launch did, which left a node holding its record,
+answering nobody and serving nothing until somebody went to the Network screen and pressed two
+buttons; now a launch takes the remembered mesh port and serves the remembered address, and
+neither is a decision anybody is asked about. A port somebody else has taken, or an address that
+will not bind, does not stop the application: the node keeps its record, the state says what did
+not happen by its identifier, and the strip, the tray and the Network screen draw it. Behind a disclosure on the choosing screen are the things the
 terminal takes as flags — another zone, a seed by hand, and *nobody is there* for development —
 so the window can be tried against an emulated zone too; the resolver is `ALMENA_RESOLVER=ip:port`
 in the environment while developing, and nothing a deployment sets. `ALMENA_CLOCK_OFFSET_FILE`
@@ -873,7 +939,12 @@ no breakpoint of their own.
 
 Network carries **two screens**: what is known about the network this node is on — the figures,
 what it publishes including the `almena://node?address=…&peer=…` link a client reads, and the
-controls — and the peers it is connected to. AI carries two as well — the conversation, and the
+controls — and the peers it is connected to. **The controls stopped being the way a node is
+brought up.** That card leads with what the node is doing and with the one press that brings it
+back up, and folds everything else away behind a disclosure as what an operator reaches for when
+the automatic path is not what they want. Nothing was taken out of it: neither face of the node
+may be able to do something the other cannot, so every control it ever had it still has, one
+disclosure further down. AI carries two as well — the conversation, and the
 agent itself, which is where its version and the model in force are drawn. A figure nobody has
 measured is a dash: the peer count until the node has taken its place on the mesh, everything
 until it is on a network. What is drawn beside the peer count is *silent*, how many nodes the
@@ -882,12 +953,17 @@ measurement of this node's. The reading is taken every ten seconds and on demand
 button and the time of the last look beside it so that pressing the button does something a
 person can see.
 
-The peer list has **three** ways of holding nothing and says which, because they are three
-different facts: nobody has looked yet, nothing has been counted, or there is a mesh and nobody is
-on the other end of it. What is drawn when there is somebody is the count, because the count is
+The peer list has **four** ways of holding nothing and says which, because they are four
+different facts: nobody has looked yet, there is no network, there is a network and no place on
+the mesh, or there is a mesh and nobody on the other end of it. The middle two were one for a
+while, and the sentence they shared said *this node is on no network* over a node whose figures
+were all filled in and whose strip said *running* — nobody counted is one fact, and why nobody
+counted is the one somebody can act on. The AI screen answers the same question five ways, and
+the fifth is the ordinary one: an agent that is running and has been asked nothing. What is drawn
+when there is somebody is the count, because the count is
 what the mesh hands over — who is connected is a fact about sockets, and which node each one is
 would be a claim the screen has not checked against the record. A screen that shared one sentence
-between the three would be telling a reader the wrong one most of the time —
+between them would be telling a reader the wrong one most of the time —
 [honest-emptiness.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/honest-emptiness.md)
 is the agreement, and it is why `readNetwork` returns `null` rather than nought.
 

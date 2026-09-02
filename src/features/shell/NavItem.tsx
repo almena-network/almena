@@ -47,11 +47,15 @@ function NavItem({ id, icon: Icon, current, onSelect }: NavItemProps) {
       }}
       className={cn(
         // Compact: stacked, and at least the 44 points a finger is entitled to. That number is
-        // defended here rather than inherited, and it is the one place in the interface where
-        // it has to be.
+        // defended here rather than inherited, because the button it is put on is 36.
         "h-auto min-h-11 flex-1 flex-col gap-1 rounded-full px-3 text-xs text-muted-foreground",
-        // Expanded: a row down a sidebar, and no longer stretching to fill it.
-        "expanded:min-h-0 expanded:flex-none expanded:flex-row expanded:justify-start expanded:rounded-md expanded:py-2 expanded:text-sm",
+        // Expanded: a row down a sidebar, and no longer stretching to fill it — but still 44
+        // points tall. It dropped the minimum here once, on the reasoning that a wide window is
+        // a window with a pointer in it. That is not one of the things this application knows: a
+        // laptop with a touch screen is a computer like any other and is one of the three
+        // platforms, and it is as wide as any of them. `ScreenNav` says the same in as many
+        // words, and two navigations answering one question two ways is the fault this closes.
+        "expanded:flex-none expanded:flex-row expanded:justify-start expanded:rounded-md expanded:py-2 expanded:text-sm",
         current &&
           "bg-identity-dim text-identity hover:bg-identity-dim hover:text-identity",
       )}

@@ -209,6 +209,37 @@ pub struct Arguments {
     /// name, because one that returned would bring whoever took its key with it.
     #[arg(long)]
     pub close_this_node: bool,
+
+    /// Erase this node from this machine: tell the network, then take its directory away.
+    ///
+    /// **Not a second way of closing.** Closing is what this node says to everybody else and it is
+    /// said for ever; this is what happens to the files afterwards — the key, the acts, the roots
+    /// — and it is the only way back to a machine that is not a node. The next run of either face
+    /// starts from nothing, which is the point.
+    ///
+    /// **It does not need a node that works.** A close is attempted first and its failure does not
+    /// stop the erase: the run most likely to want this is the one whose node will not come up, and
+    /// a way out that needed a working node would not be one. What it costs is a node the record's
+    /// observers find silent rather than one that said it was going.
+    ///
+    /// Runs last, after everything else this run was asked to do, so that `--close-this-node`
+    /// beside it is the close being said before the files it would be written to are taken away.
+    #[arg(long)]
+    pub erase_this_node: bool,
+
+    /// Print what a zone would have to carry for this node to be a seed, and leave.
+    ///
+    /// **Not publishing.** Nothing writes to a zone and nothing asks anybody to: it is the node
+    /// saying the parts of the record only it can produce — the port it actually bound, its own
+    /// public key, and the name of its network — so that an operator asking to be a seed hands
+    /// over something correct instead of assembling it by hand.
+    ///
+    /// **The host name is not among them.** It is the zone keeper's to choose, so it is left as a
+    /// placeholder. And a node knows what it bound rather than what the world can dial, so whoever
+    /// keeps the zone checks the record before publishing it — which is what they have to do
+    /// anyway, because a `_seed` is a commitment newcomers verify against.
+    #[arg(long)]
+    pub seed_record: bool,
     /// Be the node in this directory instead of the usual one.
     ///
     /// **A node is a directory with a key in it**, so this is how a machine runs more than one —
@@ -671,6 +702,8 @@ mod tests {
             ("contributed_by", &[Capability::SayWhoContributedIt]),
             ("contributed_by_nobody", &[Capability::SayWhoContributedIt]),
             ("close_this_node", &[Capability::CloseThisNode]),
+            ("seed_record", &[Capability::SayHowToFindMe]),
+            ("erase_this_node", &[Capability::EraseThisNode]),
             ("directory", &[Capability::Directory]),
             ("seeds", &[Capability::WhereToLook]),
             ("resolvers", &[Capability::WhereToLook]),

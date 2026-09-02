@@ -250,6 +250,80 @@ fn saying_who_contributed_it(arguments: &Arguments, node: &mut Node) -> Result<(
     Ok(())
 }
 
+/// Perform the ceremony this run asked for, and say what code the run leaves with.
+///
+/// The node came up on its record so that the act went through its own admission, and it is taken
+/// down again here: staying up afterwards would be a node started by accident, drawing itself for
+/// nobody.
+fn a_ceremony(arguments: &Arguments, mut node: Node) -> u8 {
+    let code = match governing(arguments, &mut node) {
+        Ok(()) => 0,
+        Err(code) => code,
+    };
+    node.stop();
+    code
+}
+
+/// Print what a zone would have to carry for this node to be a seed.
+///
+/// **A draft and not a publication.** Nothing here writes to a zone or asks anybody to: the host
+/// name is left as a placeholder because it is the zone keeper's to choose, and the addresses are
+/// what this node bound rather than what the world can dial — so whoever keeps the zone checks it
+/// before publishing, which is what a record newcomers verify against requires anyway.
+///
+/// **The addresses are the ones that had arrived.** A listener is granted them one at a time and a
+/// run that asks the moment it has a port may have only the first. It is a draft for a person to
+/// read, so a short list is something they can see and ask again about; a node that waited for an
+/// answer nobody defines as complete would be a run that never ends.
+fn saying_how_to_find_me(node: Node, listening: Option<serve::Listening>) -> u8 {
+    let code = match node.seed_record() {
+        Some(record) => {
+            println!("{record}");
+            0
+        }
+        None => {
+            error!("no_seed_record reason=no_place_on_the_mesh");
+            1
+        }
+    };
+    // Taken down in the order a run ends in: the door, then the node.
+    if let Some(listening) = listening {
+        listening.stop();
+    }
+    node.stop();
+    code
+}
+
+/// Erase this node from this machine, and say what code the run leaves with.
+///
+/// **The network is told and then the files go**, which is the node's own doing; what belongs here
+/// is that a directory which would not go is a failure the run reports rather than one it carries
+/// on past. There is nothing to carry on to: the node is gone, and serving or drawing it would be
+/// this face working over a directory that is not there.
+///
+/// **The run ends here**, like a ceremony and for a sharper reason: what the rest of it would do —
+/// serve, draw itself, wait to be stopped — it would be doing over a directory that is no longer
+/// there. Taking the directory away is also what stops the node, so nothing after this has one
+/// left to stop.
+fn erasing(arguments: &Arguments, mut node: Node) -> u8 {
+    // **Best effort, and its failure is not the end of the run.** The node is brought up so that
+    // it has a chain to sign its own close into — but a node that will not come up is precisely
+    // the node somebody is trying to leave, and refusing here would make the way out depend on
+    // the thing that is broken. What that costs is a close that was never said, which the
+    // record's observers eventually read as a node gone silent.
+    if let Err(code) = bring_up(arguments, &mut node) {
+        warn!("node_did_not_come_up_before_erasing code={code}");
+    }
+
+    match node.erase_this_node() {
+        Ok(()) => 0,
+        Err(why) => {
+            error!("node_not_erased reason={why:?}");
+            1
+        }
+    }
+}
+
 /// Turn the interface on, if this run asked for it.
 ///
 /// Serving runs beside whatever this face is doing, not instead of it. A node that had to stop
@@ -356,6 +430,12 @@ pub fn run() -> u8 {
     let mut node = held(&arguments, destination);
     let mut code = 0;
 
+    // **Before the start, and it does its own.** A run that is going to erase this node must not
+    // be stopped by the node failing to come up: that run is the one this exists for.
+    if arguments.erase_this_node {
+        return erasing(&arguments, node);
+    }
+
     if let Err(code) = bring_up(&arguments, &mut node) {
         return code;
     }
@@ -364,12 +444,7 @@ pub fn run() -> u8 {
     // act went through its own admission; staying up afterwards would be a node started by
     // accident, drawing itself for nobody.
     if arguments.is_a_ceremony() {
-        let code = match governing(&arguments, &mut node) {
-            Ok(()) => 0,
-            Err(code) => code,
-        };
-        node.stop();
-        return code;
+        return a_ceremony(&arguments, node);
     }
 
     if let Err(code) = saying_who_contributed_it(&arguments, &mut node) {
@@ -383,6 +458,13 @@ pub fn run() -> u8 {
             return 1;
         }
     };
+
+    // **Said and then the run ends.** Nothing is opened, joined or written by asking. It comes
+    // after the interface is turned on and not before, so that a run given `--serve` describes the
+    // node it actually is: the `_api` line is what this node is really serving, or absent.
+    if arguments.seed_record {
+        return saying_how_to_find_me(node, listening);
+    }
 
     if writes_records {
         // Nothing to draw and nobody to draw it for: the node is up, and it stays up until the

@@ -60,6 +60,19 @@ pub enum Capability {
     SayWhoContributedIt,
     /// Close this node for good, so that it stops counting.
     CloseThisNode,
+    /// Say what a zone would have to carry for this node to be a seed.
+    ///
+    /// Not publishing — nothing here writes to a zone, and nothing asks anybody to. It is the node
+    /// saying the parts of that record only it can produce, so that an operator asking to be a seed
+    /// hands over something correct instead of assembling it by hand.
+    SayHowToFindMe,
+    /// Erase this node from the machine it is on: tell the network, then take the directory away.
+    ///
+    /// Not a second way of closing. Closing is what a node says to everybody else, and it is said
+    /// for ever; this is what happens to the files afterwards, and it is the only way back to a
+    /// machine that is not a node — which is a thing somebody has to be able to reach when the
+    /// node will not come up at all, because a way out that needs a working node is not one.
+    EraseThisNode,
     /// Be the node in a directory somebody named, instead of the usual one.
     Directory,
     /// Say where to look for the network: another zone, a seed by hand, a resolver by address.
@@ -103,11 +116,17 @@ pub struct Offered {
 }
 
 /// Every capability, and where each one stands.
-pub const FACES: [Offered; 22] = [
+pub const FACES: [Offered; 24] = [
     Offered {
         // Both faces, on the zone's word that there is nobody to join. Development is opened as
         // often as it needs to be; production is opened once, ever, after the freeze checklist,
         // and it is the same act asked of a different zone.
+        // **Both, and the window opens development alone.** Its one press joins the network the
+        // build is for, and falls through to opening only where that is development — which is
+        // opened as often as it needs to be. Production is refused on the argument itself, before
+        // anything happens, so there is no ordering of events that reaches a production network
+        // being opened from a window: that is the accident §4.5 calls the one that costs the most,
+        // and it is a deliberate act at a terminal.
         capability: Capability::OpenNetwork,
         window: true,
         terminal: true,
@@ -127,10 +146,13 @@ pub const FACES: [Offered; 22] = [
         not_yet: "",
     },
     Offered {
+        // It was shown under the production card on the screen that chose a network, so that a
+        // refusal to open one was never the first anybody heard of it. There is no such screen
+        // and no such press, so there is nothing for it to warn about.
         capability: Capability::FreezeChecklist,
-        window: true,
+        window: false,
         terminal: true,
-        not_yet: "",
+        not_yet: "nothing in the window opens a production network, so there is no refusal to warn about",
     },
     Offered {
         capability: Capability::Watch,
@@ -151,10 +173,13 @@ pub const FACES: [Offered; 22] = [
         not_yet: "acts arrive over the interface; a face offering it too waits until one does",
     },
     Offered {
+        // The node closes its own epochs on a timer from the moment it is on a network. The
+        // window had a button for not waiting for it, which is a thing to want while writing
+        // the software and not while running a node.
         capability: Capability::CloseEpoch,
-        window: true,
+        window: false,
         terminal: true,
-        not_yet: "",
+        not_yet: "the node closes its own epochs on a timer; not waiting for it is a developer's want",
     },
     Offered {
         capability: Capability::JoinTheMesh,
@@ -172,16 +197,20 @@ pub const FACES: [Offered; 22] = [
         not_yet: "",
     },
     Offered {
+        // A node serves under its own key, always, and the window never asks about that: a pair
+        // of files is for an operator who already has a certificate from an authority.
         capability: Capability::Certificate,
-        window: true,
+        window: false,
         terminal: true,
-        not_yet: "",
+        not_yet: "the window is a node that starts by itself; operating one by hand is the terminal's",
     },
     Offered {
+        // Holding post for other people is a capacity somebody takes on deliberately, and it is
+        // said in the record. The window takes its mesh place with it off.
         capability: Capability::Mediator,
-        window: true,
+        window: false,
         terminal: true,
-        not_yet: "",
+        not_yet: "the window is a node that starts by itself; operating one by hand is the terminal's",
     },
     Offered {
         capability: Capability::Language,
@@ -193,13 +222,39 @@ pub const FACES: [Offered; 22] = [
         // The node shows a challenge and whoever is claiming it approves it with the key their own
         // chain authorises. Both faces show and both faces record, because an operator who could
         // only do it from a terminal would be an operator who has to have one.
+        // **This one costs something and it is worth saying plainly.** A node bound to whoever
+        // contributed it is how that person earns write credit (§4.7), and the window is where
+        // most people will run a node — so a window that cannot show the challenge is a window
+        // whose nodes go uncredited unless their operator also has a terminal.
         capability: Capability::SayWhoContributedIt,
+        window: false,
+        terminal: true,
+        not_yet: "the window shows no challenge, so a node run from it goes uncredited without a terminal",
+    },
+    Offered {
+        // Both faces. Whoever keeps the zone gets one record whichever face the operator runs, and
+        // a face that composed its own would be a second implementation of a format that is
+        // verified against — a `_seed` with the wrong `net=` points at a network that is not this
+        // one. So the node composes it and the faces only carry it.
+        capability: Capability::SayHowToFindMe,
         window: true,
         terminal: true,
         not_yet: "",
     },
     Offered {
+        // Erasing this node is in the window and says the close for it, so the *act* still
+        // happens from there; what the window no longer has is closing a node and keeping it on
+        // disk, which is an operator taking a node out of the census to look at afterwards.
         capability: Capability::CloseThisNode,
+        window: false,
+        terminal: true,
+        not_yet: "the window closes a node only by erasing it; closing one and keeping it is an operator's",
+    },
+    Offered {
+        // Both faces, and neither of them may refuse it over a node that is down: the machine
+        // this is asked on is the one somebody is holding, and the state it has to be able to
+        // reach — no longer a node — cannot be made to depend on the node working.
+        capability: Capability::EraseThisNode,
         window: true,
         terminal: true,
         not_yet: "",
@@ -218,16 +273,20 @@ pub const FACES: [Offered; 22] = [
         // The terminal takes a zone, seeds and resolvers as flags; the window takes a zone and a
         // pasted seed behind a disclosure on the screen that chooses the network, and reads the
         // resolver from `ALMENA_RESOLVER` while developing. Nothing a deployment sets.
+        // The window asks the network's own zone and nothing else. A zone that is not the
+        // network's, a seed by hand and a resolver by address are for a network being tried out
+        // on one machine, which is what the terminal is for.
         capability: Capability::WhereToLook,
-        window: true,
+        window: false,
         terminal: true,
-        not_yet: "",
+        not_yet: "the window is a node that starts by itself; operating one by hand is the terminal's",
     },
     Offered {
+        // It only ever reached development, and only from the screen that chose a network.
         capability: Capability::NobodyIsThere,
-        window: true,
+        window: false,
         terminal: true,
-        not_yet: "",
+        not_yet: "the window is a node that starts by itself; operating one by hand is the terminal's",
     },
     Offered {
         // A government ceremony is a terminal act in this version: it runs against the directory
@@ -349,7 +408,9 @@ mod tests {
             Capability::JoinTheMesh,
             Capability::Mediator,
             Capability::SayWhoContributedIt,
+            Capability::SayHowToFindMe,
             Capability::CloseThisNode,
+            Capability::EraseThisNode,
             Capability::Directory,
             Capability::WhereToLook,
             Capability::NobodyIsThere,
