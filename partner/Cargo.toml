@@ -1,0 +1,56 @@
+[package]
+name = "almena-partner"
+description = "The reference issuer and verifier: a program that relates, issues, revokes and verifies against a real node, so that the rules the node applies are seen to work from the other side of the wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+# The binary an operator types. Everything it does lives in the library beside it, so that the
+# cycle can be walked by a test against an in-process node without spawning a process.
+name = "almena-partner"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# What an issuer and a verifier are built on, and the shapes they issue against and check. The
+# partner adds no rule of its own: it carries what these decide to and from a node.
+almena-sdk = { workspace = true }
+almena-credential = { workspace = true }
+almena-status = { workspace = true }
+almena-store = { workspace = true }
+almena-format = { workspace = true }
+almena-suite = { workspace = true }
+almena-time = { workspace = true }
+# The one asking a device makes of its mediator, written by the crate the node reads it with.
+almena-mailbox = { workspace = true }
+# The certificate the verifier may serve under, and the reader that pins a node's key.
+almena-tls = { workspace = true }
+almena-log = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+# The DIDComm envelope's block cipher; key wrap and CBC are written out over it, held to the
+# published vectors, so that what is sealed here is what the holder's app opens.
+aes = { workspace = true }
+# The curve the relationship keys and the agreement live on, as the crate itself: the suite wraps
+# signing and verifying, and an agreement needs the scalar and the point underneath.
+p256 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+getrandom = { workspace = true }
+
+[dev-dependencies]
+# A whole node in the test, served over a real loopback socket under its own key, so that the
+# partner is proved against the node rather than against itself.
+almena-node = { workspace = true }
+almena-serve = { workspace = true }
+almena-api = { workspace = true }

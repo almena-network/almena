@@ -29,7 +29,7 @@
 //! in DNS harder to forge without making it any more authoritative — and a node that had *checked*
 //! the zone would be more inclined to believe it, which is the wrong direction.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use almena_node::zone::{Answer, NotUsable};
 
@@ -94,22 +94,33 @@ impl Dns {
     /// Ask these servers instead of the machine's own.
     ///
     /// For an operator whose machine resolves differently from the network it is joining, and for
-    /// a test that wants a resolver it controls.
+    /// a resolver that answers on a port of its own — a zone emulated on this machine cannot bind
+    /// the port DNS is spoken on without more privilege than a test should have. An address is
+    /// asked exactly as given; [`server`] is what turns what a person typed into one.
     ///
     /// # Errors
     ///
     /// [`Silent`] when a resolver cannot be built over those servers at all.
-    pub fn asking(servers: &[IpAddr]) -> Result<Self, Silent> {
-        use hickory_resolver::config::{NameServerConfig, ResolverConfig};
+    pub fn asking(servers: &[SocketAddr]) -> Result<Self, Silent> {
+        use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig};
 
         // Both protocols, because a set of records can outgrow what fits in one datagram and a
-        // node that could only ask over UDP would read a truncated zone as a short one.
+        // node that could only ask over UDP would read a truncated zone as a short one. The port
+        // is set on each connection rather than on the server, which is where the library keeps
+        // it; and a server's *no* is believed, since an authoritative empty answer is the one this
+        // whole crate exists to tell apart from silence.
         let configured = ResolverConfig::from_parts(
             None,
             Vec::new(),
             servers
                 .iter()
-                .map(|server| NameServerConfig::udp_and_tcp(*server))
+                .map(|server| {
+                    let mut udp = ConnectionConfig::udp();
+                    udp.port = server.port();
+                    let mut tcp = ConnectionConfig::tcp();
+                    tcp.port = server.port();
+                    NameServerConfig::new(server.ip(), true, vec![udp, tcp])
+                })
                 .collect(),
         );
         Ok(Self {
@@ -121,6 +132,38 @@ impl Dns {
             .map_err(|_| Silent)?,
         })
     }
+}
+
+/// The port DNS is spoken on, and the one a server named without one is asked at.
+pub const DNS_PORT: u16 = 53;
+
+/// Something that is not an address a resolver can be named by.
+///
+/// A name is not one: a resolver named by a name would need a resolver to find it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotAServer;
+
+/// A resolver's address as a person writes it: `ip` or `ip:port`.
+///
+/// **A bare address means the port DNS is spoken on.** An operator naming the resolver their
+/// machine should have been using writes an address and nothing else, as every other tool lets
+/// them; the port is for the one case where a resolver answers somewhere unusual, which on this
+/// platform is a zone emulated on the machine itself. An IPv6 address with a port is written in
+/// brackets, `[::1]:5300`, because without them the colons are the address's own.
+///
+/// # Errors
+///
+/// [`NotAServer`] for anything else — a name most of all, because resolving it would take the very
+/// thing that is being named.
+pub fn server(written: &str) -> Result<SocketAddr, NotAServer> {
+    let written = written.trim();
+    if let Ok(whole) = written.parse::<SocketAddr>() {
+        return Ok(whole);
+    }
+    written
+        .parse::<IpAddr>()
+        .map(|address| SocketAddr::new(address, DNS_PORT))
+        .map_err(|_| NotAServer)
 }
 
 impl Records for Dns {
@@ -270,7 +313,7 @@ mod tests {
 
     const SEED: &str =
         "v=1 host=madrid.example port=4001 peer=12D3KooWExampleMadrid net=zQmSomeGenesis";
-    const SERVED: &str = "v=1 url=https://madrid.example";
+    const SERVED: &str = "v=1 url=https://madrid.example peer=12D3KooWExampleMadrid";
 
     #[test]
     fn a_name_is_asked_for_absolutely_and_never_relative_to_anything() {
@@ -453,6 +496,87 @@ mod tests {
             looked.seeds.len(),
             2,
             "but somebody published two things, and that is what decides whether anybody is there"
+        );
+    }
+
+    #[test]
+    fn a_resolver_named_without_a_port_is_asked_on_the_one_dns_is_spoken_on() {
+        // What an operator writes is an address and nothing else, as every other tool lets them.
+        use super::{DNS_PORT, NotAServer, server};
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        assert_eq!(
+            server("127.0.0.1"),
+            Ok(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), DNS_PORT))
+        );
+        assert_eq!(
+            server("::1"),
+            Ok(SocketAddr::new(Ipv6Addr::LOCALHOST.into(), DNS_PORT))
+        );
+        assert_eq!(DNS_PORT, 53);
+
+        // And a port where one was written, which is the case of a zone emulated on this machine.
+        assert_eq!(
+            server("127.0.0.1:5300"),
+            Ok(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 5300))
+        );
+        assert_eq!(
+            server(" [::1]:5300 "),
+            Ok(SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 5300))
+        );
+
+        // A name is not a resolver: resolving it would take the very thing being named.
+        for not_one in ["resolver.example", "", "127.0.0.1:port", "localhost:53"] {
+            assert_eq!(server(not_one), Err(NotAServer), "{not_one:?}");
+        }
+    }
+
+    /// A server that answers *that name does not exist* to whatever it is asked, on a port of its
+    /// own, and says how many questions reached it.
+    ///
+    /// The smallest DNS server there is: the header comes back with the answer bit and the
+    /// name-error code set and the question echoed, which is all a resolver needs to conclude
+    /// that the name is not there.
+    fn a_server_that_denies_everything() -> (std::net::SocketAddr, std::sync::mpsc::Receiver<()>) {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("a port of its own");
+        let at = socket.local_addr().expect("bound");
+        let (tell, asked) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut question = [0; 512];
+            while let Ok((size, from)) = socket.recv_from(&mut question) {
+                let question = &question[..size];
+                let Some(end_of_name) = question[12..].iter().position(|byte| *byte == 0) else {
+                    continue;
+                };
+                let question_section = &question[12..12 + end_of_name + 1 + 4];
+                let mut answer = Vec::with_capacity(12 + question_section.len());
+                answer.extend_from_slice(&question[..2]);
+                // Answer, recursion desired and available, and NXDOMAIN.
+                answer.extend_from_slice(&[0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0]);
+                answer.extend_from_slice(question_section);
+                let _ = socket.send_to(&answer, from);
+                if tell.send(()).is_err() {
+                    return;
+                }
+            }
+        });
+        (at, asked)
+    }
+
+    #[tokio::test]
+    async fn the_port_a_resolver_is_named_with_is_the_port_it_is_asked_on() {
+        // A zone emulated on this machine cannot bind the port DNS is spoken on, so the whole of
+        // emulating one turns on the port reaching the socket. Proved against a real server on a
+        // real port, and through the real resolver: what comes back is *nobody is there*, which
+        // is the answer the port was needed for.
+        use super::Dns;
+
+        let (at, asked) = a_server_that_denies_everything();
+        let dns = Dns::asking(&[at]).expect("built over one server");
+        assert_eq!(dns.text("_seed.dev.almena.network.").await, Ok(Vec::new()));
+        assert!(
+            asked.try_recv().is_ok(),
+            "and the question reached the port that was named"
         );
     }
 }

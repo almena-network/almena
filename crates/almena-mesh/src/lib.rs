@@ -28,13 +28,16 @@ pub mod keeping;
 pub mod sync;
 pub mod whose;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use almena_node::SigningKey;
+use libp2p::core::ConnectedPoint;
 use libp2p::futures::StreamExt as _;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
-use libp2p::swarm::SwarmEvent;
+use libp2p::swarm::dial_opts::DialOpts;
+use libp2p::swarm::{ConnectionId, SwarmEvent};
 // Re-exported so that a face can hold an address without reaching past this crate for the type.
 // A door somebody has to go around is a door.
 pub use libp2p::Multiaddr;
@@ -135,9 +138,71 @@ pub struct Listening {
     /// circuit when either ended would withdraw an address that still answers — and would then be
     /// wrong in the honest-looking direction, which is still wrong.
     lent: Vec<(libp2p::core::transport::ListenerId, Multiaddr)>,
+    /// Where each dial this node made was going, until it is known whether it got there.
+    ///
+    /// **Kept because a failed dial does not name its address.** What comes back names the attempt,
+    /// and a node told only that an attempt failed could not say where not to bother again — or
+    /// where to try again later, which is what whoever drives this wants to know.
+    dialled: BTreeMap<ConnectionId, Multiaddr>,
+    /// Who is connected right now, shared with whoever wants to read it without stopping the mesh.
+    peers: Peers,
+}
+
+/// Who a node is connected to right now, readable from anywhere.
+///
+/// **Cheap on purpose, and never behind the mesh.** A face that draws a peer count has to read it
+/// on every frame, from a thread that is not running the mesh and must not wait for it — so this
+/// is a shared set behind a plain lock rather than a question put to the socket. It says who is
+/// connected, which is a fact about sockets; who is a node the record knows is a different
+/// question, and is answered in the record.
+///
+/// Cloning it clones the handle, not the set: every copy sees the same peers.
+#[derive(Debug, Clone, Default)]
+pub struct Peers(Arc<RwLock<BTreeSet<PeerId>>>);
+
+impl Peers {
+    /// How many are connected right now.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.0.read().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
+    /// Who is connected right now, as a copy taken at this moment.
+    #[must_use]
+    pub fn connected(&self) -> BTreeSet<PeerId> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Somebody connected.
+    fn met(&self, peer: PeerId) {
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(peer);
+    }
+
+    /// Somebody's last connection ended.
+    fn lost(&self, peer: &PeerId) {
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(peer);
+    }
 }
 
 impl Listening {
+    /// A handle on who this node is connected to, for reading from anywhere.
+    ///
+    /// Taken before the socket is handed to whatever keeps it up, because afterwards nothing else
+    /// holds it — and a face that wanted a peer count then would have nobody to ask.
+    #[must_use]
+    pub fn peers(&self) -> Peers {
+        self.peers.clone()
+    }
+
     /// Where this node can be reached, as the addresses it really got.
     ///
     /// **Asked for rather than assumed.** A node told to listen on port zero is given one by the
@@ -171,62 +236,115 @@ impl Listening {
     /// Nothing is replicated yet. What this buys is that the node is reachable and knows where.
     pub async fn next(&mut self) -> Happened {
         loop {
-            match self.swarm.select_next_some().await {
-                SwarmEvent::NewListenAddr {
-                    listener_id,
-                    address,
-                } => {
-                    if let Some(happened) = self.now_reachable(listener_id, address) {
-                        return happened;
-                    }
-                }
-                // A slot refused, or granted and later withdrawn, arrives as the circuit ending
-                // and never as an answer of its own — so what a relay would not do is read from
-                // the listener going away, and the addresses through it stop being published.
-                SwarmEvent::ListenerClosed { listener_id, .. }
-                | SwarmEvent::ListenerError { listener_id, .. } => {
-                    if let Some(relay) = self.stopped_carrying(listener_id) {
-                        return Happened::NotCarried(relay);
-                    }
-                }
-                SwarmEvent::ConnectionEstablished {
-                    peer_id, endpoint, ..
-                } => {
-                    return Happened::Met(peer_id, met(&endpoint));
-                }
-                SwarmEvent::Behaviour(DoingEvent::Sync(request_response::Event::Message {
-                    peer,
-                    message,
-                    ..
-                })) => return self.said(peer, message),
-                // A question that will not be answered, said as one. Cleared from the outstanding
-                // list here as well as when a connection ends, so that what is held is what is
-                // genuinely still open.
-                SwarmEvent::Behaviour(DoingEvent::Sync(
-                    request_response::Event::OutboundFailure {
-                        peer,
-                        request_id,
-                        error,
-                        ..
-                    },
-                )) => {
-                    let asked = self
-                        .outstanding
-                        .remove(&request_id)
-                        .map_or(Asked(0), |(_, asked)| asked);
-                    return Happened::Unanswered(peer, asked, why(&error));
-                }
-                SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                    // Whatever was asked of them will not be answered now, and holding on to it
-                    // would be holding on to it for as long as the node ran.
-                    self.outstanding.retain(|_, (peer, _)| *peer != peer_id);
-                    return Happened::Parted(peer_id);
-                }
-                // Everything else is the transport getting on with itself, and saying so would be
-                // noise in the one place somebody looks when something is wrong.
-                _ => {}
+            let event = self.swarm.select_next_some().await;
+            if let Some(happened) = self.meaning(event) {
+                return happened;
             }
         }
+    }
+
+    /// What one thing the transport reported means, if it means anything to anybody outside.
+    ///
+    /// [`None`] is the transport getting on with itself, and saying so would be noise in the one
+    /// place somebody looks when something is wrong.
+    fn meaning(&mut self, event: SwarmEvent<DoingEvent>) -> Option<Happened> {
+        match event {
+            SwarmEvent::NewListenAddr {
+                listener_id,
+                address,
+            } => self.now_reachable(listener_id, address),
+            // A slot refused, or granted and later withdrawn, arrives as the circuit ending and
+            // never as an answer of its own — so what a relay would not do is read from the
+            // listener going away, and the addresses through it stop being published.
+            SwarmEvent::ListenerClosed { listener_id, .. }
+            | SwarmEvent::ListenerError { listener_id, .. } => {
+                self.stopped_carrying(listener_id).map(Happened::NotCarried)
+            }
+            SwarmEvent::ConnectionEstablished {
+                peer_id,
+                connection_id,
+                endpoint,
+                ..
+            } => Some(self.met(peer_id, connection_id, &endpoint)),
+            SwarmEvent::OutgoingConnectionError { connection_id, .. } => {
+                self.not_reached(connection_id)
+            }
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established,
+                ..
+            } => self.closed(peer_id, num_established),
+            SwarmEvent::Behaviour(DoingEvent::Sync(event)) => self.spoken(event),
+            _ => None,
+        }
+    }
+
+    /// What one thing said or not said over the record protocol means.
+    fn spoken(
+        &mut self,
+        event: request_response::Event<sync::Ask, sync::Said>,
+    ) -> Option<Happened> {
+        match event {
+            request_response::Event::Message { peer, message, .. } => {
+                Some(self.said(peer, message))
+            }
+            // A question that will not be answered, said as one. Cleared from the outstanding list
+            // here as well as when a connection ends, so that what is held is what is genuinely
+            // still open.
+            request_response::Event::OutboundFailure {
+                peer,
+                request_id,
+                error,
+                ..
+            } => {
+                let asked = self
+                    .outstanding
+                    .remove(&request_id)
+                    .map_or(Asked(0), |(_, asked)| asked);
+                Some(Happened::Unanswered(peer, asked, why(&error)))
+            }
+            _ => None,
+        }
+    }
+
+    /// A connection came about, whichever end opened it.
+    fn met(
+        &mut self,
+        peer: PeerId,
+        connection: ConnectionId,
+        endpoint: &ConnectedPoint,
+    ) -> Happened {
+        self.dialled.remove(&connection);
+        self.peers.met(peer);
+        Happened::Met(peer, met(endpoint))
+    }
+
+    /// A dial this node made did not give a connection.
+    ///
+    /// **The address, and not the attempt.** What failed is named by its attempt, which means
+    /// nothing to anybody outside; what whoever drives this wants to know is where not to bother
+    /// again just yet — and where to try again later. [`None`] for an attempt this node did not
+    /// make by name, which is the transport's own business.
+    fn not_reached(&mut self, connection: ConnectionId) -> Option<Happened> {
+        self.dialled.remove(&connection).map(Happened::NotReached)
+    }
+
+    /// A connection to somebody ended, and this is whether that means they have gone.
+    ///
+    /// **Two nodes that dialled each other hold two connections**, one each way, and one of them
+    /// ending is not the two parting: the other still carries questions and answers. Said only
+    /// when the last one goes, so that whoever hears it can act on it — forgetting what was asked,
+    /// or dialling again — without acting on a peer that is still there.
+    fn closed(&mut self, peer: PeerId, remaining: u32) -> Option<Happened> {
+        if remaining > 0 {
+            return None;
+        }
+        // Whatever was asked of them will not be answered now, and holding on to it would be
+        // holding on to it for as long as the node ran.
+        self.outstanding
+            .retain(|_, (asked_of, _)| *asked_of != peer);
+        self.peers.lost(&peer);
+        Some(Happened::Parted(peer))
     }
 
     /// One message off the wire: a question somebody put, or an answer to one this node put.
@@ -352,9 +470,22 @@ pub enum Happened {
     /// publish an address through this one.
     NotCarried(PeerId),
     /// Somebody connected, or this node connected to them.
+    ///
+    /// Once per connection, and two nodes that dialled each other hold two — so it may be heard
+    /// twice of one peer, and the second time says how the other connection came about.
     Met(PeerId, Meeting),
-    /// A connection ended. Ordinary, and not on its own a sign of anything.
+    /// The last connection to somebody ended. Ordinary, and not on its own a sign of anything.
+    ///
+    /// **The last, and not any.** A node holding two connections to one peer that lost one still
+    /// has the peer, and saying otherwise would have whoever listens dial somebody they are
+    /// already talking to.
     Parted(PeerId),
+    /// This node dialled there and nobody answered — or the wrong somebody did.
+    ///
+    /// **Where, rather than what went wrong.** Nobody listening, a name that would not resolve, and
+    /// a machine at that address holding a different key all come to the same thing for whoever
+    /// drives this: that address did not give a connection just now, and may later.
+    NotReached(Multiaddr),
     /// Somebody asked something. It is not answered here — [`Listening::answer`] is.
     Asked(PeerId, sync::Ask, Answering),
     /// Something that was asked for came back.
@@ -424,10 +555,10 @@ fn why(error: &request_response::OutboundFailure) -> Unanswerable {
 }
 
 /// What a connection says about where the other end can be reached.
-fn met(endpoint: &libp2p::core::ConnectedPoint) -> Meeting {
+fn met(endpoint: &ConnectedPoint) -> Meeting {
     match endpoint {
-        libp2p::core::ConnectedPoint::Dialer { address, .. } => Meeting::Dialled(address.clone()),
-        libp2p::core::ConnectedPoint::Listener { .. } => Meeting::Answered,
+        ConnectedPoint::Dialer { address, .. } => Meeting::Dialled(address.clone()),
+        ConnectedPoint::Listener { .. } => Meeting::Answered,
     }
 }
 
@@ -477,14 +608,33 @@ impl Listening {
 
     /// Dial somebody, so that there is a connection to ask over.
     ///
+    /// **From a port of its own, never from the one it listens on.** Dialling from the listening
+    /// port is the transport's default, and it is what makes two nodes that dial each other at
+    /// the same moment fail to connect at all: each leaves from its own listening port towards
+    /// the other's, the operating system sees one connection opened from both ends at once, and
+    /// both ends then try to speak first — a handshake in which nobody answers. Two seeds coming
+    /// up together is exactly that moment, and it must not be the moment the network does not
+    /// form. A fresh port makes the two dials two connections, which is what they were.
+    ///
+    /// The identity an address ends in is still held to: whoever answers has to prove they hold
+    /// that key, and an impostor at the right host and port arrives as [`Happened::NotReached`].
+    ///
     /// # Errors
     ///
     /// [`NotListening::AddressUnavailable`] when that address cannot be dialled at all. Somebody
-    /// not answering is not an error here — it arrives later, or does not.
+    /// not answering is not an error here — it arrives later, as [`Happened::NotReached`], or a
+    /// connection does.
     pub fn dial(&mut self, address: Multiaddr) -> Result<(), NotListening> {
+        let dialling = DialOpts::unknown_peer_id()
+            .address(address.clone())
+            .allocate_new_port()
+            .build();
+        let attempt = dialling.connection_id();
         self.swarm
-            .dial(address)
-            .map_err(|_| NotListening::AddressUnavailable)
+            .dial(dialling)
+            .map_err(|_| NotListening::AddressUnavailable)?;
+        self.dialled.insert(attempt, address);
+        Ok(())
     }
 
     /// Whether this node carries other nodes' traffic.
@@ -740,6 +890,8 @@ pub fn listening(
         put: 0,
         asked_of: Vec::new(),
         lent: Vec::new(),
+        dialled: BTreeMap::new(),
+        peers: Peers::default(),
     })
 }
 

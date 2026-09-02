@@ -2,8 +2,9 @@
  * The Network screen: what this node is part of, and who it is talking to.
  *
  * A node that has not opened or joined a network reports having looked at nothing, and the controls
- * offer the one thing it can do about that. There is no mesh in this build, so there are no peers
- * and the list says so — figures here know the difference between none and unmeasured.
+ * offer the one thing it can do about that. Until it has taken its place on the mesh nobody has
+ * counted its peers, and the list says so — figures here know the difference between none and
+ * unmeasured.
  */
 
 import { useState } from "react";

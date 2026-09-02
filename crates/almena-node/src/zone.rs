@@ -13,15 +13,19 @@
 //! later without anything having to be re-encoded.
 //!
 //! ```text
-//! _seed  v=1 host=madrid.example port=4001 peer=12D3KooW… net=zQm…
-//! _api   v=1 url=https://madrid.example
+//! _seed      v=1 host=madrid.example port=4001 peer=12D3KooW… net=zQm…
+//! _api       v=1 url=https://madrid.example peer=12D3KooW…
+//! _mediator  v=1 url=https://madrid.example peer=12D3KooW…
 //! ```
 //!
-//! **A seed without `peer` is refused, and that is not a formality.** An address on its own says
+//! **A record without `peer` is refused, and that is not a formality.** An address on its own says
 //! *where* to call and not *who* should pick up: the mesh dials towards an identity, so with one
 //! the handshake checks who answered and a substituted address fails loudly, and without one a
 //! connection to whoever answers simply succeeds. It is the only authentication a first contact
-//! has.
+//! has. **The same attribute on all three records, and the same identity in it**: the node's one
+//! key, written the way the mesh names it. A node serves its interface under a certificate made
+//! from that key, so whoever reads `_api` or `_mediator` pins what `peer` says and needs no
+//! authority to vouch for the name in `url`.
 //!
 //! **A version a reader does not know stops it.** Taking the attributes it recognises and guessing
 //! at the rest would be guessing about where to connect and to whom.
@@ -83,7 +87,11 @@ pub enum NotUsable {
     AnotherVersion,
     /// An attribute this record cannot do without is missing.
     Incomplete,
-    /// A seed that says where to call without saying who answers.
+    /// A record that says where to call without saying who answers.
+    ///
+    /// The same refusal for all three records: a seed is dialled towards the identity, and an
+    /// interface is pinned to it — either way, without one a substituted address is something
+    /// nobody can notice.
     NoIdentity,
     /// A seed that says who answers without saying which network they are on.
     ///
@@ -202,22 +210,32 @@ impl Seed {
     }
 }
 
-/// Somewhere the platform's interface is served.
+/// Somewhere the platform's interface is served, and who serves it.
 ///
 /// **The same record whether it is published under `_api` or under `_mediator`**, and one parser
-/// for both, because they say the same thing: here is an origin, reachable securely. What differs
-/// is the name it was published at — which is the zone saying *this one also holds post* — and a
-/// second format would be a second way to get the same line wrong.
+/// for both, because they say the same thing: here is an origin, reachable securely, and here is
+/// the node at it. What differs is the name it was published at — which is the zone saying *this
+/// one also holds post* — and a second format would be a second way to get the same line wrong.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Endpoint(String);
+pub struct Endpoint {
+    /// Where to ask.
+    origin: String,
+    /// Who answers there: the node's identity, written the way the mesh names it, and the same
+    /// text a `_seed` for the same node carries. The node serves under a certificate made from the
+    /// key this names, and whoever asks pins that key.
+    peer: String,
+}
 
 impl Endpoint {
-    /// Read an `_api` record.
+    /// Read an `_api` or `_mediator` record.
     ///
     /// # Errors
     ///
     /// [`NotUsable::NotSecure`] for anything a browser would refuse to call from a page it loaded
-    /// securely, which is every consumer this record exists for.
+    /// securely, which is every consumer this record exists for. [`NotUsable::NoIdentity`] when
+    /// it says where to ask without saying who answers: a node serves under its own key and
+    /// nobody vouches for the name, so an origin with no key to pin is an origin anybody could be
+    /// standing at.
     pub fn read(record: &str) -> Result<Self, NotUsable> {
         let found = attributes(record)?;
         let url = *found.get(attribute::URL).ok_or(NotUsable::Incomplete)?;
@@ -225,13 +243,24 @@ impl Endpoint {
         if !url.starts_with("https://") {
             return Err(NotUsable::NotSecure);
         }
-        Ok(Self(url.to_owned()))
+        let peer = *found.get(attribute::PEER).ok_or(NotUsable::NoIdentity)?;
+        Ok(Self {
+            origin: url.to_owned(),
+            peer: peer.to_owned(),
+        })
     }
 
     /// Where to ask.
     #[must_use]
     pub fn origin(&self) -> &str {
-        &self.0
+        &self.origin
+    }
+
+    /// Who has to be at the other end, which is what the connection's certificate is checked
+    /// against.
+    #[must_use]
+    pub fn peer(&self) -> &str {
+        &self.peer
     }
 }
 
@@ -335,7 +364,7 @@ mod tests {
         "v=1 host=madrid.example port=4001 peer=12D3KooWExampleMadrid net=zQmSomeGenesis";
     const TWO: &str =
         "v=1 host=barcelona.example port=4001 peer=12D3KooWExampleBarcelona net=zQmSomeGenesis";
-    const SERVED: &str = "v=1 url=https://madrid.example";
+    const SERVED: &str = "v=1 url=https://madrid.example peer=12D3KooWExampleMadrid";
 
     #[test]
     fn a_seed_carries_where_and_who() {
@@ -440,10 +469,51 @@ mod tests {
             "https://madrid.example"
         );
         assert_eq!(
-            Endpoint::read("v=1 url=http://madrid.example"),
+            Endpoint::read("v=1 url=http://madrid.example peer=12D3KooWExampleMadrid"),
             Err(NotUsable::NotSecure)
         );
-        assert_eq!(Endpoint::read("v=1"), Err(NotUsable::Incomplete));
+        assert_eq!(
+            Endpoint::read("v=1 peer=12D3KooWExampleMadrid"),
+            Err(NotUsable::Incomplete)
+        );
+    }
+
+    #[test]
+    fn an_interface_carries_who_answers_there() {
+        // The same identity, in the same attribute, as the seed for the same node carries: it is
+        // what the certificate the node serves under is pinned to.
+        let served = Endpoint::read(SERVED).expect("usable");
+        assert_eq!(served.peer(), "12D3KooWExampleMadrid");
+        assert_eq!(served.peer(), Seed::read(ONE).expect("usable").peer());
+    }
+
+    #[test]
+    fn an_interface_that_does_not_say_who_answers_is_refused() {
+        // Nobody vouches for the name in the origin: a node serves under its own key, so an origin
+        // with no key to pin is an origin anybody could be standing at. Refused with the seed's
+        // own reason, because it is the seed's own problem.
+        assert_eq!(
+            Endpoint::read("v=1 url=https://madrid.example"),
+            Err(NotUsable::NoIdentity)
+        );
+    }
+
+    #[test]
+    fn a_mailbox_is_held_to_the_same_record_as_the_interface() {
+        // One parser for both names: what differs is where the zone published it and never the
+        // shape of the line, so a mailbox without an identity is refused for the same reason.
+        let (answer, refused) = Answer::read(
+            &[],
+            &["v=1 url=https://madrid.example".to_owned()],
+            &["v=1 url=https://madrid.example".to_owned()],
+        );
+        assert!(answer.api.is_empty() && answer.mediators.is_empty());
+        assert_eq!(refused, vec![NotUsable::NoIdentity, NotUsable::NoIdentity]);
+
+        let (answer, refused) = Answer::read(&[], &[SERVED.to_owned()], &[SERVED.to_owned()]);
+        assert!(refused.is_empty());
+        assert_eq!(answer.api[0].peer(), "12D3KooWExampleMadrid");
+        assert_eq!(answer.mediators[0].peer(), "12D3KooWExampleMadrid");
     }
 
     #[test]

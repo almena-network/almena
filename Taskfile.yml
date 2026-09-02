@@ -26,6 +26,18 @@ vars:
   # there**, and it finds that out by asking — so pointing this somewhere else is answering that
   # question about a different network. Empty means the one the node already knows.
   ZONE: ""
+  # Which network `task dev:cli` is about: `dev` or `pro`. Development is opened again as often
+  # as it needs to be; production is opened once, ever, and is never the default of anything.
+  NETWORK: "dev"
+  # A resolver to ask instead of this machine's own, as `ip:port`. Empty means the machine's. The
+  # zone emulated in the dns repository answers on 127.0.0.1:5300 (`task emulate:dev` there), and
+  # this is how a development node is pointed at it.
+  RESOLVER: ""
+  # `true` to join the network the zone names instead of opening one — the second development
+  # node on a machine, or a node joining a network somebody else opened. Anything else opens.
+  JOIN: ""
+  # `true` to hold post for other people, and say so in the record.
+  MEDIATOR: ""
 
 
 tasks:
@@ -133,7 +145,14 @@ tasks:
       # It runs here as well as in `task test` because it is not a test of behaviour: it is the
       # rule that the two ways of running a node stay the same node. A change that breaks it has
       # to fail before it is pushed, not when somebody next runs the suite.
+      #
+      # Three halves: the table itself, and each face holding its real surface to its column —
+      # the flags the terminal parses, the commands the window registers. A flag or a command
+      # added without a row fails in its own face's test, which is where whoever added it is.
       - 'cargo test -q -p almena-node facade::'
+      - 'cargo test -q -p almena-cli what_this_face_parses_is_what_the_table_says_it_offers'
+      - 'cargo test -q -p almena-app what_this_face_registers_is_what_the_table_says_it_offers'
+      - 'cargo test -q -p almena-app every_command_named_here_is_registered'
 
   check:
     desc: Run every check a change has to pass before it is pushed
@@ -267,6 +286,14 @@ tasks:
           "the transport serves the same node whichever face is running"
         assert_cannot_reach almena-serve ratatui \
           "and the same the other way"
+        # The reference issuer and verifier is a third program, on the library and the node's own
+        # crates, and it reaches neither framework for the same reason the node's core does not:
+        # a partner is a program an organisation runs in a rack, and a renderer it never calls
+        # would be minutes of build time and tens of megabytes for nothing.
+        assert_cannot_reach almena-partner tauri \
+          "the partner draws nothing in a webview"
+        assert_cannot_reach almena-partner ratatui \
+          "nor in a terminal"
 
         exit "$failed"
 
@@ -350,7 +377,7 @@ tasks:
       - pnpm tauri dev {{if .ARGS}}-- -- {{.ARGS}}{{end}}
 
   dev:cli:
-    desc: 'Run a whole development node in this terminal: its network, its interface and its place on the mesh'
+    desc: 'Run a whole development node in this terminal: its network, its interface and its place on the mesh (NETWORK=, RESOLVER=, JOIN=true, MEDIATOR=true)'
     deps: [install]
     cmds:
       - task: banner
@@ -360,16 +387,33 @@ tasks:
       # nobody and reachable by nobody — which is a state worth being able to reach, and a poor
       # thing to have to type four flags to get out of every time.
       #
+      # It opens the network unless `JOIN=true`, and opening refuses when the zone names somebody:
+      # the first development node on a machine opens, the second joins. Against the emulated zone
+      # — `task emulate:dev` in the dns repository — that is `task dev:cli RESOLVER=127.0.0.1:5300`
+      # for the first and `task dev:cli RESOLVER=127.0.0.1:5300 JOIN=true MESH=4003 API=…` for the
+      # second, once the first has been written into the emulation's file.
+      #
       # No hot reload and nothing to serve: this program has no frontend. `ARGS` is added on the
       # end and wins, because a flag given twice is the last one that counts — so `task dev:cli
       # ARGS="--quiet"` shows the records, and ARGS can override anything below it.
       - >
         cargo run -q -p almena-cli --
-        --open-development
+        --network {{.NETWORK}}
+        {{if eq .JOIN "true"}}--join{{else}}--open{{end}}
         --serve {{.API}}
         --mesh {{.MESH}}
         {{if .ZONE}}--zone {{.ZONE}}{{end}}
+        {{if .RESOLVER}}--resolver {{.RESOLVER}}{{end}}
+        {{if eq .MEDIATOR "true"}}--mediator{{end}}
         {{.ARGS}}
+
+  dev:cli:mediator:
+    desc: 'The same development node, holding post for other people (the mediator a client needs)'
+    deps: [install]
+    cmds:
+      - task: dev:cli
+        vars:
+          MEDIATOR: "true"
 
   dev:bare:
     desc: Run the node in this terminal with nothing turned on, to see what it says about that
@@ -418,6 +462,18 @@ tasks:
       # not decided.
       - cargo build -q --release -p almena-cli
       - cmd: echo "Built target/release/almena"
+        silent: true
+
+  build:partner:
+    desc: Build the reference issuer and verifier for this computer
+    deps: [install]
+    cmds:
+      - task: banner
+        vars: { OPERATION: "build:partner" }
+      # One binary and no bundle, like the node's: a partner is a file an organisation copies to
+      # the machine it issues and verifies from.
+      - cargo build -q --release -p almena-partner
+      - cmd: echo "Built target/release/almena-partner"
         silent: true
 
   build:all:

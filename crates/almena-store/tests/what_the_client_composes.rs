@@ -18,9 +18,10 @@
 
 #![allow(clippy::expect_used, reason = "the whole of this file is a test")]
 
-use almena_format::identifier::Name;
+use almena_format::identifier::{Did, Name, Network};
 use almena_format::operation::Operation;
-use almena_store::chain::{Admitted, Answer, Holder, Objects, State};
+use almena_store::chain::{Admitted, Answer, Holder, Objects, Refused, State};
+use almena_store::guardian::{self, SALT_WIDTH, commit};
 use almena_time::{Epoch, Epochs};
 
 /// An account, created by the app with the words that govern it.
@@ -278,4 +279,116 @@ fn a_whole_story_comes_out_the_same_here_as_it_does_in_the_app() {
     );
     assert!(holder.waiting.is_empty(), "nothing left in flight");
     assert!(!holder.frozen);
+}
+
+/// The guardians the app named, in the commitment's order, with the salt each leaf was made with.
+///
+/// Three identifiers the app made up for its twin — hashes of eight bytes, not accounts anybody
+/// created — which is what the two tests below turn on.
+fn guardians_named() -> Vec<(Did, Vec<u8>)> {
+    (1..=3u8)
+        .map(|seed| {
+            (
+                Did::new(Network::Development, Name::of(&[seed; 8])),
+                vec![seed; SALT_WIDTH],
+            )
+        })
+        .collect()
+}
+
+/// The device naming three guardians of whom two are enough, issued once the device has landed.
+const SET_GUARDIANS: &str = "a701783e6469643a616c6d656e613a6465763a7a516d4e525466466d48564d6741767252636e57393569563344554c4e3541576e39697a5074656f5238674d6f726e02782f7a516d5863346e6e6a77474866465538417148736e6632704a344c325343444852736a7a4243444d4a4a4c334c7a350308040105184806a30b58203a2a99ebe10e622657a9051dbd4648d2651e43832d435c41ece8eafdecb978a40d030f02078183783e6469643a616c6d656e613a6465763a7a516d4e525466466d48564d6741767252636e57393569563344554c4e3541576e39697a5074656f5238674d6f726e5821027135fa4fd93a09dce98bbf681b4bfcf50e7c0d6354e62afb0bff2a34296178655840bca0cb60dbb66192dd1aed62ebcbbc219eeafd3b2b09ca2d7a20dff0f2054694416aa8ad9fcb036d211b247ae558597efc53be076494455380605662f7c08c02";
+
+/// Two of those guardians stopping the account, each showing their leaf, signed from their devices
+/// (`[31; 32]` and `[32; 32]`) and by nobody on the account.
+const GUARDIANS_FREEZE: &str = "a701783e6469643a616c6d656e613a6465763a7a516d4e525466466d48564d6741767252636e57393569563344554c4e3541576e39697a5074656f5238674d6f726e02782f7a516d6365654a464c61437461716b43574e3131576343764164324844414576416b6a345348437350673539636d670306040105184806a201401183a401783e6469643a616c6d656e613a6465763a7a516d4e65744751346243755a4c55334431566a5668385650714679506b59574c584e56766445624147507246794a035001010101010101010101010101010101050007825820162b3727bf4473b7a92101a60d12c77edd36002b10d22b38f8a5ac631bcd36ae582033e1ba02101cd16532c720e9cdbf00e67816e921968f615f2ba4334cd7c5f5a8a401783e6469643a616c6d656e613a6465763a7a516d50546d4233567557733971577a655a755543637a4741416831625466374c704e716b7243767434355644616603500202020202020202020202020202020205010782582021d0a08fba5e9f47ad976a2b601c4f1859dff887a8a1c7114a7e312708bda133582033e1ba02101cd16532c720e9cdbf00e67816e921968f615f2ba4334cd7c5f5a8a401783e6469643a616c6d656e613a6465763a7a516d63526f70785255744143373679456777486733737833443247475451627a6767535053555a464c524441653203500303030303030303030303030303030305020781582089933ca25aa0c322b0f4a9928806ea5b528f53a4c154fc60557247b337d9e8d4078283783e6469643a616c6d656e613a6465763a7a516d4e65744751346243755a4c55334431566a5668385650714679506b59574c584e56766445624147507246794a5821036bf85d5fe84598b10ca6199ec09ccd7d35dcd7195fdd1dc7737a0c67006ef25158403cdbc6e1bf04718f2947488b6cf17c7582ca96d7e52b6275ed10a47a2a019a3b72babce2bdba8274914ca88ccc57ba7accaa67e4a06fe8099e0ffd3c0fb8c1bf83783e6469643a616c6d656e613a6465763a7a516d50546d4233567557733971577a655a755543637a4741416831625466374c704e716b724376743435564461665821020e539e011304a06ad552227a677a388cee251cfe15486e5ae02230a79d590ee05840709515182b8422f587e44bcc4232c9e9a041c527048dddd31e3877dd38c23c30166f657a54176895a43068ee3c3dd2ba1d3cbbb8079c51da8d390e9b01c6958c";
+
+/// The account taken back with new words (`[11; 32]`) and a new device (`[21; 32]`), signed by the
+/// new control key first and then by two guardians (`[32; 32]` and `[33; 32]`).
+const RECOVER: &str = "a701783e6469643a616c6d656e613a6465763a7a516d4e525466466d48564d6741767252636e57393569563344554c4e3541576e39697a5074656f5238674d6f726e02782f7a516d50546475456a6e79333672375554487755717139527942345851536844706b4e5934796369423938556548750305040105184806a301582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a1183a401783e6469643a616c6d656e613a6465763a7a516d4e65744751346243755a4c55334431566a5668385650714679506b59574c584e56766445624147507246794a035001010101010101010101010101010101050007825820162b3727bf4473b7a92101a60d12c77edd36002b10d22b38f8a5ac631bcd36ae582033e1ba02101cd16532c720e9cdbf00e67816e921968f615f2ba4334cd7c5f5a8a401783e6469643a616c6d656e613a6465763a7a516d50546d4233567557733971577a655a755543637a4741416831625466374c704e716b7243767434355644616603500202020202020202020202020202020205010782582021d0a08fba5e9f47ad976a2b601c4f1859dff887a8a1c7114a7e312708bda133582033e1ba02101cd16532c720e9cdbf00e67816e921968f615f2ba4334cd7c5f5a8a401783e6469643a616c6d656e613a6465763a7a516d63526f70785255744143373679456777486733737833443247475451627a6767535053555a464c524441653203500303030303030303030303030303030305020781582089933ca25aa0c322b0f4a9928806ea5b528f53a4c154fc60557247b337d9e8d413582103fe53b8e41729ab52deb45cee0a0e27ca771c5910d990e6dfdaf808bf2b97fddb078383783e6469643a616c6d656e613a6465763a7a516d4e525466466d48564d6741767252636e57393569563344554c4e3541576e39697a5074656f5238674d6f726e582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a58400a9de01090bf72457ca07470ff377a9abd107c3103055abe2f058551339bb01fcd618f8816cfb6df0874d72eca1c58649f7c53f5e32f9581b7593733cf3ad30a83783e6469643a616c6d656e613a6465763a7a516d50546d4233567557733971577a655a755543637a4741416831625466374c704e716b724376743435564461665821020e539e011304a06ad552227a677a388cee251cfe15486e5ae02230a79d590ee05840ad689be7f47203fcb898ac8d28a722b6d6251d436e802353460ddebab18f5abb43340d0d01d25d24dceb99277a3ffae128833781547ca8261121101f476efea083783e6469643a616c6d656e613a6465763a7a516d63526f70785255744143373679456777486733737833443247475451627a6767535053555a464c5244416532582103462dba1ae4fc1a968b4dacf20cdd6dbe1fae34aa971514a63d3405c3d1cfd383584003e4ce54977e82a9bb08861bc0e71fca09c080fb7dc5a9d5d8cf906822239983b354a3ba25f8e86e49f8a406c9d68cfa7580c7e439a260233f54aa7e9b451ebf";
+
+/// The record with the account, its device landed, and the guardians named.
+fn with_guardians() -> (Objects, Name, Epoch) {
+    let mut objects = Objects::new();
+    objects
+        .admit(&act(ACCOUNT), Epoch::GENESIS)
+        .expect("the account");
+    objects
+        .admit(&act(ADD_DEVICE), Epoch::GENESIS)
+        .expect("the device it asks for");
+    let due = Epoch::GENESIS.plus(Epochs(72)).expect("no overflow");
+    assert_eq!(
+        objects.admit(&act(SET_GUARDIANS), due),
+        Ok(Admitted::Extended),
+        "a device names guardians"
+    );
+    (objects, act(ACCOUNT).object.name().clone(), due)
+}
+
+#[test]
+fn the_guardians_the_app_names_are_the_commitment_this_node_reads() {
+    // **Two Merkle trees agreeing on one root.** The app committed to three guardians with its
+    // own tree; this node recomputes the commitment from the same leaves with the tree it keeps
+    // its record in, and finds the same thirty-two bytes. A disagreement here would be a guardian
+    // every node refuses because their proof leads to a root nobody wrote.
+    let (objects, name, due) = with_guardians();
+    let guardians = held(&objects, &name, due)
+        .guardians
+        .expect("named, and at once: a device names guardians");
+    assert_eq!(guardians.commitment, commit(&guardians_named()));
+    assert_eq!(guardians.how_many, 3);
+    assert_eq!(guardians.enough, 2);
+    assert!(
+        !held(&objects, &name, due).frozen,
+        "naming guardians stops nothing"
+    );
+}
+
+#[test]
+fn the_proofs_the_app_composes_hold_and_the_guardians_it_names_are_nobody_on_this_record() {
+    // **Half of each act meets the record, and the other half cannot.** The proofs are the app's
+    // own arithmetic — a salt, a leaf, a path — and every one of them lands on the commitment,
+    // so that half is held here. The signatures are made in the name of three identifiers the
+    // app invented for its twin: hashes of eight bytes, which no creation act could ever be
+    // called, so no account exists under them and no key is authorised for them. A guardian is
+    // counted only when their own chain says the signing key is theirs, which is what stops a
+    // stranger with a valid-looking proof from freezing anybody — so both acts are refused,
+    // rightly, and the app's bytes cannot be carried further than this on any record.
+    let (mut objects, name, due) = with_guardians();
+    let guardians = held(&objects, &name, due).guardians.expect("named");
+
+    let freeze = act(GUARDIANS_FREEZE);
+    let proofs = guardian::proofs(&freeze);
+    assert_eq!(proofs.len(), 3, "one proof per guardian named");
+    for (proof, (who, salt)) in proofs.iter().zip(guardians_named()) {
+        assert_eq!(proof.guardian, who);
+        assert_eq!(proof.salt, salt);
+        assert!(
+            guardians.holds(proof),
+            "the app's path for {who} leads to the commitment"
+        );
+    }
+    assert_eq!(
+        objects.admit(&freeze, due),
+        Err(Refused::NotAuthorised),
+        "two signatures in the name of accounts that do not exist count as nobody"
+    );
+    assert!(
+        !held(&objects, &name, due).frozen,
+        "so the account is not stopped"
+    );
+
+    let recover = act(RECOVER);
+    assert_eq!(recover.previous.as_ref(), Some(&freeze.called()));
+    for proof in guardian::proofs(&recover) {
+        assert!(
+            guardians.holds(&proof),
+            "the same proofs, and they still hold"
+        );
+    }
+    assert_eq!(
+        objects.admit(&recover, due),
+        Err(Refused::NoSuchPredecessor),
+        "and a recovery following a freeze that was never written down follows nothing"
+    );
 }

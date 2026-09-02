@@ -39,6 +39,17 @@ export interface Preferences {
    * `@/lib/models`, which holds the list this side *can* name.
    */
   model: string | null;
+  /**
+   * Which network this node is for, written by the node itself once it is on one.
+   *
+   * The one entry a person does not choose from Settings: the choice was taken once, in the
+   * walk, and a launch comes back to it without asking.
+   */
+  network: string | null;
+  /** The mesh port the node last took its place on, so the next start takes the same one. */
+  mesh: number | null;
+  /** The address the interface was last served on, for the same reason. */
+  interface: string | null;
 }
 
 /** Nobody has chosen anything. What a first launch has, and what a failed read falls back to. */
@@ -47,6 +58,9 @@ const NOTHING_CHOSEN: Preferences = {
   accent: null,
   language: null,
   model: null,
+  network: null,
+  mesh: null,
+  interface: null,
 };
 
 /** What was read the last time anybody asked the Rust side. */

@@ -34,8 +34,10 @@ use almena_node::{Epoch, Node};
 use almena_store::root::{Published, Root, Witness};
 use almena_store::watching::{Noted, Saw};
 use almena_time::Day;
+use libp2p::multiaddr::Protocol;
 use libp2p::{Multiaddr, PeerId};
 use tokio::sync::RwLock;
+use tokio::time::Instant;
 
 use crate::sync::{Ask, Said};
 use crate::{Asked, Happened, Listening};
@@ -61,6 +63,199 @@ const PAGE: almena_node::Page = almena_node::Page {
 /// Short, because it is a read lock and a comparison — and because the whole point is that an act
 /// does not sit waiting for somebody to happen to ask.
 const NOTICING: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// How long a node waits before dialling an address again the first time it fails or goes.
+///
+/// Short, because the ordinary reason a connection ends is that the other node restarted, and a
+/// node that is coming back is back within seconds. Doubled on every attempt after that.
+const FIRST_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The longest a node waits between two attempts at one address.
+const LONGEST_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How many times an address is dialled again before it is left alone.
+///
+/// **Bounded, because an address that never answers is a fact and not a schedule.** Eight attempts
+/// with the waits doubling is a few minutes of trying; after that the address is left until the
+/// node starts again, or until whoever is behind it dials in — which starts the count afresh,
+/// since it has just proved there is somebody there.
+const ATTEMPTS: u32 = 8;
+
+/// How many addresses out of the record a node dials when it takes its place.
+///
+/// **So that a node holding the record does not depend on anybody's zone to find the others.** The
+/// seeds are whoever the zone named; the record names everybody who ever said where they were. A
+/// handful is enough — the ones that answer tell it the rest — and dialling every address a large
+/// network ever published would be a node announcing itself by knocking on every door at once.
+const FROM_THE_RECORD: usize = 8;
+
+/// The addresses this node was told to dial, and how each of them is doing.
+///
+/// **What makes a parted connection a thing to try again rather than a thing that happened.** The
+/// socket says who went; this is what remembers where they were dialled and decides when to dial
+/// there again — after a wait that grows and is never quite the same twice, so that a network of
+/// nodes losing one node do not all knock on its door in the same instant when it comes back.
+#[derive(Debug, Default)]
+struct Dialling {
+    /// Each address this node has been told about, by the address.
+    addresses: BTreeMap<Multiaddr, Attempting>,
+}
+
+/// How one address is doing.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Attempting {
+    /// Who was found there, or who the address itself says should be, if either is known.
+    peer: Option<PeerId>,
+    /// How many times it has been dialled again since it last gave a connection.
+    made: u32,
+    /// When it is next due to be dialled, while a wait is running.
+    due: Option<Instant>,
+}
+
+impl Dialling {
+    /// Every address this node was told to dial when it took its place.
+    fn of(addresses: Vec<Multiaddr>) -> Self {
+        let mut dialling = Self::default();
+        for address in addresses {
+            dialling.told(address);
+        }
+        dialling
+    }
+
+    /// Take note of an address this node has been told to dial.
+    ///
+    /// The identity the address ends in, when it ends in one, is who is expected there — which is
+    /// what lets somebody who dialled *in* and then went be dialled *back* at the address the
+    /// record gave for them, whether or not this node ever reached them there before.
+    fn told(&mut self, address: Multiaddr) {
+        let expected = address.iter().find_map(|part| match part {
+            Protocol::P2p(peer) => Some(peer),
+            _ => None,
+        });
+        let attempting = self.addresses.entry(address).or_default();
+        if attempting.peer.is_none() {
+            attempting.peer = expected;
+        }
+    }
+
+    /// This node dialled that address and somebody answered there.
+    ///
+    /// The count starts afresh: whatever went wrong before, the address works now.
+    fn reached(&mut self, peer: PeerId, at: &Multiaddr) {
+        let attempting = self.addresses.entry(at.clone()).or_default();
+        *attempting = Attempting {
+            peer: Some(peer),
+            made: 0,
+            due: None,
+        };
+    }
+
+    /// Somebody connected, however the connection came about.
+    ///
+    /// Every address that was theirs starts afresh — including one given up on. They have just
+    /// proved there is somebody there, and what was given up on was the address, not them.
+    fn met(&mut self, peer: &PeerId) {
+        for attempting in self.addresses.values_mut() {
+            if attempting.peer == Some(*peer) {
+                attempting.made = 0;
+                attempting.due = None;
+            }
+        }
+    }
+
+    /// Somebody's last connection ended: every address that was theirs is due again.
+    ///
+    /// What was scheduled comes back, so that whoever asked can say so out loud.
+    fn parted(&mut self, peer: &PeerId, now: Instant) -> Vec<Scheduled> {
+        let theirs: Vec<Multiaddr> = self
+            .addresses
+            .iter()
+            .filter(|(_, attempting)| attempting.peer == Some(*peer))
+            .map(|(address, _)| address.clone())
+            .collect();
+        theirs
+            .into_iter()
+            .map(|address| self.again(&address, now))
+            .collect()
+    }
+
+    /// One address is due again, after a wait that depends on how often it has failed.
+    ///
+    /// **Not while a wait is already running**, and not past the bound: a dial that failed while
+    /// another attempt was pending is the same failure, not a reason to hurry.
+    fn again(&mut self, address: &Multiaddr, now: Instant) -> Scheduled {
+        let attempting = self.addresses.entry(address.clone()).or_default();
+        if attempting.due.is_some() {
+            return Scheduled::Already;
+        }
+        if attempting.made >= ATTEMPTS {
+            return Scheduled::GivenUp {
+                address: address.clone(),
+                attempts: attempting.made,
+            };
+        }
+        let wait = wait_before(attempting.made, address);
+        attempting.due = Some(now + wait);
+        Scheduled::Again {
+            address: address.clone(),
+            attempt: attempting.made + 1,
+            after: wait,
+        }
+    }
+
+    /// Every address whose wait is over, taken as an attempt made.
+    fn due(&mut self, now: Instant) -> Vec<Multiaddr> {
+        let mut ready = Vec::new();
+        for (address, attempting) in &mut self.addresses {
+            if attempting.due.is_some_and(|due| due <= now) {
+                attempting.due = None;
+                attempting.made += 1;
+                ready.push(address.clone());
+            }
+        }
+        ready
+    }
+}
+
+/// What deciding to dial an address again came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Scheduled {
+    /// It will be dialled again, this many attempts in, after this long.
+    Again {
+        /// Where.
+        address: Multiaddr,
+        /// Which attempt this will be, counting from one.
+        attempt: u32,
+        /// How long from now.
+        after: std::time::Duration,
+    },
+    /// It is left alone until the node starts again, or until whoever is there dials in.
+    GivenUp {
+        /// Where.
+        address: Multiaddr,
+        /// How many attempts were made.
+        attempts: u32,
+    },
+    /// A wait was already running, and nothing changed.
+    Already,
+}
+
+/// How long to wait before the next attempt at an address, after this many have failed.
+///
+/// Doubling from [`FIRST_WAIT`] to [`LONGEST_WAIT`], and then moved by up to a quarter either way.
+/// **The jitter is the point, not a refinement**: a node that went away and came back would
+/// otherwise be dialled by everybody that had it, in the same instant, on every attempt. Where
+/// the quarter lands is drawn from the process's own random hasher, which is seeded by the
+/// operating system and costs no dependency.
+fn wait_before(made: u32, address: &Multiaddr) -> std::time::Duration {
+    use std::hash::{BuildHasher, RandomState};
+
+    let doubled = FIRST_WAIT.saturating_mul(1u32 << made.min(16));
+    let base = doubled.min(LONGEST_WAIT).as_millis() as u64;
+    // A number in [0, base / 2), so that the wait lands anywhere in [3/4 base, 5/4 base).
+    let drawn = RandomState::new().hash_one((address.to_vec(), made)) % (base / 2).max(1);
+    std::time::Duration::from_millis(base - base / 4 + drawn)
+}
 
 /// What this node last noticed about itself, so that it can tell when there is something to say.
 ///
@@ -262,9 +457,12 @@ impl ReadSoFar {
 
 /// Keep up with the network, for as long as this is polled.
 ///
-/// `seeds` is where to start: whoever the zone named. Nothing else is dialled, because nothing
-/// else is known yet — the census that would name the rest lives in the record, and reading it is
-/// what this is for.
+/// `seeds` is where to start: whoever the zone named. Beside them, a bounded handful of the
+/// addresses the record says other nodes can be reached at are dialled too, so that a node which
+/// already holds the record finds the others without anybody's zone — and whoever goes away is
+/// dialled again after a wait, a bounded number of times, because the ordinary reason a
+/// connection ends is that the other node restarted. Who is connected at any moment is readable
+/// through the [`crate::Peers`] handle taken off the socket before it is handed over.
 ///
 /// `clock` says what epoch it is, asked each time rather than captured once, so that an act
 /// arriving after an epoch boundary is admitted against the epoch it arrives in.
@@ -333,7 +531,7 @@ pub async fn watching<C>(
         node,
         watched,
     } = present;
-    taking_our_place(listening, node, seeds, clock()).await;
+    let mut dialling = Dialling::of(taking_our_place(listening, node, seeds, clock()).await);
 
     let mut read = ReadSoFar::default();
     let mut asking = tokio::time::interval(every);
@@ -348,6 +546,7 @@ pub async fn watching<C>(
     loop {
         tokio::select! {
             _ = looking.tick() => {
+                dialling_again(listening, &mut dialling, Instant::now());
                 summarising(node, &mut read, &mut summarised, clock()).await;
                 writing_down(node, watched, clock()).await;
                 asking_who_holds(listening, node, &mut read, clock()).await;
@@ -359,7 +558,14 @@ pub async fn watching<C>(
                 asking_everybody(listening, &mut read, noticed, clock());
             }
             happened = listening.next() => {
-                let doing = Doing { listening, node, read: &mut read, watched, noticed };
+                let doing = Doing {
+                    listening,
+                    node,
+                    read: &mut read,
+                    watched,
+                    noticed,
+                    dialling: &mut dialling,
+                };
                 something_happened(doing, happened, clock()).await;
             }
         }
@@ -382,6 +588,8 @@ struct Doing<'a> {
     watched: &'a Watched,
     /// Where this node's own record had got to when it last looked.
     noticed: Noticed,
+    /// Where this node was told to dial, and which of those are due again.
+    dialling: &'a mut Dialling,
 }
 
 /// Act on one thing the mesh reported.
@@ -396,16 +604,11 @@ async fn something_happened(doing: Doing<'_>, happened: Happened, now: Epoch) {
         read,
         watched,
         noticed,
+        dialling,
     } = doing;
     match happened {
         Happened::Met(peer, how) => {
-            // Only where this node dialled them and was answered. Being dialled says where
-            // somebody came from, not where they can be found — and it is kept as this
-            // node's own observation either way, never written into the record: what a node
-            // says about itself is everybody's, what one node found is one node's.
-            if let (crate::Meeting::Dialled(at), Some(key)) = (&how, crate::whose::key_of(&peer)) {
-                node.write().await.reached(key, at.to_string());
-            }
+            meeting(node, dialling, peer, &how).await;
             asking_one(listening, read, peer, noticed, now);
         }
         Happened::Asked(peer, question, back) => {
@@ -428,7 +631,17 @@ async fn something_happened(doing: Doing<'_>, happened: Happened, now: Epoch) {
         }
         // Whatever was asked of somebody who has gone is not coming. Holding the question
         // open would mean never asking them again if they came back.
-        Happened::Parted(peer) => read.gone(&peer),
+        Happened::Parted(peer) => {
+            read.gone(&peer);
+            parting(dialling, &peer);
+        }
+        // Nobody answered there. Not a fault of anybody's yet — a seed that is still coming up
+        // looks exactly like one that is gone — so it is tried again, later, a bounded number
+        // of times.
+        Happened::NotReached(address) => {
+            log::info!("mesh_not_reached address={address}");
+            saying_scheduled(&dialling.again(&address, Instant::now()));
+        }
         // **The same treatment, and never a note against them.** A question that cannot be answered
         // is a question this node has to stop waiting for, and the reason is worth having in the
         // event and worth leaving out of any figure: somebody on another network did not fail to
@@ -440,15 +653,7 @@ async fn something_happened(doing: Doing<'_>, happened: Happened, now: Epoch) {
         // on its operator's behalf what the network is told. A circuit is granted: nobody, the node
         // included, knows it before a relay agrees, so a node that did not say it here would never
         // say it, and a node behind a household router would be reachable and unfindable.
-        Happened::Carried(address) => {
-            // Through a relay nobody else could reach is no way in either, and publishing it would
-            // put a place into the count of where the network is that is true of every machine.
-            if crate::worth_publishing(&address) {
-                node.write()
-                    .await
-                    .also_reachable_at(&BTreeSet::from([address.to_string()]), now);
-            }
-        }
+        Happened::Carried(address) => carried(node, &address, now).await,
         // What the operating system granted is reported and not written down. Whoever runs the node
         // decides what it says about where it is.
         Happened::Reachable(_) => {}
@@ -456,22 +661,89 @@ async fn something_happened(doing: Doing<'_>, happened: Happened, now: Epoch) {
     }
 }
 
+/// Say in the record that a relay has agreed to carry this node, there.
+///
+/// Through a relay nobody else could reach is no way in either, and publishing it would put a
+/// place into the count of where the network is that is true of every machine.
+async fn carried(node: &Arc<RwLock<Node>>, address: &Multiaddr, now: Epoch) {
+    if crate::worth_publishing(address) {
+        node.write()
+            .await
+            .also_reachable_at(&BTreeSet::from([address.to_string()]), now);
+    }
+}
+
+/// Take note of having met somebody, and of how.
+///
+/// Only where this node dialled them and was answered is written down as somewhere they were
+/// reached. Being dialled says where somebody came from, not where they can be found — and it is
+/// kept as this node's own observation either way, never written into the record: what a node
+/// says about itself is everybody's, what one node found is one node's.
+async fn meeting(
+    node: &Arc<RwLock<Node>>,
+    dialling: &mut Dialling,
+    peer: PeerId,
+    how: &crate::Meeting,
+) {
+    match how {
+        crate::Meeting::Dialled(at) => {
+            if let Some(key) = crate::whose::key_of(&peer) {
+                node.write().await.reached(key, at.to_string());
+            }
+            dialling.reached(peer, at);
+        }
+        crate::Meeting::Answered => dialling.met(&peer),
+    }
+}
+
+/// Somebody's last connection ended: dial them again, later, at every address that was theirs.
+///
+/// **Because the ordinary reason a connection ends is that the other node restarted** and will be
+/// back within seconds. A node that noticed and did nothing would be reachable afterwards only by
+/// whoever happened to dial it, and two seeds that both restarted would each wait for the other.
+fn parting(dialling: &mut Dialling, peer: &PeerId) {
+    log::info!("mesh_parted peer={peer}");
+    for scheduled in dialling.parted(peer, Instant::now()) {
+        saying_scheduled(&scheduled);
+    }
+}
+
 /// Everything a node does once, at the moment it takes its place on the mesh.
 ///
-/// Dialling whoever the zone named, and saying in the record what this node turns out to be running
-/// — which is read from the socket rather than from whatever a face was told, because what a node
-/// offers is counted across the network and a figure drawn from what somebody meant to switch on
-/// would count machines that carry nothing.
+/// Dialling whoever the zone named and whoever the record says can be reached somewhere, and saying
+/// in the record what this node turns out to be running — which is read from the socket rather
+/// than from whatever a face was told, because what a node offers is counted across the network
+/// and a figure drawn from what somebody meant to switch on would count machines that carry
+/// nothing.
+///
+/// Returns every address it dialled, so that whoever keeps up can dial them again when they go.
 async fn taking_our_place(
     listening: &mut Listening,
     node: &Arc<RwLock<Node>>,
     seeds: Vec<Multiaddr>,
     now: Epoch,
-) {
+) -> Vec<Multiaddr> {
+    let mut dialled: Vec<Multiaddr> = Vec::new();
     for seed in seeds {
         // A seed that cannot be dialled is one node not reached, not a reason to stop before
         // trying the others. Which of them answers is not this node's to decide.
-        let _ = listening.dial(seed);
+        if listening.dial(seed.clone()).is_ok() {
+            log::info!("mesh_dialling address={seed} from=seeds");
+            dialled.push(seed);
+        }
+    }
+    // **What the record says, so that a node that holds it needs nobody's zone to find the rest.**
+    // A node that came back after a restart holds every address anybody ever published about
+    // themselves; leaving it to wait for a zone lookup — or for somebody else to happen to dial
+    // it — would leave two restarted seeds each waiting for the other.
+    for address in where_the_record_says(node, now).await {
+        if dialled.contains(&address) {
+            continue;
+        }
+        if listening.dial(address.clone()).is_ok() {
+            log::info!("mesh_dialling address={address} from=record");
+            dialled.push(address);
+        }
     }
     if listening.carries() {
         node.write()
@@ -492,6 +764,100 @@ async fn taking_our_place(
         .collect();
     if !already.is_empty() {
         node.write().await.also_reachable_at(&already, now);
+    }
+    dialled
+}
+
+/// Where the record says the other nodes can be reached, with each address naming its node.
+///
+/// **A few from each before more from any**, so that a node whose neighbour published five
+/// addresses still dials somebody else too; and bounded, because the ones that answer will say
+/// who else is there. Every address is given the identity of the node the record attributes it
+/// to, which is what makes dialling a stranger's address safe: whoever answers has to hold that
+/// key, and an address the record says leads to somebody else entirely is not dialled at all.
+async fn where_the_record_says(node: &Arc<RwLock<Node>>, now: Epoch) -> Vec<Multiaddr> {
+    let node = node.read().await;
+    let mine = node.did().name().clone();
+    let (_, census) = node.share_out(now);
+
+    let mut each: Vec<Vec<Multiaddr>> = Vec::new();
+    for name in census {
+        if *name == mine {
+            continue;
+        }
+        let almena_node::Answer::Here(almena_node::State::Node { key, reachable, .. }) =
+            node.resolve(name, now).answer
+        else {
+            continue;
+        };
+        let Some(peer) = crate::whose::name_of(&key) else {
+            continue;
+        };
+        let theirs: Vec<Multiaddr> = reachable
+            .iter()
+            .filter_map(|address| address.parse::<Multiaddr>().ok())
+            .filter_map(|address| naming(address, peer))
+            .collect();
+        if !theirs.is_empty() {
+            each.push(theirs);
+        }
+    }
+
+    let mut chosen = Vec::new();
+    let most = each.iter().map(Vec::len).max().unwrap_or(0);
+    for which in 0..most {
+        for theirs in &each {
+            if let Some(address) = theirs.get(which) {
+                chosen.push(address.clone());
+                if chosen.len() >= FROM_THE_RECORD {
+                    return chosen;
+                }
+            }
+        }
+    }
+    chosen
+}
+
+/// An address with the node it is supposed to lead to on the end of it.
+///
+/// [`None`] when it already names somebody else: the record says this node is reachable through
+/// an address that ends in another identity, and dialling it would be dialling that other node.
+fn naming(address: Multiaddr, peer: PeerId) -> Option<Multiaddr> {
+    match address.iter().last() {
+        Some(Protocol::P2p(named)) if named == peer => Some(address),
+        Some(Protocol::P2p(_)) => None,
+        _ => Some(address.with(Protocol::P2p(peer))),
+    }
+}
+
+/// Dial every address whose wait is over.
+///
+/// A dial that cannot be made at all is scheduled again like one that was made and failed: the
+/// address is the same address, and the bound on attempts is what stops it being tried for ever.
+fn dialling_again(listening: &mut Listening, dialling: &mut Dialling, now: Instant) {
+    for address in dialling.due(now) {
+        log::info!("mesh_dialling_again address={address}");
+        if listening.dial(address.clone()).is_err() {
+            saying_scheduled(&dialling.again(&address, now));
+        }
+    }
+}
+
+/// Say what was decided about dialling an address again, as a line somebody can search for.
+fn saying_scheduled(scheduled: &Scheduled) {
+    match scheduled {
+        Scheduled::Again {
+            address,
+            attempt,
+            after,
+        } => log::info!(
+            "mesh_dialling_later address={address} attempt={attempt} of={ATTEMPTS} in_ms={}",
+            after.as_millis()
+        ),
+        Scheduled::GivenUp { address, attempts } => {
+            log::info!("mesh_gave_up address={address} attempts={attempts}");
+        }
+        Scheduled::Already => {}
     }
 }
 
@@ -1197,12 +1563,158 @@ pub async fn fetch(
 
 #[cfg(test)]
 mod tests {
-    use super::ReadSoFar;
+    use super::{
+        ATTEMPTS, Dialling, FIRST_WAIT, LONGEST_WAIT, ReadSoFar, Scheduled, naming, summarising,
+    };
     use crate::Asked;
     use crate::sync::Said;
     use almena_format::identifier::Name;
-    use almena_node::Epoch;
-    use libp2p::PeerId;
+    use almena_node::{Epoch, Node};
+    use almena_time::Day;
+    use libp2p::multiaddr::Protocol;
+    use libp2p::{Multiaddr, PeerId};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use tokio::time::Instant;
+
+    /// An address ending in somebody's identity, as a seed's does.
+    fn somewhere(peer: PeerId) -> Multiaddr {
+        let Ok(address) = "/ip4/198.51.100.7/tcp/4001".parse::<Multiaddr>() else {
+            panic!("an address")
+        };
+        address.with(Protocol::P2p(peer))
+    }
+
+    #[test]
+    fn somebody_who_parted_is_due_again_at_every_address_that_was_theirs() {
+        // **What makes a parted connection a thing to try again.** The socket says who went; this
+        // remembers where they were dialled and puts it back on the list.
+        let peer = PeerId::random();
+        let mut dialling = Dialling::default();
+        let address = somewhere(peer);
+        dialling.told(address.clone());
+        dialling.reached(peer, &address);
+
+        let now = Instant::now();
+        let scheduled = dialling.parted(&peer, now);
+        assert!(
+            matches!(&scheduled[..], [Scheduled::Again { address: at, attempt: 1, .. }] if *at == address),
+            "{scheduled:?}"
+        );
+        assert!(
+            dialling.due(now).is_empty(),
+            "not yet: the wait has not run"
+        );
+        assert_eq!(
+            dialling.due(now + LONGEST_WAIT),
+            vec![address],
+            "and once it has, the address is handed back to be dialled"
+        );
+    }
+
+    #[test]
+    fn an_address_that_names_somebody_is_theirs_before_they_are_ever_reached() {
+        // Somebody who dialled in and went is dialled back at the address the record gave for
+        // them, whether or not this node ever got through there before.
+        let peer = PeerId::random();
+        let mut dialling = Dialling::default();
+        dialling.told(somewhere(peer));
+        assert_eq!(dialling.parted(&peer, Instant::now()).len(), 1);
+        assert!(
+            dialling
+                .parted(&PeerId::random(), Instant::now())
+                .is_empty(),
+            "and somebody else's going leaves it alone"
+        );
+    }
+
+    #[test]
+    fn a_wait_already_running_is_not_started_again() {
+        let peer = PeerId::random();
+        let mut dialling = Dialling::default();
+        let address = somewhere(peer);
+        dialling.told(address.clone());
+        let now = Instant::now();
+        assert!(matches!(
+            dialling.again(&address, now),
+            Scheduled::Again { .. }
+        ));
+        assert_eq!(dialling.again(&address, now), Scheduled::Already);
+    }
+
+    #[test]
+    fn the_waits_grow_and_the_attempts_run_out() {
+        // **Bounded, because an address that never answers is a fact and not a schedule.** And
+        // growing, so that a network of nodes losing one do not keep knocking at the same rate.
+        let peer = PeerId::random();
+        let mut dialling = Dialling::default();
+        let address = somewhere(peer);
+        dialling.told(address.clone());
+        let mut now = Instant::now();
+        let mut waits = Vec::new();
+        for attempt in 1..=ATTEMPTS {
+            let Scheduled::Again {
+                attempt: said,
+                after,
+                ..
+            } = dialling.again(&address, now)
+            else {
+                panic!("attempt {attempt} should be scheduled")
+            };
+            assert_eq!(said, attempt);
+            waits.push(after);
+            now += after;
+            assert_eq!(dialling.due(now), vec![address.clone()]);
+        }
+        assert!(
+            matches!(
+                dialling.again(&address, now),
+                Scheduled::GivenUp { attempts, .. } if attempts == ATTEMPTS
+            ),
+            "and after that it is left alone"
+        );
+        assert!(waits[0] >= FIRST_WAIT * 3 / 4 && waits[0] < FIRST_WAIT * 5 / 4);
+        assert!(
+            waits.iter().all(|wait| *wait < LONGEST_WAIT * 5 / 4),
+            "{waits:?}"
+        );
+        assert!(waits[3] > waits[0], "later waits are longer: {waits:?}");
+
+        // Until they come back of their own accord, which starts the count afresh.
+        dialling.met(&peer);
+        assert!(matches!(
+            dialling.again(&address, now),
+            Scheduled::Again { attempt: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn an_address_out_of_the_record_is_given_the_node_it_belongs_to() {
+        // Whoever answers has to hold that key, or an address in the record would be a way of
+        // having a node speak to whoever took a host and a port.
+        let peer = PeerId::random();
+        let Ok(bare) = "/ip4/198.51.100.7/tcp/4001".parse::<Multiaddr>() else {
+            panic!("an address")
+        };
+        assert_eq!(naming(bare.clone(), peer), Some(somewhere(peer)));
+        assert_eq!(
+            naming(somewhere(peer), peer),
+            Some(somewhere(peer)),
+            "one that already names them is left as it is"
+        );
+        assert_eq!(
+            naming(somewhere(PeerId::random()), peer),
+            None,
+            "and one that names somebody else is not dialled at all"
+        );
+        // A circuit names the relay before the circuit, and the node after it.
+        let relay = PeerId::random();
+        let circuit = bare.with(Protocol::P2p(relay)).with(Protocol::P2pCircuit);
+        assert_eq!(
+            naming(circuit.clone(), peer),
+            Some(circuit.with(Protocol::P2p(peer)))
+        );
+    }
 
     /// A root somebody signed, and the name they answer to on the mesh.
     fn signed(seed: u8, epoch: u64, over: &[u8]) -> (libp2p::PeerId, Vec<u8>, Name) {
@@ -1496,6 +2008,137 @@ mod tests {
             read.handed_over(peer, Asked::numbered(9), &said),
             None,
             "and neither is an answer to a different one"
+        );
+    }
+
+    /// A real node on a development network, opened in memory with a key of its own.
+    fn a_node() -> Node {
+        let opening = almena_node::Opening {
+            which: almena_node::Which::Development,
+            beginning: Epoch::GENESIS,
+            began: 1_800_000_000,
+        };
+        let government = almena_suite::ed25519::SigningKey::from_secret([5; 32]);
+        let own = almena_suite::ed25519::SigningKey::from_secret([6; 32]);
+        Node::open(&opening, &[], &government, own).expect("nobody to join")
+    }
+
+    /// Where the node's own chain stands on summarising itself.
+    async fn standing_of(
+        node: &Arc<RwLock<Node>>,
+        at: Epoch,
+    ) -> Option<almena_store::chain::Standing> {
+        let node = node.read().await;
+        node.standing(node.did(), at).answer
+    }
+
+    /// The daily summaries on the node's own chain, as acts, in the order it wrote them.
+    async fn daily_summaries(
+        node: &Arc<RwLock<Node>>,
+        now: Epoch,
+    ) -> Vec<almena_format::operation::Operation> {
+        let node = node.read().await;
+        node.chain_of(node.did(), now)
+            .answer
+            .iter()
+            .filter(|entry| entry.kind == almena_store::kind::Kind::NODE_SUMMARY.number())
+            .filter_map(|entry| node.act(&entry.hash, now).answer)
+            .filter_map(|bytes| {
+                almena_format::cbor::read(&bytes)
+                    .ok()
+                    .and_then(|value| almena_format::operation::read(&value))
+            })
+            .collect()
+    }
+
+    /// Somebody else announced on this node's record, and the name they answer to on the mesh.
+    ///
+    /// Whom this node keeps asking and who keeps answering: the one condition under which a day
+    /// is worth writing down at all.
+    async fn somebody_else(node: &Arc<RwLock<Node>>) -> PeerId {
+        let their_key = almena_suite::ed25519::SigningKey::from_secret([7; 32]);
+        let announced = almena_store::announce::announce(
+            almena_node::Which::Development,
+            Epoch::GENESIS,
+            &their_key,
+        );
+        node.write()
+            .await
+            .submit(&announced.operation, Epoch::GENESIS)
+            .expect("announced");
+        crate::identity(&their_key)
+            .expect("a key")
+            .public()
+            .to_peer_id()
+    }
+
+    /// What the day's summary said about the node itself, held against what the record said it
+    /// stood to say just before it was written.
+    async fn said_about_itself(
+        node: &Arc<RwLock<Node>>,
+        day: u64,
+        standing: &almena_store::chain::Standing,
+        after: Epoch,
+    ) {
+        let written = daily_summaries(node, after).await;
+        let today = written
+            .last()
+            .expect("a day with somebody in it is written down");
+        let declared = almena_store::checkpoint::declared(today).expect("readable");
+        if standing.owed {
+            assert_eq!(
+                declared.as_deref(),
+                Some(standing.claims.as_slice()),
+                "day {day}: the summary it owed rides on the daily act, as the record stood"
+            );
+            assert_eq!(
+                standing_of(node, after)
+                    .await
+                    .map(|standing| standing.since),
+                Some(0),
+                "and the count starts again"
+            );
+        } else {
+            assert_eq!(
+                declared, None,
+                "day {day}: a chain that owes nothing says nothing about itself"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_daily_summary_carries_the_node_s_own_summary_once_its_chain_owes_one() {
+        // A node's chain grows by one daily summary for as long as it runs and nothing ever
+        // shortens it, so after a month it owes a summary of itself like any object that has
+        // written that much — and nobody is watching a node's screen to be warned. The act it
+        // writes every day is the carrier: the day the record says one is owed, that day's summary
+        // says what the node is, cited to the acts that made it so, and the count starts again.
+        let node = Arc::new(RwLock::new(a_node()));
+        let every = almena_store::parameter::SUMMARISE_EVERY.now();
+        let them = somebody_else(&node).await;
+
+        let mut read = ReadSoFar::default();
+        let mut already = None;
+        let mut carried_on: Option<u64> = None;
+        for day in 1..=(every + 1) {
+            let during = Day::new(day).begins();
+            read.asked(them, Asked::numbered(day), during);
+            read.answered(them, Asked::numbered(day), 0, during);
+            let after = Day::new(day + 1).begins();
+
+            let standing = standing_of(&node, after)
+                .await
+                .expect("a node's own chain has parts a summary can claim");
+            summarising(&node, &mut read, &mut already, after).await;
+            said_about_itself(&node, day, &standing, after).await;
+            if standing.owed {
+                carried_on.get_or_insert(day);
+            }
+        }
+        assert_eq!(
+            carried_on,
+            Some(every),
+            "owed once the announcement and the summaries before it add up to the interval"
         );
     }
 }

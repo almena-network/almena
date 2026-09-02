@@ -40,15 +40,30 @@ pub const SUMMARISE_EVERY: Parameter = Parameter::from(&[(Epoch::GENESIS, 32)]);
 /// value, versioned like the rest: if it ever pinches it goes up.
 pub const CONTROL_PENDING_MOST: Parameter = Parameter::from(&[(Epoch::GENESIS, 64)]);
 
+/// How long every observer has to have found a node silent before the share-out stops counting it.
+///
+/// **Three days, in epochs, and it is a starting value.** A node dealt a share it cannot serve is
+/// a copy that does not exist, so a node that has gone should stop being dealt one — but *gone*
+/// has to be read off the record, where the only thing written down is what other nodes saw of
+/// it day by day, or two honest nodes would share the record out differently. Three days is
+/// three of those summaries: long enough that a reboot, a weekend outage or one observer with a
+/// broken route does not re-deal a node's whole share to its neighbours, and short enough that a
+/// machine somebody switched off is not counted as holding things for a month.
+///
+/// A node found silent stops being counted in the share-out and in nothing else: what it said
+/// stays said and the capacity figures go on counting it, as silent.
+pub const DEPARTED_AFTER: Parameter =
+    Parameter::from(&[(Epoch::GENESIS, 3 * almena_time::EPOCHS_PER_DAY)]);
+
 #[cfg(test)]
 mod tests {
-    use super::{CONTROL_PENDING_MOST, SUMMARISE_EVERY};
+    use super::{CONTROL_PENDING_MOST, DEPARTED_AFTER, SUMMARISE_EVERY};
     use almena_time::Epoch;
 
     #[test]
     fn each_of_them_starts_at_the_genesis() {
         // A parameter with a gap at the beginning would be one with acts nothing could judge.
-        for parameter in [SUMMARISE_EVERY, CONTROL_PENDING_MOST] {
+        for parameter in [SUMMARISE_EVERY, CONTROL_PENDING_MOST, DEPARTED_AFTER] {
             assert_eq!(parameter.settings()[0].0, Epoch::GENESIS, "{parameter:?}");
         }
     }
@@ -57,5 +72,6 @@ mod tests {
     fn what_they_are_now_is_what_somebody_about_to_sign_is_held_to() {
         assert_eq!(SUMMARISE_EVERY.now(), 32);
         assert_eq!(CONTROL_PENDING_MOST.now(), 64);
+        assert_eq!(DEPARTED_AFTER.now(), 72, "three days of twenty-four epochs");
     }
 }

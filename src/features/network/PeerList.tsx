@@ -5,26 +5,21 @@
  *
  * - **Nobody has looked yet.** Before the first reading comes back, saying "no peers" would be
  *   reporting a result nobody obtained. That it is only true for a moment is not a defence.
- * - **There is no network to have peers on.** `peers` is `null`: nothing was counted, because
- *   there is nothing to count. This is where this build lives.
- * - **There is a network and it has no peers.** `peers` is an empty array: somebody counted,
- *   and the answer is none. Unreachable today and written anyway, because the day it happens
- *   it must not borrow the sentence above.
+ * - **Nothing has been counted.** `peers` is `null`: the node is on no network, or has not taken
+ *   its place on the mesh yet, and either way nobody has counted.
+ * - **There is a mesh and nobody is on the other end of it.** `peers` is nought: somebody
+ *   counted, and the answer is none.
+ *
+ * What is drawn when there are some is the count, because the count is what the mesh hands over:
+ * who is connected is a fact about sockets, and which node each one is would be a claim this
+ * screen has not checked against the record.
  */
 
 import { Radio, Unplug, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import EmptyState from "@/components/EmptyState";
-import StateBadge from "@/components/StateBadge";
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemTitle,
-} from "@/components/ui/item";
+import { Item, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item";
 import type { NetworkReading } from "@/lib/network";
 
 /** What the list is drawn from. */
@@ -57,7 +52,7 @@ function PeerList({ reading }: PeerListProps) {
     );
   }
 
-  if (reading.peers.length === 0) {
+  if (reading.peers === 0) {
     return (
       <EmptyState
         icon={<Users aria-hidden="true" />}
@@ -69,29 +64,13 @@ function PeerList({ reading }: PeerListProps) {
 
   return (
     <ItemGroup aria-label={t("network.peers.heading")} className="gap-1">
-      {reading.peers.map((peer) => (
-        // `role` is given rather than left off: `ItemGroup` is a list to a screen reader, and
-        // a list whose children are not entries is one nothing can count.
-        <Item key={peer.id} role="listitem" variant="muted" size="sm">
-          <ItemContent>
-            {/* A peer's name may be an IPv6 address or a key. It wraps rather than
-                overflowing: there is no horizontal scrolling anywhere here. */}
-            <ItemTitle className="block w-auto font-mono break-all whitespace-normal">
-              {peer.id}
-            </ItemTitle>
-            <ItemDescription className="font-mono break-all">
-              {peer.address}
-            </ItemDescription>
-          </ItemContent>
-
-          <ItemActions>
-            <StateBadge
-              tone={peer.health}
-              label={t(`network.health.${peer.health}`)}
-            />
-          </ItemActions>
-        </Item>
-      ))}
+      {/* `role` is given rather than left off: `ItemGroup` is a list to a screen reader, and a
+          list whose children are not entries is one nothing can count. */}
+      <Item role="listitem" variant="muted" size="sm">
+        <ItemContent>
+          <ItemTitle>{t("network.peers.connected", { count: reading.peers })}</ItemTitle>
+        </ItemContent>
+      </Item>
     </ItemGroup>
   );
 }

@@ -11,5 +11,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# The node's own key signs the certificate it serves under: one key, and no second census.
+almena-suite = { workspace = true }
 rustls-pki-types = { workspace = true }
 tokio-rustls = { workspace = true }
+
+[dev-dependencies]
+# A handshake in memory, so that the pair is proved against a real client and not by inspection.
+tokio = { workspace = true, features = ["rt", "macros", "io-util"] }

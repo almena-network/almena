@@ -72,6 +72,11 @@ pub mod watching;
 ///
 /// [`None`] for everything else, which is most acts: an act about its own author says so by being
 /// on that author's chain, and saying it twice would be a hundred bytes in every copy for ever.
+///
+/// **What can be read off the act alone.** A reply is about whoever the decision it answers was
+/// about, and that is the record's to say — [`chain::Objects::subject_of`] answers it with the
+/// record to hand and falls back to this for everything else. A node writing an entry asks the
+/// record; a checker rebuilding one from the act alone gets this, and so cannot rebuild a reply's.
 #[must_use]
 pub fn subject_of(
     operation: &almena_format::operation::Operation,

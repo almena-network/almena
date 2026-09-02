@@ -48,6 +48,7 @@
 pub mod directory;
 pub mod facade;
 pub mod found;
+pub mod government;
 pub mod identity;
 pub mod peer;
 pub mod record;
@@ -55,6 +56,9 @@ pub mod zone;
 
 // What a face needs in order to call any of this, re-exported so that a face never reaches past
 // the core to get it. A door somebody has to go around is a door.
+pub use almena_format::identifier::{Did, Name};
+pub use almena_store::capability::Capability;
+pub use almena_store::certification::Grade;
 pub use almena_store::chain::{Admitted, Answer, Reason, State};
 pub use almena_store::genesis::{Opening, Which};
 pub use almena_store::parameter::Parameter;
@@ -64,7 +68,6 @@ pub use almena_time::{Epoch, Epochs};
 
 use std::collections::BTreeMap;
 
-use almena_format::identifier::{Did, Name};
 use almena_format::operation::Operation;
 use almena_store::announce;
 use almena_store::chain::{Objects, Refused};
@@ -520,7 +523,13 @@ impl Node {
         operation: &Operation,
         now: Epoch,
     ) -> Result<Answered<Admitted>, NotTaken> {
-        let admitted = self.objects.admit(operation, now)?;
+        // With this node's own record to hand, so that a fork is judged against the state at the
+        // predecessor it claims — rebuilt from the acts this node holds — and never against the
+        // head of whichever branch arrived first.
+        let held = &self.log;
+        let admitted = self.objects.admit_from(operation, now, &|name| {
+            held.act(name).and_then(operation_from)
+        })?;
 
         // **An act this node already held is written down once and no more.** Acts arrive twice by
         // design, and a second copy in the record would be a second position in the tree, a second
@@ -555,7 +564,12 @@ impl Node {
             return Err(Refused::NotKept);
         }
 
-        let entry = self.log.append(operation, subject_of(operation));
+        // Asked of the record and not of the act alone, because a reply is about whoever the
+        // decision it answers was about, and only the record can say who that is. Admitted first,
+        // so what it answers is already here to be read.
+        let entry = self
+            .log
+            .append(operation, self.objects.subject_of(operation));
         if let Some(keeping) = self.record.as_mut()
             && keeping.noted(&entry).is_err()
         {
@@ -751,18 +765,30 @@ impl Node {
         self.stamped(self.log.act(hash).map(<[u8]>::to_vec), now)
     }
 
-    /// Everything written down about somebody other than its author.
+    /// The log entries of everything said about somebody, in the order this node wrote them.
     ///
-    /// **[`None`] is not the same as an empty list, and this returns [`None`] today.** No act
-    /// carries a subject yet, because the three that will — a certification, a vote, a
-    /// contradiction — are not built. An empty list here would read as *nobody has certified this
-    /// entity*, which is a claim, and a false one: nobody has been able to.
+    /// **The entries and not only the names**, because a name alone does not let a reader tell a
+    /// seal from a withdrawal from a contradiction without fetching each act — and the entry
+    /// already says what kind of act it is, which is what the log carries the kind for. There was
+    /// an answer of names alone beside this one; it went, because two answers to one question are
+    /// two readers that drift apart, and a reader holding only names had to fetch every act to
+    /// learn what it was holding.
     ///
-    /// *Nobody has looked yet* and *somebody looked and there is nothing* are different facts, and
-    /// a caller that cannot tell them apart will publish the wrong one.
+    /// **[`None`] is not the same as an empty list.** An empty list is *somebody looked and there
+    /// is nothing*, which is a fact about the record; [`None`] would be *the question cannot be
+    /// asked here yet*, which stopped being true the day the first act that carries a subject
+    /// existed. *Nobody has looked yet* and *somebody looked and there is nothing* are different
+    /// facts, and a caller that cannot tell them apart will publish the wrong one.
     #[must_use]
-    pub fn about(&self, subject: &Did, now: Epoch) -> Answered<Option<Vec<Name>>> {
-        self.stamped(self.about_hashes(subject), now)
+    pub fn said_about(
+        &self,
+        subject: &Did,
+        now: Epoch,
+    ) -> Answered<Option<Vec<almena_format::entry::Entry>>> {
+        let said: Vec<almena_format::entry::Entry> =
+            self.log.about(subject).into_iter().cloned().collect();
+        let answer = (!said.is_empty() || ANYTHING_CARRIES_A_SUBJECT).then_some(said);
+        self.stamped(answer, now)
     }
 
     /// Where an act sits in this node's tree, and the path that proves it.
@@ -1059,6 +1085,21 @@ impl Node {
     #[must_use]
     pub fn share_out(&self, at: Epoch) -> (Name, Vec<&Name>) {
         (self.network().clone(), self.objects.nodes_at(at).collect())
+    }
+
+    /// How many nodes the record's own observers have lately found answering nothing.
+    ///
+    /// **A fact from the record and not a measurement of this node's**, which is why both faces
+    /// may draw it beside the peer count without the two being confused: the peer count is who this
+    /// node is connected to right now, and this is who the daily summaries everybody holds say has
+    /// gone quiet. Those nodes still count in every capacity figure — a node that stopped answering
+    /// has not closed, and nobody may say it has — and are left out of the share-out alone, so that
+    /// what falls to the ones still here is not thinned by the ones that are not.
+    ///
+    /// Nought is a count somebody took: a network of one, or one where everybody answered.
+    #[must_use]
+    pub fn departed(&self, now: Epoch) -> usize {
+        self.objects.departed_at(now).count()
     }
 
     /// Whether a thing falls to this node in the share-out.
@@ -1639,6 +1680,186 @@ impl Node {
         }
     }
 
+    /// Publish the core Almena maintains, as Almena Government, skipping what the record holds.
+    ///
+    /// **Sources first, then the attributes copied from them, then the purposes** — an attribute
+    /// names the source it was copied from by the identifier the act admitting that source was
+    /// given, so the order is not a preference. Every act goes through this node's own admission
+    /// like one a stranger handed over: nothing is written down because the government wrote it.
+    ///
+    /// **Idempotent against the record.** A source, attribute or purpose the catalogue already
+    /// lists — by name, by claim, by name — is not published again, so running this twice on the
+    /// same network costs nothing and a run cut short is finished by running it again. The what is
+    /// published is `almena_store::core`'s data and nothing typed on the day.
+    ///
+    /// # Errors
+    ///
+    /// The first refusal, which stops the run where it stood: an act refused is a key that is not
+    /// the government's or a record the government cannot write on, and either is worth stopping
+    /// over rather than publishing the rest around it.
+    pub fn publish_core(
+        &mut self,
+        government: &ed25519::SigningKey,
+        now: Epoch,
+    ) -> Result<CorePublished, Refused> {
+        let by = self.government.clone();
+        let marking = self.which_marking();
+        let mut published = CorePublished::default();
+        let (mut sources, attributes, purposes) = self.core_held();
+
+        for source in almena_store::core::SOURCES {
+            if sources.contains_key(source.name) {
+                published.already += 1;
+                continue;
+            }
+            let act = almena_store::core::admitting(source, &by, marking, now);
+            let act = signed_as(act, &by, government);
+            self.submit(&act, now)?;
+            sources.insert(source.name.to_owned(), act.object.clone());
+            published.sources += 1;
+        }
+        for one in almena_store::core::CORE {
+            if attributes.contains(one.claim) {
+                published.already += 1;
+                continue;
+            }
+            // A source the core names and nobody admitted: the data would refuse its own test.
+            let from = sources.get(one.source).ok_or(Refused::Malformed)?;
+            let act = signed_as(
+                almena_store::core::publishing(one, from, &by, now),
+                &by,
+                government,
+            );
+            self.submit(&act, now)?;
+            published.attributes += 1;
+        }
+        for purpose in almena_store::core::PURPOSES {
+            if purposes.contains(purpose.name) {
+                published.already += 1;
+                continue;
+            }
+            let act = almena_store::core::adding(purpose, &by, marking, now);
+            self.submit(&signed_as(act, &by, government), now)?;
+            published.purposes += 1;
+        }
+        Ok(published)
+    }
+
+    /// What of the core the record already holds: sources by name, attributes by claim, purposes
+    /// by name.
+    ///
+    /// Read from the catalogue and resolved one by one, because the catalogue lists names and the
+    /// core is matched on what each thing is called — which is what makes publishing idempotent
+    /// across two nodes that gave the same source different identifiers.
+    fn core_held(
+        &self,
+    ) -> (
+        BTreeMap<String, Did>,
+        std::collections::BTreeSet<String>,
+        std::collections::BTreeSet<String>,
+    ) {
+        use almena_store::chain::{Answer, State};
+        let marking = self.which_marking();
+        let mut sources = BTreeMap::new();
+        let mut attributes = std::collections::BTreeSet::new();
+        let mut purposes = std::collections::BTreeSet::new();
+        let listed = self.objects.catalogue();
+        for name in &listed.sources {
+            if let Answer::Here(State::Source(source)) = self.objects.resolve(name) {
+                sources.insert(source.name.clone(), Did::new(marking, name.clone()));
+            }
+        }
+        for name in &listed.attributes {
+            if let Answer::Here(State::Attribute(attribute)) = self.objects.resolve(name) {
+                attributes.insert(attribute.claim.clone());
+            }
+        }
+        for name in &listed.tags {
+            if let Answer::Here(State::Tag(tag)) = self.objects.resolve(name) {
+                purposes.insert(tag.name.clone());
+            }
+        }
+        (sources, attributes, purposes)
+    }
+
+    /// Certify an entity, as Almena Government, with a reason in every language given.
+    ///
+    /// **The seal is a statement one organisation makes in its own name**, and here that
+    /// organisation is the government, signing with the key the genesis gave it while it has no
+    /// owners and with its owners at the sealing threshold once it has. Which of the two applies is
+    /// the record's to decide, not this method's: the act is composed, signed with what was handed
+    /// in, and admitted like any other.
+    ///
+    /// The reason has to be published in every language the platform ships in, and the store
+    /// refuses one that is not — a gate without a published reason is arbitrariness.
+    ///
+    /// # Errors
+    ///
+    /// [`NotTaken`]: the key is not one that may seal, the grade is not one the vocabulary knows,
+    /// or the reason is short of a language.
+    pub fn certify(
+        &mut self,
+        government: &ed25519::SigningKey,
+        sealing: Sealing<'_>,
+        now: Epoch,
+    ) -> Result<Did, NotTaken> {
+        use almena_format::cbor::Value;
+        use almena_store::certification::{Reason, field};
+        let by = self.government.clone();
+        let act = almena_format::operation::create(
+            self.which_marking(),
+            almena_store::kind::Kind::CERTIFICATION_ISSUE.number(),
+            1,
+            now,
+            BTreeMap::from([
+                (field::SUBJECT, Value::Text(sealing.subject.to_string())),
+                (field::GRADE, Value::Uint(sealing.grade.number())),
+                (field::REASON, Reason::carried(sealing.reason)),
+                (field::BY, Value::Text(by.to_string())),
+            ]),
+        );
+        let act = signed_as(act, &by, government);
+        self.submit(&act, now)?;
+        Ok(act.object)
+    }
+
+    /// Answer a decision, as Almena Government, with what it says in every language given.
+    ///
+    /// **The one answer the government publishes**: a refusal beside an entity's asking to be
+    /// certified, so that the asking and the answer stand side by side for ever. Who may answer is
+    /// resolved from the act named — the party that was asked — and never from what this act says
+    /// about itself, so a name that nobody asked under is refused where the record is.
+    ///
+    /// # Errors
+    ///
+    /// [`NotTaken`]: the act named is not one the government was asked with, the key is not the
+    /// government's, or what it says is short of a language.
+    pub fn reply(
+        &mut self,
+        government: &ed25519::SigningKey,
+        to: &Name,
+        said: &BTreeMap<String, String>,
+        now: Epoch,
+    ) -> Result<Did, NotTaken> {
+        use almena_format::cbor::Value;
+        use almena_store::certification::Reason;
+        use almena_store::reply::field;
+        let by = self.government.clone();
+        let act = almena_format::operation::create(
+            self.which_marking(),
+            almena_store::kind::Kind::REPLY_PUBLISH.number(),
+            1,
+            now,
+            BTreeMap::from([
+                (field::TO, Value::Text(to.as_str().to_owned())),
+                (field::SAID, Reason::carried(said)),
+            ]),
+        );
+        let act = signed_as(act, &by, government);
+        self.submit(&act, now)?;
+        Ok(act.object)
+    }
+
     /// Come back to the node that is already in `directory`.
     ///
     /// **Not the same act as opening one.** Opening makes a network; this returns to the one that
@@ -1767,7 +1988,13 @@ impl Node {
         for act in acts {
             let operation = operation_from(act).ok_or(record::NotReadable::Unreadable)?;
             let at = operation.issued;
-            let admitted = match node.objects.admit(&operation, at) {
+            // The record replayed so far is the record to rebuild a branch from: every act a fork
+            // could claim as its predecessor was written down before it.
+            let held = &node.log;
+            let replayed = node.objects.admit_from(&operation, at, &|name| {
+                held.act(name).and_then(operation_from)
+            });
+            let admitted = match replayed {
                 Ok(admitted) => admitted,
                 // **An act this build will not take that an earlier one did.** Rules tighten, and a
                 // record outlives the build that wrote it — so this is a real state and refusing to
@@ -1782,10 +2009,22 @@ impl Node {
                 // nothing is served from before the act.
                 Err(_) => {
                     node.objects.beyond(operation.object.name());
-                    node.log.append(&operation, subject_of(&operation));
+                    let subject = node.objects.subject_of(&operation);
+                    node.log.append(&operation, subject);
                     continue;
                 }
             };
+            // **A resolution is carried out on replay exactly as it was when it arrived.** Admission
+            // only says the act names a surviving branch; what puts the losing branch out of effect
+            // is replaying the named one, which `submit` does before writing the act down. A restart
+            // that skipped it would bring a fork back that the node had already settled, and the
+            // object would answer *forked again* on the very node that closed it. Every act on the
+            // named branch was written down before this one, so this node holds the whole of it —
+            // and where it somehow does not, the object stays split here, which is honest, rather
+            // than the node refusing to come up over an act it took yesterday.
+            if admitted == Admitted::Resolves {
+                let _ = node.settling(&operation, at);
+            }
             // **Written down only if it was taken**, exactly as when it arrived the first time. An
             // act already held is not written twice: a second copy would be a second leaf in the
             // tree for one act, so two nodes handed the same acts in different numbers of copies
@@ -1794,7 +2033,8 @@ impl Node {
             // before any signature is looked at: writing the copy down would put bytes nobody
             // checked under a name this node vouches for.
             if admitted != Admitted::AlreadyHere {
-                node.log.append(&operation, subject_of(&operation));
+                let subject = node.objects.subject_of(&operation);
+                node.log.append(&operation, subject);
             }
         }
         Ok(node)
@@ -1973,6 +2213,10 @@ impl Node {
     ///
     /// Returns whether it was written. A day still happening, or one with nobody but this node in
     /// it, is not summarised: either would compare with nothing.
+    ///
+    /// The one thing it does say about itself is what it **is** — key, offers, addresses, whether
+    /// it has closed — and only on the day its own chain owes a summary of that; see
+    /// [`Self::summarising_itself`].
     pub fn summarise(&mut self, day: almena_time::Day, watched: Watched, now: Epoch) -> bool {
         let Watched { looked } = watched;
         let Some(watching) = self.watching.get(&day) else {
@@ -2005,7 +2249,45 @@ impl Node {
             looked,
             drawn_from,
         );
-        self.submit(&written.operation, now).is_ok()
+        let carrying = self.summarising_itself(written.operation, now);
+        self.submit(&carrying, now).is_ok()
+    }
+
+    /// The same daily summary, carrying the summary of this node's own chain when the chain owes
+    /// one.
+    ///
+    /// **The one act a node writes without being asked, so the one its own summary rides on.** A
+    /// node's chain grows by a summary a day for as long as it runs and nothing shortens it, so
+    /// after a month it owes a summary of itself like any object that has written that much — and
+    /// unlike a holder, whose app warns and whose owner decides, nobody is watching a node's
+    /// screen. Whether one is owed is read off the record as it stands at signing, under the same
+    /// lock as the act that will carry it, so the claims cite the head this act extends and the
+    /// count starts again from it. A chain that owes nothing says nothing about itself: a summary
+    /// on every act would be the record padded with itself.
+    ///
+    /// Signed again over the larger payload, because what the store hands back is a finished act
+    /// and a signature over the payload without the summary would be a signature over something
+    /// else.
+    fn summarising_itself(&self, mut operation: Operation, now: Epoch) -> Operation {
+        let Some(standing) = self
+            .objects
+            .standing(self.did.name(), now)
+            .filter(|standing| standing.owed)
+        else {
+            return operation;
+        };
+        operation.payload.insert(
+            almena_store::checkpoint::FIELD,
+            almena_store::checkpoint::declaration(&standing.claims),
+        );
+        operation.signatures.clear();
+        let signature = self.key.sign(&operation.signing_bytes());
+        operation.signatures.push(almena_format::operation::Signed {
+            by: operation.object.clone(),
+            key: self.key.verifying_key().bytes().to_vec(),
+            signature: signature.bytes(),
+        });
+        operation
     }
 
     /// Take note of one question put to one peer, and what came of it.
@@ -2052,25 +2334,6 @@ impl Node {
         root.countersign(&self.key)
     }
 
-    /// The hashes of everything said about somebody, or nothing while nothing can be said.
-    ///
-    /// It becomes a list on the day the first act that carries a subject exists. Until then the
-    /// answer is that the question cannot be asked here yet — which is a different thing from
-    /// asking it and finding nothing.
-    fn about_hashes(&self, subject: &Did) -> Option<Vec<Name>> {
-        let said: Vec<Name> = self
-            .log
-            .about(subject)
-            .into_iter()
-            .map(|entry| entry.hash.clone())
-            .collect();
-
-        if said.is_empty() && !ANYTHING_CARRIES_A_SUBJECT {
-            return None;
-        }
-        Some(said)
-    }
-
     /// Wrap an answer in what it was true at.
     fn stamped<T>(&self, answer: T, epoch: Epoch) -> Answered<T> {
         Answered {
@@ -2079,6 +2342,54 @@ impl Node {
             answer,
         }
     }
+}
+
+/// What publishing the core did, so that whoever ran it can read the count in a record line.
+///
+/// Counted rather than listed: the core is thirty-odd acts, and a line per act would be a record
+/// nobody reads. What matters is that everything is there, and `already` says how much of it was
+/// there before this run — which on the second run is all of it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CorePublished {
+    /// Sources admitted by this run.
+    pub sources: usize,
+    /// Attributes published by this run.
+    pub attributes: usize,
+    /// Purposes added by this run.
+    pub purposes: usize,
+    /// Things the record already held, left alone.
+    pub already: usize,
+}
+
+/// What a certification says: about whom, at which grade, and why.
+///
+/// Three things and one decision, carried together so that a seal cannot be composed with one of
+/// them missing — a decision with no published reason is arbitrariness, and one about nobody is
+/// nothing.
+#[derive(Debug, Clone, Copy)]
+pub struct Sealing<'a> {
+    /// Who the certification is about.
+    pub subject: &'a Did,
+    /// What was checked, from the closed vocabulary.
+    pub grade: Grade,
+    /// Why, in every language it is written in — at least the two the platform ships in.
+    pub reason: &'a BTreeMap<String, String>,
+}
+
+/// An act signed once, by `key`, in the name of `by`.
+///
+/// **The shape every government act takes while the government has no owners**: one signature,
+/// the key the genesis gave it, and the government's own name on it. Once it has owners the store
+/// counts them instead and this shape is refused, which is the record's decision and never this
+/// function's.
+fn signed_as(mut operation: Operation, by: &Did, key: &ed25519::SigningKey) -> Operation {
+    let signature = key.sign(&operation.signing_bytes());
+    operation.signatures.push(almena_format::operation::Signed {
+        by: by.clone(),
+        key: key.verifying_key().bytes().to_vec(),
+        signature: signature.bytes(),
+    });
+    operation
 }
 
 /// One act, out of the bytes it was written down in.
@@ -2107,22 +2418,6 @@ pub fn fresh_key() -> Result<ed25519::SigningKey, getrandom::Error> {
 /// Bytes as a person would paste them into a support channel.
 fn written_out(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// What an act is about, when that is not its author.
-///
-/// **Nothing carries one yet, and that is the truth rather than a gap left open.** The acts that
-/// have a subject are a certification, a vote and a contradiction — each of them a claim about
-/// somebody who neither signs it nor could stop it — and none of the three is built. When the
-/// first one is, this reads it out of that act rather than guessing.
-///
-/// A daily summary will never carry one even then: it speaks about many nodes at once, and one
-/// entry per observed node per day is the arithmetic that choosing an aggregate avoided.
-fn subject_of(operation: &Operation) -> Option<Did> {
-    // **From the one place that says it**, which is the same place anybody checking an inclusion
-    // proof rebuilds the entry from. Deciding it here as well would be two answers to one question,
-    // and the day they differed an honest proof for an honest act would be refused.
-    almena_store::subject_of(operation)
 }
 
 /// How the network's trust anchor stands, as the record has it.
@@ -3547,8 +3842,8 @@ mod tests {
                 node.act(&missing, asked).root,
             ),
             (
-                node.about(node.government(), asked).epoch,
-                node.about(node.government(), asked).root,
+                node.said_about(node.government(), asked).epoch,
+                node.said_about(node.government(), asked).root,
             ),
             (
                 node.inclusion(&missing, asked).epoch,
@@ -3604,9 +3899,358 @@ mod tests {
         // contradiction says who it is against, so nothing said is a true answer and not a silence.
         let node = opened();
         assert_eq!(
-            node.about(node.government(), Epoch::GENESIS).answer,
+            node.said_about(node.government(), Epoch::GENESIS).answer,
             Some(Vec::new()),
             "nothing has been said about it, which is a fact and not an absence of one"
+        );
+    }
+
+    #[test]
+    fn a_node_counts_who_the_record_says_has_gone_quiet_and_nought_is_a_count() {
+        // **A fact from the record, drawn beside the peer count and not confused with it.** A
+        // network of one has nobody quiet, and that is nought rather than nothing: somebody looked.
+        let mut node = opened();
+        assert_eq!(node.departed(Epoch::GENESIS), 0);
+
+        // Somebody else, asked all day and never heard from, written down by this node's summary.
+        let day = almena_time::Day::new(1);
+        let during = Epoch::new(almena_time::EPOCHS_PER_DAY);
+        let (_, theirs) = somebody_else(&mut node, 7, during);
+        for _ in 0..3 {
+            node.watched(day, saw(theirs, during, almena_store::watching::Saw::Asked));
+        }
+        let after = Epoch::new(almena_time::EPOCHS_PER_DAY * 2);
+        assert!(node.summarise(day, watched(), after));
+        assert_eq!(
+            node.departed(after),
+            1,
+            "and the record now says one node answered nothing"
+        );
+    }
+
+    /// The government's key, which every fixture here opens the network with.
+    fn government() -> ed25519::SigningKey {
+        key(5)
+    }
+
+    #[test]
+    fn the_core_is_published_once_and_a_second_run_publishes_nothing() {
+        // **Idempotent against the record**, so that a run cut short is finished by running it
+        // again and a run repeated costs nothing. Sources first, then what was copied from them.
+        let mut node = opened();
+        let before = node.written();
+        let first = node
+            .publish_core(&government(), Epoch::GENESIS)
+            .expect("the government's key opened this network");
+        assert_eq!(first.sources, almena_store::core::SOURCES.len());
+        assert_eq!(first.attributes, almena_store::core::CORE.len());
+        assert_eq!(first.purposes, almena_store::core::PURPOSES.len());
+        assert_eq!(first.already, 0);
+        assert_eq!(
+            node.written() - before,
+            first.sources + first.attributes + first.purposes,
+            "one act each, through this node's own admission"
+        );
+
+        let listed = node.catalogue(Epoch::GENESIS).answer;
+        assert_eq!(listed.attributes.len(), almena_store::core::CORE.len());
+
+        let again = node
+            .publish_core(&government(), Epoch::GENESIS)
+            .expect("nothing to refuse");
+        assert_eq!(again.sources + again.attributes + again.purposes, 0);
+        assert_eq!(
+            again.already,
+            first.sources + first.attributes + first.purposes,
+            "everything was already there"
+        );
+        assert_eq!(node.written() - before, first.already + again.already);
+    }
+
+    #[test]
+    fn a_key_that_is_not_the_government_s_publishes_nothing() {
+        // The record decides, not this crate: a stranger's key is refused where the seal is.
+        let mut node = opened();
+        let written = node.written();
+        assert_eq!(
+            node.publish_core(&key(200), Epoch::GENESIS),
+            Err(almena_store::chain::Refused::NotAuthorised)
+        );
+        assert_eq!(node.written(), written, "and nothing was written down");
+    }
+
+    /// After everything the words alone asked for has landed, which is when a device may sign.
+    fn landed() -> Epoch {
+        Epoch::new(almena_time::deadline::CONTROL_KEY_WAIT.now() + 1)
+    }
+
+    /// The same act, signed from the device `a_device` put on `owner`'s account.
+    ///
+    /// An entity has no key of its own to be signed by: its owners sign, and an owner signs from
+    /// an apparatus in their hand.
+    fn signed_by_the_device(
+        mut operation: almena_format::operation::Operation,
+        owner: &Did,
+    ) -> almena_format::operation::Operation {
+        let device = almena_suite::p256::SigningKey::from_secret([4; 32]).expect("a key");
+        let over = operation.signing_bytes();
+        operation.signatures.push(Signed {
+            by: owner.clone(),
+            key: device.verifying_key().bytes().to_vec(),
+            signature: device.sign(&over).bytes(),
+        });
+        operation
+    }
+
+    /// An organisation somebody owns, for the government to have an opinion about.
+    ///
+    /// The owner's account gets a device first, and everything is dated once that device has
+    /// landed: what the words alone asked for waits, and an owner signs from a device.
+    fn an_entity(
+        node: &mut Node,
+        account: &almena_format::operation::Operation,
+        control: &ed25519::SigningKey,
+    ) -> Did {
+        use almena_store::entity::field;
+        let owner = account.object.clone();
+        node.submit(
+            &a_device(&owner, &account.called(), control),
+            Epoch::GENESIS,
+        )
+        .expect("the asking");
+        let founded = signed_by_the_device(
+            create(
+                Network::Development,
+                Kind::ENTITY_CREATE.number(),
+                1,
+                landed(),
+                BTreeMap::from([
+                    (field::KEY, Value::Bytes(vec![9; 32])),
+                    (field::WHO, Value::Text(owner.to_string())),
+                    (field::ROUTINE, Value::Uint(1)),
+                    (field::SEALING, Value::Uint(1)),
+                    (field::GOVERNANCE, Value::Uint(1)),
+                ]),
+            ),
+            &owner,
+        );
+        node.submit(&founded, landed()).expect("founded");
+        founded.object
+    }
+
+    /// A reason in the two languages the platform ships in.
+    fn a_reason() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("en".to_owned(), "checked in person".to_owned()),
+            ("es".to_owned(), "comprobado en persona".to_owned()),
+        ])
+    }
+
+    #[test]
+    fn the_government_certifies_an_entity_and_the_seal_is_found_by_its_subject() {
+        // A certification is an object of its own pointing at its subject, which is what makes
+        // it findable by the party affected rather than by whoever wrote it down.
+        let mut node = opened();
+        let control = key(9);
+        let account = an_account(&control, Epoch::GENESIS);
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+        let entity = an_entity(&mut node, &account, &control);
+
+        let sealed = node
+            .certify(
+                &government(),
+                super::Sealing {
+                    subject: &entity,
+                    grade: almena_store::certification::Grade::Basic,
+                    reason: &a_reason(),
+                },
+                landed(),
+            )
+            .expect("the government seals");
+        let said = node
+            .said_about(&entity, landed())
+            .answer
+            .expect("a question with an answer");
+        assert_eq!(said.len(), 1);
+        assert_eq!(said[0].kind, Kind::CERTIFICATION_ISSUE.number());
+        match node.resolve(sealed.name(), landed()).answer {
+            Answer::Here(State::Certification(seal)) => {
+                assert_eq!(seal.subject, entity);
+                assert_eq!(&seal.by, node.government());
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // Half a reason is no reason: the store refuses it, and this crate repairs nothing.
+        let half = BTreeMap::from([("en".to_owned(), "checked".to_owned())]);
+        assert_eq!(
+            node.certify(
+                &government(),
+                super::Sealing {
+                    subject: &entity,
+                    grade: almena_store::certification::Grade::Basic,
+                    reason: &half,
+                },
+                landed()
+            ),
+            Err(almena_store::chain::Refused::Malformed)
+        );
+    }
+
+    #[test]
+    fn the_government_answers_an_asking_and_nothing_nobody_asked_with() {
+        // The reply names the asking, and who may answer is resolved from it: the party asked.
+        let mut node = opened();
+        let control = key(9);
+        let account = an_account(&control, Epoch::GENESIS);
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+        let entity = an_entity(&mut node, &account, &control);
+        let head = node.head(entity.name()).expect("a head").clone();
+
+        let asking = signed_by_the_device(
+            almena_format::operation::Operation {
+                object: entity.clone(),
+                previous: Some(head),
+                kind: Kind::CERTIFICATION_REQUEST.number(),
+                version: 1,
+                issued: landed(),
+                payload: BTreeMap::from([(
+                    almena_store::entity::field::GRADE,
+                    Value::Uint(almena_store::certification::Grade::Basic.number()),
+                )]),
+                signatures: Vec::new(),
+            },
+            &account.object,
+        );
+        node.submit(&asking, landed()).expect("asked");
+
+        let answered = node
+            .reply(&government(), &asking.called(), &a_reason(), landed())
+            .expect("the government answers");
+        match node.resolve(answered.name(), landed()).answer {
+            Answer::Here(State::Reply(said)) => {
+                assert_eq!(said.to, asking.called());
+                assert_eq!(&said.by, node.government());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            node.reply(
+                &government(),
+                &Name::of(b"an act nobody wrote"),
+                &a_reason(),
+                landed()
+            ),
+            Err(almena_store::chain::Refused::NotAuthorised),
+            "a reply to nothing is refused where the record is"
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "three acts about one entity, in one listing"
+    )]
+    fn what_has_been_said_about_an_entity_lists_the_replies_beside_the_seals() {
+        // **A reply is about whoever the decision it answers was about**, and only the record can
+        // say who that is: the act names a decision, never a party. So the refusal of an asking
+        // and the answer to a seal land in the same listing as the seal — one place, without
+        // walking everything, for anybody deciding what an entity is worth.
+        let mut node = opened();
+        let control = key(9);
+        let account = an_account(&control, Epoch::GENESIS);
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+        let entity = an_entity(&mut node, &account, &control);
+
+        let sealed = node
+            .certify(
+                &government(),
+                super::Sealing {
+                    subject: &entity,
+                    grade: almena_store::certification::Grade::Basic,
+                    reason: &a_reason(),
+                },
+                landed(),
+            )
+            .expect("the government seals");
+
+        let head = node.head(entity.name()).expect("a head").clone();
+        let asking = signed_by_the_device(
+            almena_format::operation::Operation {
+                object: entity.clone(),
+                previous: Some(head),
+                kind: Kind::CERTIFICATION_REQUEST.number(),
+                version: 1,
+                issued: landed(),
+                payload: BTreeMap::from([(
+                    almena_store::entity::field::GRADE,
+                    Value::Uint(almena_store::certification::Grade::Verified.number()),
+                )]),
+                signatures: Vec::new(),
+            },
+            &account.object,
+        );
+        node.submit(&asking, landed()).expect("asked");
+        let refused = node
+            .reply(&government(), &asking.called(), &a_reason(), landed())
+            .expect("the government refuses");
+
+        // The entity answering the seal, from its owner's device, on a chain of its own.
+        let answer = signed_by_the_device(
+            create(
+                Network::Development,
+                Kind::REPLY_PUBLISH.number(),
+                1,
+                landed(),
+                BTreeMap::from([
+                    (
+                        almena_store::reply::field::TO,
+                        Value::Text(sealed.name().as_str().to_owned()),
+                    ),
+                    (
+                        almena_store::reply::field::SAID,
+                        almena_store::certification::Reason::carried(&a_reason()),
+                    ),
+                ]),
+            ),
+            &account.object,
+        );
+        node.submit(&answer, landed())
+            .expect("the party the seal is about answers");
+
+        let said = node
+            .said_about(&entity, landed())
+            .answer
+            .expect("a question with an answer");
+        let kinds: Vec<u64> = said.iter().map(|entry| entry.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                Kind::CERTIFICATION_ISSUE.number(),
+                Kind::REPLY_PUBLISH.number(),
+                Kind::REPLY_PUBLISH.number()
+            ],
+            "the seal, the refusal and the answer, in log order"
+        );
+        assert_eq!(
+            said[1].object, refused,
+            "the refusal, found by the entity whose asking it refuses"
+        );
+        assert_eq!(
+            said[2].hash,
+            answer.called(),
+            "and the answer to the seal, found by the seal's subject"
+        );
+        assert!(
+            said.iter().all(|entry| entry.hash != asking.called()),
+            "the asking is the entity's own act, and its own acts are not about it"
+        );
+        assert!(
+            node.said_about(node.government(), landed())
+                .answer
+                .expect("a question with an answer")
+                .is_empty(),
+            "nothing here was about the government, which only decided"
         );
     }
 
@@ -4107,12 +4751,12 @@ mod tests {
 
         // Found by who it is against, and not by anything else.
         let about = node
-            .about(&node_did, Epoch::GENESIS)
+            .said_about(&node_did, Epoch::GENESIS)
             .answer
             .expect("a question with an answer");
         assert_eq!(about.len(), 1, "the contradiction, indexed by the affected");
         assert!(
-            node.about(node.government(), Epoch::GENESIS)
+            node.said_about(node.government(), Epoch::GENESIS)
                 .answer
                 .is_some_and(|said| said.is_empty()),
             "and nothing has been said about anybody else"

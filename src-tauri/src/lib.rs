@@ -12,6 +12,8 @@
 //! register an operating system keeps for opening an application at login, and the Dock.
 
 mod agent;
+// Epochs added to the node's clock from a file, a development knob the node reads.
+mod clock;
 mod geometry;
 // Public so that its one question can be asked in a doctest. Nothing outside this crate calls
 // it.
@@ -195,15 +197,18 @@ fn assemble() -> tauri::Builder<tauri::Wry> {
         open_at_login::opens_at_login,
         open_at_login::set_opens_at_login,
         node::node_facts,
-        node::open_development_network,
+        node::open_a_network,
+        node::freeze_checklist,
         node::join_a_network,
         node::interface_at,
+        node::come_back,
         node::serve_interface,
         node::close_epoch,
         node::join_the_mesh,
         node::who_contributed_me,
         node::contributed_by,
         node::contributed_by_nobody,
+        node::close_this_node,
         preferences::preferences,
         preferences::set_preferences,
         agent::commands::agent_status,

@@ -91,9 +91,9 @@ pub struct Claim {
 
 /// What a part of an object's state is.
 ///
-/// Two shapes so far, because two are what the objects that exist have. Thresholds, aliases and
-/// domains arrive with entities, and standing in for them now would be inventing a format for
-/// something nobody has designed.
+/// One shape per part, fixed by the part and never by what arrived. Thresholds, aliases and domains
+/// arrive with entities, and standing in for them now would be inventing a format for something
+/// nobody has designed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stated {
     /// One key.
@@ -101,27 +101,113 @@ pub enum Stated {
     /// A set of keys, which is a set and not a list: the order they were added in is not part of
     /// what the state **is**, and letting it into the bytes would give one state two summaries.
     Keys(BTreeSet<Vec<u8>>),
+    /// Whether something is so.
+    Flag(bool),
+    /// A set of acts, by name — what the words have asked for that has not landed.
+    ///
+    /// A set for the reason the keys are one: the order they entered is the chain's business, and
+    /// letting it into the bytes would give one queue two summaries.
+    Names(BTreeSet<Name>),
+    /// A set of numbers from a closed list — what a node offers.
+    Numbers(BTreeSet<u64>),
+    /// A set of addresses — where a node says it can be reached.
+    Addresses(BTreeSet<String>),
+    /// A moment, or none yet — when a node closed.
+    Moment(Option<Epoch>),
 }
 
 /// A part of an object's state that some kinds of act govern.
 ///
 /// **Not every field of every object** — only the ones a summary may claim, which is the same list
 /// as the ones an act can change. What an entity's summary may claim arrives with entities.
+///
+/// Two objects have parts: an account and a node. They share nothing, and a summary is measured
+/// against the parts of **its own** object — asked of a node, the control key is the wrong question
+/// rather than a missing answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Governs {
     /// The key that controls an account.
     Control,
     /// The devices an account may act through.
     Devices,
+    /// Whether the account is stopped.
+    ///
+    /// **A part, so that a summary cannot describe a stopped account as moving.** Without it a
+    /// summary written over a freeze would let a reader bootstrap the account somebody stopped —
+    /// because their phone was in a stranger's pocket — as though nothing had happened.
+    Frozen,
+    /// What the words have asked for alone that has not yet landed, by the act that asked.
+    ///
+    /// **A part, so that a summary cannot carry an asking out of sight.** What the control key
+    /// signs alone waits a window in which every device can say no; a summary that had nowhere to
+    /// say what is waiting would let a thief of the words summarise their own asking away, to land
+    /// later on a state no reader was shown. Names and not effects: whoever needs to know what an
+    /// asking does fetches the act, which the name is for.
+    Pending,
+    /// The key a node signs its roots with.
+    NodeKey,
+    /// What a node says it is running.
+    Offers,
+    /// Where a node says it can be reached.
+    Reachable,
+    /// When a node stopped counting, if it has.
+    Closed,
+}
+
+/// Which object a part belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// A person's account.
+    Holder,
+    /// A node's own chain.
+    Node,
 }
 
 impl Governs {
-    /// Every part of the state a summary has to account for.
+    /// The parts of an account.
+    pub const HOLDER: [Self; 4] = [Self::Control, Self::Devices, Self::Frozen, Self::Pending];
+
+    /// The parts of a node.
+    pub const NODE: [Self; 4] = [Self::NodeKey, Self::Offers, Self::Reachable, Self::Closed];
+
+    /// Every part of any state, in the order they are numbered.
     ///
     /// **A summary is measured against what the state has, not against what it chose to mention.**
     /// One that declares the devices and says nothing about the control key is not a smaller
     /// summary — it is one whose silence would be read as *unchanged* by everybody who arrives.
-    pub const ALL: [Self; 2] = [Self::Control, Self::Devices];
+    /// Which of these a given object has is [`Self::of`].
+    pub const ALL: [Self; 8] = [
+        Self::Control,
+        Self::Devices,
+        Self::Frozen,
+        Self::Pending,
+        Self::NodeKey,
+        Self::Offers,
+        Self::Reachable,
+        Self::Closed,
+    ];
+
+    /// The parts an object has, from the act that created it.
+    ///
+    /// The creating act is the one thing every reader of a branch holds without fetching: it is
+    /// the first entry, and its kind says what class of object this is. [`None`] for a class whose
+    /// state has no parts a summary may claim.
+    #[must_use]
+    pub fn of(creation: Kind) -> Option<&'static [Self]> {
+        match creation {
+            Kind::HOLDER_CREATE => Some(&Self::HOLDER),
+            Kind::NODE_ANNOUNCE => Some(&Self::NODE),
+            _ => None,
+        }
+    }
+
+    /// Which object this part belongs to.
+    const fn class(self) -> Class {
+        match self {
+            Self::Control | Self::Devices | Self::Frozen | Self::Pending => Class::Holder,
+            Self::NodeKey | Self::Offers | Self::Reachable | Self::Closed => Class::Node,
+        }
+    }
 
     /// How it travels.
     ///
@@ -132,6 +218,12 @@ impl Governs {
         match self {
             Self::Control => 1,
             Self::Devices => 2,
+            Self::Frozen => 3,
+            Self::Pending => 4,
+            Self::NodeKey => 5,
+            Self::Offers => 6,
+            Self::Reachable => 7,
+            Self::Closed => 8,
         }
     }
 
@@ -141,6 +233,12 @@ impl Governs {
         match number {
             1 => Some(Self::Control),
             2 => Some(Self::Devices),
+            3 => Some(Self::Frozen),
+            4 => Some(Self::Pending),
+            5 => Some(Self::NodeKey),
+            6 => Some(Self::Offers),
+            7 => Some(Self::Reachable),
+            8 => Some(Self::Closed),
             _ => None,
         }
     }
@@ -178,6 +276,38 @@ impl Governs {
                 Kind::HOLDER_RECOVER,
                 Kind::HOLDER_CANCEL,
             ],
+            // Creating settles that the account is moving. Freezing stops it at once; thawing is
+            // the words asking, so it waits, and a cancellation may strike the thaw out. Recovering
+            // leaves the account thawed.
+            Self::Frozen => &[
+                Kind::HOLDER_CREATE,
+                Kind::HOLDER_FREEZE,
+                Kind::HOLDER_UNFREEZE,
+                Kind::HOLDER_RECOVER,
+                Kind::HOLDER_CANCEL,
+            ],
+            // Everything the words may ask for alone enters the queue, and a cancellation leaves
+            // it. Creating settles that nothing is waiting yet. Every asking kind is here whoever
+            // signed it — a device's addition lands at once and leaves the queue as it found it,
+            // and citing it as the act that last settled the queue is still citing the truth.
+            Self::Pending => &[
+                Kind::HOLDER_CREATE,
+                Kind::HOLDER_ADD_DEVICE,
+                Kind::HOLDER_REMOVE_DEVICE,
+                Kind::HOLDER_ROTATE,
+                Kind::HOLDER_UNFREEZE,
+                Kind::HOLDER_SET_GUARDIANS,
+                Kind::HOLDER_RECOVER,
+                Kind::HOLDER_CANCEL,
+            ],
+            // A node's first announcement names it and fixes its key; every announcement after
+            // says again what it offers and where it is. The key never changes and the later
+            // announcements are cited for it all the same: a summary cites the latest act that
+            // governs each part, and a re-announcement governs the key by leaving it alone.
+            Self::NodeKey | Self::Offers | Self::Reachable => &[Kind::NODE_ANNOUNCE],
+            // Announcing settles that the node is counting; closing settles when it stopped, and
+            // announcing again afterwards does not reopen it.
+            Self::Closed => &[Kind::NODE_ANNOUNCE, Kind::NODE_CLOSE],
         }
     }
 }
@@ -257,19 +387,26 @@ pub fn left_out(claim: &Claim, placed: Placed<'_>) -> Verdict {
     let Some(window) = up_to(placed) else {
         return Verdict::CannotSay(placed.carrier.clone());
     };
-    // An act of a **kind** this build cannot apply, anywhere on the branch up to the summary, makes
-    // the whole account opaque — admission stops resolving it and never starts again, so there is
-    // no state for a summary to be right or wrong about. Caught across the whole window and not
-    // only after the cited act, because opacity is not undone by whatever comes later.
+    // Which object this is comes from the act that created it, which is the first entry of the
+    // branch and the one thing every reader holds. A class with no parts is one whose summary
+    // nobody can check, and a claim about a part the object does not have is the wrong question.
+    let Some(class) = class_of(window) else {
+        return Verdict::CannotSay(placed.carrier.clone());
+    };
+    if claim.about.class() != class {
+        return Verdict::CannotSay(placed.carrier.clone());
+    }
+    // An act this build cannot apply, anywhere on the branch up to the summary, makes the whole
+    // object opaque — admission stops resolving it and never starts again, so there is no state for
+    // a summary to be right or wrong about. Caught across the whole window and not only after the
+    // cited act, because opacity is not undone by whatever comes later.
     //
-    // **A kind and not a field, and that is a limit of the log rather than a choice.** An act whose
-    // payload carries a critical field this build has no meaning for makes the account opaque too
-    // — see `chain::holder_vocabulary` — and a log entry carries `objeto` and `tipo` and not the
-    // payload (`SPECS.md §4.9`), so nothing here can see it. What catches those is `Replayed::takes`
-    // below, which reads the acts it was given; an act whose kind governs no part of the claim is
-    // never fetched, so it is never seen. The answer to that is not to fetch a whole chain — which
-    // is the cost a summary exists to avoid — and it is written down as owed rather than hidden.
-    if let Some(beyond) = window.iter().find(|entry| unreadable(entry)) {
+    // **By kind and by field, from the log alone.** An act whose payload carries a critical field
+    // this build has no meaning for makes the object opaque exactly as an unknown kind does — see
+    // `chain::holder_vocabulary` — and the entry lists the odd numbers its payload carries so that
+    // this can be seen without fetching the act. Fetching a whole chain to find out would be paying
+    // the cost a summary exists to avoid.
+    if let Some(beyond) = window.iter().find(|entry| unreadable(entry, class)) {
         return Verdict::CannotSay(beyond.hash.clone());
     }
     let governs = claim.about.set_by();
@@ -325,6 +462,14 @@ pub fn needs(claim: &Claim, placed: Placed<'_>) -> Vec<Name> {
 /// the log alone can make.
 #[must_use]
 pub fn produces(claim: &Claim, acts: &[&Operation], at: Epoch) -> Verdict {
+    match claim.about.class() {
+        Class::Holder => produces_on_a_holder(claim, acts, at),
+        Class::Node => produces_on_a_node(claim, acts),
+    }
+}
+
+/// [`produces`], for a part of an account.
+fn produces_on_a_holder(claim: &Claim, acts: &[&Operation], at: Epoch) -> Verdict {
     let folded = match replayed(acts, at) {
         Ok(folded) => folded,
         Err(verdict) => return verdict,
@@ -334,6 +479,32 @@ pub fn produces(claim: &Claim, acts: &[&Operation], at: Epoch) -> Verdict {
             Verdict::Stands
         }
         (Governs::Devices, Stated::Keys(said)) if *said == folded.devices => Verdict::Stands,
+        (Governs::Frozen, Stated::Flag(said)) if *said == folded.frozen => Verdict::Stands,
+        // What is still waiting at the summary's own moment: everything asked and not yet due,
+        // and not struck out. Names, compared as a set.
+        (Governs::Pending, Stated::Names(said)) if *said == folded.pending() => Verdict::Stands,
+        _ => Verdict::Fabricated,
+    }
+}
+
+/// [`produces`], for a part of a node.
+///
+/// Nothing a node's chain says waits, so there is no moment to judge it at: what the announcements
+/// and the closing say is what the node is.
+fn produces_on_a_node(claim: &Claim, acts: &[&Operation]) -> Verdict {
+    let folded = match replayed_node(acts) {
+        Ok(folded) => folded,
+        Err(verdict) => return verdict,
+    };
+    match (&claim.about, &claim.stated) {
+        (Governs::NodeKey, Stated::Key(said)) if folded.key.as_ref() == Some(said) => {
+            Verdict::Stands
+        }
+        (Governs::Offers, Stated::Numbers(said)) if *said == folded.offers => Verdict::Stands,
+        (Governs::Reachable, Stated::Addresses(said)) if *said == folded.reachable => {
+            Verdict::Stands
+        }
+        (Governs::Closed, Stated::Moment(said)) if *said == folded.closed => Verdict::Stands,
         _ => Verdict::Fabricated,
     }
 }
@@ -362,7 +533,19 @@ pub fn falls_over(
     at: Epoch,
 ) -> Vec<(Governs, Verdict)> {
     let mut wrong = Vec::new();
-    for about in Governs::ALL {
+    // Measured against the parts **this** object has, read off the act that created it. A branch
+    // that does not start with a creation this build knows the parts of is one whose summary
+    // cannot be checked, and every claim on it is answered so rather than passed.
+    let Some(expected) = up_to(placed).and_then(class_of).map(|class| match class {
+        Class::Holder => &Governs::HOLDER[..],
+        Class::Node => &Governs::NODE[..],
+    }) else {
+        return claims
+            .iter()
+            .map(|claim| (claim.about, Verdict::CannotSay(placed.carrier.clone())))
+            .collect();
+    };
+    for &about in expected {
         let Some(claim) = claims.iter().find(|claim| claim.about == about) else {
             wrong.push((about, Verdict::Missing));
             continue;
@@ -469,30 +652,61 @@ fn up_to<'a>(placed: Placed<'a>) -> Option<&'a [&'a Entry]> {
     placed.branch.get(..=at)
 }
 
-/// Whether this build cannot work the act an entry places into a holder's state.
+/// Which object a branch belongs to, from the act that created it.
+fn class_of(window: &[&Entry]) -> Option<Class> {
+    match Kind::new(window.first()?.kind)? {
+        Kind::HOLDER_CREATE => Some(Class::Holder),
+        Kind::NODE_ANNOUNCE => Some(Class::Node),
+        _ => None,
+    }
+}
+
+/// Whether this build cannot work the act an entry places into that object's state.
 ///
 /// **Not the same as an unknown number.** A kind can be in this build's vocabulary and still have
 /// no logic that applies it — recovery and setting guardians are named but not yet built, and
 /// admission turns an account carrying one **opaque**: it stops resolving it, because a state it
 /// could not compute is one it must not serve. The reading side has to draw the same line, or it
-/// would vouch for a state the writing side gave up on. So this is the account's appliable kinds
-/// as a closed list, and anything else — a newer number, a named-but-unbuilt kind, a kind that
-/// belongs to some other class of object — makes the account uncheckable here exactly as it makes
-/// it unresolvable there.
-fn unreadable(entry: &Entry) -> bool {
-    !matches!(
-        Kind::new(entry.kind),
-        Some(
-            Kind::HOLDER_CREATE
+/// would vouch for a state the writing side gave up on. So this is the object's appliable kinds as
+/// a closed list, and anything else — a newer number, a named-but-unbuilt kind, a kind that belongs
+/// to some other class of object — makes the object uncheckable here exactly as it makes it
+/// unresolvable there.
+///
+/// **And the fields, by the same rule.** Admission refuses to apply an act carrying a critical
+/// field it has no meaning for, and the entry lists the odd numbers the payload carries, so a
+/// number outside this build's vocabulary for that class is an act it could not have applied. The
+/// vocabulary is the one admission uses, or the two sides would draw two lines: an account's acts
+/// are all read with the account's vocabulary, and a node's announcement with the announcement's —
+/// its other acts are applied without one being asked of them, so none is asked here either.
+fn unreadable(entry: &Entry, class: Class) -> bool {
+    let vocabulary = match (class, Kind::new(entry.kind)) {
+        (
+            Class::Holder,
+            Some(
+                Kind::HOLDER_CREATE
                 | Kind::HOLDER_ADD_DEVICE
                 | Kind::HOLDER_REMOVE_DEVICE
                 | Kind::HOLDER_ROTATE
                 | Kind::HOLDER_FREEZE
                 | Kind::HOLDER_UNFREEZE
                 | Kind::HOLDER_CANCEL
-                | Kind::HOLDER_CHECKPOINT
-        )
-    )
+                | Kind::HOLDER_CHECKPOINT,
+            ),
+        ) => Some(crate::chain::holder_vocabulary()),
+        (Class::Node, Some(Kind::NODE_ANNOUNCE)) => Some(crate::capability::vocabulary()),
+        (
+            Class::Node,
+            Some(Kind::NODE_BIND | Kind::NODE_UNBIND | Kind::NODE_SUMMARY | Kind::NODE_CLOSE),
+        ) => None,
+        _ => return true,
+    };
+    vocabulary.is_some_and(|vocabulary| {
+        entry.critical.iter().any(|number| {
+            !vocabulary
+                .fields
+                .contains(&almena_format::field::Field::new(*number))
+        })
+    })
 }
 
 /// The key an act names, which is the one field the basic acts of an account carry.
@@ -509,6 +723,8 @@ struct Replayed {
     control: Option<Vec<u8>>,
     /// The keys that operate it.
     devices: BTreeSet<Vec<u8>>,
+    /// Whether it is stopped.
+    frozen: bool,
     /// What the control key has asked for that has not yet landed: which act asked, what it
     /// changes, and from when it is in force.
     waiting: Vec<(Name, Asked, Epoch)>,
@@ -522,6 +738,8 @@ enum Asked {
     Remove(Vec<u8>),
     /// The control key is replaced.
     Rotate(Vec<u8>),
+    /// The account starts moving again.
+    Thaw,
 }
 
 impl Replayed {
@@ -540,9 +758,87 @@ impl Replayed {
                     self.devices.remove(&key);
                 }
                 Asked::Rotate(key) => self.control = Some(key),
+                Asked::Thaw => self.frozen = false,
             }
         }
     }
+
+    /// What is still waiting, by the act that asked.
+    fn pending(&self) -> BTreeSet<Name> {
+        self.waiting
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect()
+    }
+}
+
+/// The node the governing acts produce, replayed as everybody replays them.
+struct NodeReplayed {
+    /// The key it signs with, fixed by the announcement that named it.
+    key: Option<Vec<u8>>,
+    /// What it says it is running, as the numbers the closed list gives them.
+    offers: BTreeSet<u64>,
+    /// Where it says it can be reached.
+    reachable: BTreeSet<String>,
+    /// When it stopped counting, once it has.
+    closed: Option<Epoch>,
+}
+
+/// The acts that govern a node's parts, replayed.
+///
+/// **The same reading admission gives them.** An announcement is read with the announcement's
+/// vocabulary and refused for a capability the list does not name; every announcement after the
+/// first says again what the node offers and where it is; closing is said once, at the epoch it
+/// was first said, and announcing again afterwards reopens nothing.
+fn replayed_node(acts: &[&Operation]) -> Result<NodeReplayed, Verdict> {
+    let mut folded = NodeReplayed {
+        key: None,
+        offers: BTreeSet::new(),
+        reachable: BTreeSet::new(),
+        closed: None,
+    };
+    for act in acts {
+        match Kind::new(act.kind) {
+            Some(Kind::NODE_ANNOUNCE) => {
+                if act.understood(crate::capability::vocabulary()).is_err() {
+                    return Err(Verdict::CannotSay(act.called()));
+                }
+                if folded.key.is_none() {
+                    folded.key = match act.payload.get(&1) {
+                        Some(Value::Bytes(key)) if key.len() == 32 => Some(key.clone()),
+                        _ => return Err(Verdict::CannotSay(act.called())),
+                    };
+                }
+                folded.offers = match act.payload.get(&crate::capability::OFFERS) {
+                    None => BTreeSet::new(),
+                    Some(Value::Array(said)) => said
+                        .iter()
+                        .map(|one| match one {
+                            Value::Uint(number) => Some(*number),
+                            _ => None,
+                        })
+                        .collect::<Option<_>>()
+                        .ok_or_else(|| Verdict::CannotSay(act.called()))?,
+                    Some(_) => return Err(Verdict::CannotSay(act.called())),
+                };
+                folded.reachable = match act.payload.get(&crate::capability::WHERE) {
+                    None => BTreeSet::new(),
+                    Some(Value::Array(said)) => said
+                        .iter()
+                        .map(|one| match one {
+                            Value::Text(address) => Some(address.clone()),
+                            _ => None,
+                        })
+                        .collect::<Option<_>>()
+                        .ok_or_else(|| Verdict::CannotSay(act.called()))?,
+                    Some(_) => return Err(Verdict::CannotSay(act.called())),
+                };
+            }
+            Some(Kind::NODE_CLOSE) => folded.closed = Some(folded.closed.unwrap_or(act.issued)),
+            _ => {}
+        }
+    }
+    Ok(folded)
 }
 
 /// The governing acts replayed up to a moment, with the wait the control key pays.
@@ -556,6 +852,7 @@ fn replayed(acts: &[&Operation], at: Epoch) -> Result<Replayed, Verdict> {
     let mut folded = Replayed {
         control: None,
         devices: BTreeSet::new(),
+        frozen: false,
         waiting: Vec::new(),
     };
     for act in acts {
@@ -602,26 +899,9 @@ impl Replayed {
                     return Err(Verdict::CannotSay(act.called()));
                 }
             }
-            Some(Kind::HOLDER_ADD_DEVICE) => match (named(act), by_control) {
-                (Some(key), true) => {
-                    self.waiting
-                        .push((act.called(), Asked::Add(key), due_from(act)?));
-                }
-                (Some(key), false) => {
-                    self.devices.insert(key);
-                }
-                (None, _) => return Err(Verdict::CannotSay(act.called())),
-            },
-            Some(Kind::HOLDER_REMOVE_DEVICE) => match (named(act), by_control) {
-                (Some(key), true) => {
-                    self.waiting
-                        .push((act.called(), Asked::Remove(key), due_from(act)?));
-                }
-                (Some(key), false) => {
-                    self.devices.remove(&key);
-                }
-                (None, _) => return Err(Verdict::CannotSay(act.called())),
-            },
+            Some(kind @ (Kind::HOLDER_ADD_DEVICE | Kind::HOLDER_REMOVE_DEVICE)) => {
+                self.device_moves(act, kind, by_control)?;
+            }
             // Only the control key rotates the control key, so a rotation always waited.
             Some(Kind::HOLDER_ROTATE) => match named(act) {
                 Some(key) => self
@@ -630,9 +910,21 @@ impl Replayed {
                 None => return Err(Verdict::CannotSay(act.called())),
             },
             Some(Kind::HOLDER_CANCEL) => self.struck_out(act)?,
+            // Freezing lands at once whoever signed it: it denies, and there is nothing in a
+            // denial worth stealing a wait for.
+            Some(Kind::HOLDER_FREEZE) => self.frozen = true,
+            // Thawing concedes back everything the freeze stopped, so it is the words asking and
+            // it waits. Nobody else's thaw is ever admitted, so nobody else's is replayed.
+            Some(Kind::HOLDER_UNFREEZE) if by_control => {
+                self.waiting
+                    .push((act.called(), Asked::Thaw, due_from(act)?));
+            }
             // It empties the set and enrols the device that asked, and this build cannot say
-            // which.
-            Some(Kind::HOLDER_RECOVER) => return Err(Verdict::CannotSay(act.called())),
+            // which. Naming guardians is the same case: a kind this build numbers and does not
+            // apply, so nothing about the queue after it can be vouched for.
+            Some(Kind::HOLDER_RECOVER | Kind::HOLDER_SET_GUARDIANS) => {
+                return Err(Verdict::CannotSay(act.called()));
+            }
             _ => {}
         }
         Ok(())
@@ -640,6 +932,34 @@ impl Replayed {
 }
 
 impl Replayed {
+    /// A device joining or leaving: at once by a device's hand, after the wait by the words'.
+    ///
+    /// # Errors
+    ///
+    /// [`Verdict::CannotSay`] for an act that names no key.
+    fn device_moves(
+        &mut self,
+        act: &Operation,
+        kind: Kind,
+        by_control: bool,
+    ) -> Result<(), Verdict> {
+        let key = named(act).ok_or_else(|| Verdict::CannotSay(act.called()))?;
+        let joins = kind == Kind::HOLDER_ADD_DEVICE;
+        if by_control {
+            let asked = if joins {
+                Asked::Add(key)
+            } else {
+                Asked::Remove(key)
+            };
+            self.waiting.push((act.called(), asked, due_from(act)?));
+        } else if joins {
+            self.devices.insert(key);
+        } else {
+            self.devices.remove(&key);
+        }
+        Ok(())
+    }
+
     /// A device saying no: the named asking, struck out of what is waiting.
     ///
     /// **Struck only as admission would strike it**, or the reading side would credit a
@@ -649,9 +969,8 @@ impl Replayed {
     /// strike the very asking that removes it. A cancellation the chain would not have taken
     /// leaves the waiting list untouched, exactly as if it had never been written.
     ///
-    /// One that names nothing here struck out an asking that never touched this part of the
-    /// state — thawing is the one asking that waits and moves neither the control key nor a
-    /// device, and its cancellation looks exactly like this.
+    /// One that names nothing here struck out an asking this replay was not handed — one that
+    /// governs no part of the claim being checked — and leaves the list as it found it.
     ///
     /// # Errors
     ///
@@ -696,10 +1015,27 @@ fn due_from(act: &Operation) -> Result<Epoch, Verdict> {
 }
 
 /// What a stated value looks like on the wire.
+///
+/// A flag is a number and not a CBOR boolean, because the profile every act is written in has no
+/// boolean; a moment nobody has reached is null, as a first act's `prev` is.
 fn stated(what: &Stated) -> Value {
     match what {
         Stated::Key(key) => Value::Bytes(key.clone()),
         Stated::Keys(keys) => Value::Array(keys.iter().cloned().map(Value::Bytes).collect()),
+        Stated::Flag(flag) => Value::Uint(u64::from(*flag)),
+        Stated::Names(names) => Value::Array(
+            names
+                .iter()
+                .map(|name| Value::Text(name.as_str().to_owned()))
+                .collect(),
+        ),
+        Stated::Numbers(numbers) => {
+            Value::Array(numbers.iter().copied().map(Value::Uint).collect())
+        }
+        Stated::Addresses(addresses) => {
+            Value::Array(addresses.iter().cloned().map(Value::Text).collect())
+        }
+        Stated::Moment(moment) => moment.map_or(Value::Null, |epoch| Value::Uint(epoch.number())),
     }
 }
 
@@ -709,7 +1045,7 @@ fn stated(what: &Stated) -> Value {
 /// a key belongs because a list turned up would be letting the sender pick how it is read.
 fn read_stated(value: &Value, about: Governs) -> Option<Stated> {
     match (about, value) {
-        (Governs::Control, Value::Bytes(key)) => Some(Stated::Key(key.clone())),
+        (Governs::Control | Governs::NodeKey, Value::Bytes(key)) => Some(Stated::Key(key.clone())),
         (Governs::Devices, Value::Array(keys)) => keys
             .iter()
             .map(|key| match key {
@@ -718,6 +1054,34 @@ fn read_stated(value: &Value, about: Governs) -> Option<Stated> {
             })
             .collect::<Option<BTreeSet<Vec<u8>>>>()
             .map(Stated::Keys),
+        (Governs::Frozen, Value::Uint(0)) => Some(Stated::Flag(false)),
+        (Governs::Frozen, Value::Uint(1)) => Some(Stated::Flag(true)),
+        (Governs::Pending, Value::Array(names)) => names
+            .iter()
+            .map(|name| match name {
+                Value::Text(name) => Name::parse(name).ok(),
+                _ => None,
+            })
+            .collect::<Option<BTreeSet<Name>>>()
+            .map(Stated::Names),
+        (Governs::Offers, Value::Array(numbers)) => numbers
+            .iter()
+            .map(|number| match number {
+                Value::Uint(number) => Some(*number),
+                _ => None,
+            })
+            .collect::<Option<BTreeSet<u64>>>()
+            .map(Stated::Numbers),
+        (Governs::Reachable, Value::Array(addresses)) => addresses
+            .iter()
+            .map(|address| match address {
+                Value::Text(address) => Some(address.clone()),
+                _ => None,
+            })
+            .collect::<Option<BTreeSet<String>>>()
+            .map(Stated::Addresses),
+        (Governs::Closed, Value::Null) => Some(Stated::Moment(None)),
+        (Governs::Closed, Value::Uint(epoch)) => Some(Stated::Moment(Some(Epoch::new(*epoch)))),
         _ => None,
     }
 }
@@ -795,6 +1159,49 @@ mod tests {
                 version: 1,
                 issued: at,
                 payload: BTreeMap::from([(1, payload)]),
+                signatures: vec![almena_format::operation::Signed {
+                    by: self.acts[0].object.clone(),
+                    key: by.to_vec(),
+                    signature: [0; 64],
+                }],
+            };
+            self.entries.push(Entry::of(&act, position, None));
+            self.acts.push(act);
+            self
+        }
+
+        /// A node's chain: the announcement that names it, carrying its key.
+        fn node() -> Self {
+            let announced = create(
+                Network::Development,
+                crate::kind::Kind::NODE_ANNOUNCE.number(),
+                1,
+                Epoch::GENESIS,
+                BTreeMap::from([(1, Value::Bytes(vec![5; 32]))]),
+            );
+            let entry = Entry::of(&announced, 0, None);
+            Self {
+                acts: vec![announced],
+                entries: vec![entry],
+            }
+        }
+
+        /// One more act, carrying whatever payload it is given, signed by that key at that moment.
+        fn then_carrying(
+            &mut self,
+            kind: crate::kind::Kind,
+            payload: BTreeMap<u64, Value>,
+            by: &[u8],
+            at: Epoch,
+        ) -> &mut Self {
+            let position = self.entries.len() as u64;
+            let act = Operation {
+                object: self.acts[0].object.clone(),
+                previous: Some(self.entries[self.entries.len() - 1].hash.clone()),
+                kind: kind.number(),
+                version: 1,
+                issued: at,
+                payload,
                 signatures: vec![almena_format::operation::Signed {
                     by: self.acts[0].object.clone(),
                     key: by.to_vec(),
@@ -1157,7 +1564,14 @@ mod tests {
             &acts,
             Epoch::GENESIS,
         );
-        assert_eq!(fell, vec![(Governs::Control, Verdict::Missing)]);
+        assert_eq!(
+            fell,
+            vec![
+                (Governs::Control, Verdict::Missing),
+                (Governs::Frozen, Verdict::Missing),
+                (Governs::Pending, Verdict::Missing)
+            ]
+        );
     }
 
     #[test]
@@ -1177,6 +1591,16 @@ mod tests {
             Claim {
                 about: Governs::Devices,
                 stated: devices(&[&[7; 33]]),
+                set_by: chain.hash(1),
+            },
+            Claim {
+                about: Governs::Frozen,
+                stated: Stated::Flag(false),
+                set_by: chain.hash(0),
+            },
+            Claim {
+                about: Governs::Pending,
+                stated: Stated::Names(BTreeSet::new()),
                 set_by: chain.hash(1),
             },
         ];
@@ -1218,6 +1642,16 @@ mod tests {
                 stated: devices(&[&[7; 33]]),
                 set_by: chain.hash(1),
             },
+            Claim {
+                about: Governs::Frozen,
+                stated: Stated::Flag(false),
+                set_by: chain.hash(0),
+            },
+            Claim {
+                about: Governs::Pending,
+                stated: Stated::Names(BTreeSet::new()),
+                set_by: chain.hash(1),
+            },
         ];
 
         let fell = falls_over(
@@ -1229,7 +1663,7 @@ mod tests {
             &[],
             Epoch::GENESIS,
         );
-        assert_eq!(fell.len(), 2, "{fell:?}");
+        assert_eq!(fell.len(), 4, "{fell:?}");
         assert!(
             fell.iter()
                 .all(|(_, verdict)| matches!(verdict, Verdict::CannotSay(_)))
@@ -1655,6 +2089,539 @@ mod tests {
                 Verdict::CannotSay(_)
             ),
             "the branch carries an act this build cannot apply, so nothing about it can be vouched"
+        );
+    }
+
+    /// A part of the state, as a summary states it and cites it.
+    fn claim(about: Governs, stated: Stated, set_by: Name) -> Claim {
+        Claim {
+            about,
+            stated,
+            set_by,
+        }
+    }
+
+    impl Chain {
+        /// The branch to the head, as a reader walks it.
+        fn walked(&self) -> Vec<&Entry> {
+            branch(&self.held(), &self.head())
+        }
+
+        /// Every act, as a reader that fetched them all would hold them.
+        fn every_act(&self) -> Vec<&Operation> {
+            self.acts.iter().collect()
+        }
+
+        /// A summary act on the end of the chain, signed by that key at that moment.
+        fn summarised_by(&mut self, by: &[u8], at: Epoch) -> &mut Self {
+            self.then_by(
+                crate::kind::Kind::HOLDER_CHECKPOINT,
+                Value::Bytes(vec![]),
+                by,
+                at,
+            )
+        }
+    }
+
+    /// An account with one device, on which the words have asked for a second — which waits —
+    /// and a summary written inside the window. Returns the chain and the asking's name.
+    fn an_asking_in_flight() -> (Chain, Name) {
+        let control = vec![1u8; 32];
+        let device = vec![9u8; 33];
+        let mut chain = Chain::new();
+        chain.then_by(
+            crate::kind::Kind::HOLDER_ADD_DEVICE,
+            Value::Bytes(device.clone()),
+            &device,
+            Epoch::new(1),
+        );
+        chain.then_by(
+            crate::kind::Kind::HOLDER_ADD_DEVICE,
+            Value::Bytes(vec![7u8; 33]),
+            &control,
+            Epoch::new(10),
+        );
+        let asking = chain.hash(2);
+        chain.summarised_by(&device, Epoch::new(11));
+        (chain, asking)
+    }
+
+    #[test]
+    fn a_summary_that_omits_an_asking_in_flight_falls_over() {
+        // **The attack a summary used to be refused for**, now caught by the summary itself. The
+        // words ask for a device, which waits; a summary written inside the window that says
+        // nothing is waiting would carry the asking out of every reader's sight, to land later on
+        // a state nobody was shown. So what is waiting is a part of the state, cited like any
+        // other, and a summary that hides it falls over on both checks the log allows.
+        let (chain, asking) = an_asking_in_flight();
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let placed = Placed {
+            carrier: &carrier,
+            branch: &walked,
+        };
+
+        let hiding = claim(
+            Governs::Pending,
+            Stated::Names(BTreeSet::new()),
+            asking.clone(),
+        );
+        assert_eq!(
+            produces(&hiding, &chain.every_act(), Epoch::new(11)),
+            Verdict::Fabricated,
+            "the asking is in flight at the summary's moment, and the summary says nothing is"
+        );
+
+        let citing_before_it = claim(
+            Governs::Pending,
+            Stated::Names(BTreeSet::new()),
+            chain.hash(1),
+        );
+        assert_eq!(
+            left_out(&citing_before_it, placed),
+            Verdict::LeftOut(asking),
+            "and citing the act before the asking hides the asking"
+        );
+    }
+
+    #[test]
+    fn a_summary_that_names_the_asking_in_flight_stands_until_it_lands() {
+        let (chain, asking) = an_asking_in_flight();
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let placed = Placed {
+            carrier: &carrier,
+            branch: &walked,
+        };
+        let honest = claim(
+            Governs::Pending,
+            Stated::Names(BTreeSet::from([asking.clone()])),
+            asking,
+        );
+        assert_eq!(
+            holds_up(&honest, placed, &chain.every_act(), Epoch::new(11)),
+            Verdict::Stands
+        );
+        assert_eq!(
+            produces(&honest, &chain.every_act(), Epoch::new(82)),
+            Verdict::Fabricated,
+            "once it has landed it is no longer waiting, and saying it is would be as false"
+        );
+    }
+
+    #[test]
+    fn a_summary_that_says_not_frozen_on_a_frozen_account_falls_over() {
+        // **The other half of the same attack.** A summary that could describe a stopped account
+        // as moving would let a reader bootstrap the account somebody froze because their phone
+        // was in a stranger's pocket as though nothing had happened.
+        let control = vec![1u8; 32];
+        let mut chain = Chain::new();
+        chain.then_by(
+            crate::kind::Kind::HOLDER_FREEZE,
+            Value::Bytes(vec![]),
+            &control,
+            Epoch::new(5),
+        );
+        chain.summarised_by(&control, Epoch::new(6));
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let placed = Placed {
+            carrier: &carrier,
+            branch: &walked,
+        };
+        let acts = chain.every_act();
+
+        let thawed = claim(Governs::Frozen, Stated::Flag(false), chain.hash(1));
+        assert_eq!(produces(&thawed, &acts, Epoch::new(6)), Verdict::Fabricated);
+
+        let hiding_the_freeze = claim(Governs::Frozen, Stated::Flag(false), chain.hash(0));
+        assert_eq!(
+            left_out(&hiding_the_freeze, placed),
+            Verdict::LeftOut(chain.hash(1))
+        );
+
+        let stopped = claim(Governs::Frozen, Stated::Flag(true), chain.hash(1));
+        assert_eq!(
+            holds_up(&stopped, placed, &acts, Epoch::new(6)),
+            Verdict::Stands
+        );
+    }
+
+    #[test]
+    fn a_thaw_the_words_asked_for_waits_and_the_summary_says_so_until_it_lands() {
+        // Thawing concedes back everything the freeze stopped, so it waits like anything else the
+        // words ask alone — and while it waits the account is still frozen and the asking is in
+        // flight, which is what a summary written in the window has to say.
+        let control = vec![1u8; 32];
+        let mut chain = Chain::new();
+        chain.then_by(
+            crate::kind::Kind::HOLDER_FREEZE,
+            Value::Bytes(vec![]),
+            &control,
+            Epoch::new(5),
+        );
+        chain.then_by(
+            crate::kind::Kind::HOLDER_UNFREEZE,
+            Value::Bytes(vec![]),
+            &control,
+            Epoch::new(10),
+        );
+        let thawing = chain.hash(2);
+        let acts = chain.every_act();
+
+        let still_frozen = claim(Governs::Frozen, Stated::Flag(true), thawing.clone());
+        let thaw_waiting = claim(
+            Governs::Pending,
+            Stated::Names(BTreeSet::from([thawing.clone()])),
+            thawing.clone(),
+        );
+        assert_eq!(
+            produces(&still_frozen, &acts, Epoch::new(11)),
+            Verdict::Stands
+        );
+        assert_eq!(
+            produces(&thaw_waiting, &acts, Epoch::new(11)),
+            Verdict::Stands
+        );
+
+        let moving = claim(Governs::Frozen, Stated::Flag(false), thawing.clone());
+        let nothing_waiting = claim(Governs::Pending, Stated::Names(BTreeSet::new()), thawing);
+        assert_eq!(produces(&moving, &acts, Epoch::new(82)), Verdict::Stands);
+        assert_eq!(
+            produces(&nothing_waiting, &acts, Epoch::new(82)),
+            Verdict::Stands
+        );
+        assert_eq!(
+            produces(&moving, &acts, Epoch::new(11)),
+            Verdict::Fabricated,
+            "claiming the thaw before its wait is out is jumping the wait"
+        );
+    }
+
+    /// An account with one device, and the four claims that describe it truthfully.
+    fn an_account_with_one_device() -> (Chain, [Claim; 4]) {
+        let mut chain = Chain::new();
+        chain.then(crate::kind::Kind::HOLDER_ADD_DEVICE, &[7; 33]);
+        let whole = [
+            claim(Governs::Control, Stated::Key(vec![1; 32]), chain.hash(0)),
+            claim(Governs::Devices, devices(&[&[7; 33]]), chain.hash(1)),
+            claim(Governs::Frozen, Stated::Flag(false), chain.hash(0)),
+            claim(
+                Governs::Pending,
+                Stated::Names(BTreeSet::new()),
+                chain.hash(1),
+            ),
+        ];
+        (chain, whole)
+    }
+
+    #[test]
+    fn a_summary_that_says_nothing_about_freezing_or_what_is_waiting_falls_over() {
+        // Completeness is measured against what the state has. An account has a freeze and a
+        // queue whether or not a summary chose to mention them, and silence about either would be
+        // read as *moving* and *nothing waiting* by everybody who arrives.
+        let (chain, whole) = an_account_with_one_device();
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let placed = Placed {
+            carrier: &carrier,
+            branch: &walked,
+        };
+        let acts = chain.every_act();
+
+        let fell = falls_over(&whole[..2], placed, &acts, Epoch::GENESIS);
+        assert_eq!(
+            fell,
+            vec![
+                (Governs::Frozen, Verdict::Missing),
+                (Governs::Pending, Verdict::Missing)
+            ]
+        );
+        assert!(falls_over(&whole, placed, &acts, Epoch::GENESIS).is_empty());
+    }
+
+    /// An account whose first device arrived carrying one more field, at that number.
+    fn a_device_added_carrying(number: u64) -> Chain {
+        let device = vec![9u8; 33];
+        let mut chain = Chain::new();
+        chain.then_carrying(
+            crate::kind::Kind::HOLDER_ADD_DEVICE,
+            BTreeMap::from([
+                (1, Value::Bytes(device.clone())),
+                (number, Value::Text("something newer".to_owned())),
+            ]),
+            &device,
+            Epoch::new(1),
+        );
+        chain.summarised_by(&device, Epoch::new(2));
+        chain
+    }
+
+    #[test]
+    fn an_act_carrying_a_critical_field_this_build_cannot_read_makes_a_summary_uncheckable() {
+        // **What the log could not say before it carried the numbers.** The act's kind is one this
+        // build applies, so a check by kind alone would vouch across it — while admission, holding
+        // the act, declares the account opaque at the same field. The entry now lists the odd
+        // numbers the payload carries, and the reading side draws the same line as the writing side
+        // without fetching anything.
+        let chain = a_device_added_carrying(77);
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let control = claim(Governs::Control, Stated::Key(vec![1; 32]), chain.hash(0));
+        assert_eq!(
+            left_out(
+                &control,
+                Placed {
+                    carrier: &carrier,
+                    branch: &walked
+                }
+            ),
+            Verdict::CannotSay(chain.hash(1)),
+            "even for a part that act does not govern: opacity is about the account"
+        );
+    }
+
+    #[test]
+    fn an_act_carrying_an_even_field_this_build_cannot_read_is_passed_over_here_too() {
+        // On the reading side as on the writing: an even number is one a reader may skip and
+        // still claim to have applied the act, which is what makes an extension an addition.
+        let chain = a_device_added_carrying(78);
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let control = claim(Governs::Control, Stated::Key(vec![1; 32]), chain.hash(0));
+        assert_eq!(
+            left_out(
+                &control,
+                Placed {
+                    carrier: &carrier,
+                    branch: &walked
+                }
+            ),
+            Verdict::Stands
+        );
+    }
+
+    /// A node saying again what it offers and where it is.
+    fn announcing_again(offers: &[u64], reachable: &[&str]) -> BTreeMap<u64, Value> {
+        BTreeMap::from([
+            (
+                crate::capability::OFFERS,
+                Value::Array(offers.iter().copied().map(Value::Uint).collect()),
+            ),
+            (crate::capability::SPEAKS, Value::Uint(1)),
+            (
+                crate::capability::WHERE,
+                Value::Array(
+                    reachable
+                        .iter()
+                        .map(|address| Value::Text((*address).to_owned()))
+                        .collect(),
+                ),
+            ),
+        ])
+    }
+
+    const ONE: &str = "/ip4/10.0.0.1/tcp/4001";
+    const TWO: &str = "/ip4/10.0.0.2/tcp/4001";
+
+    /// A node that announced twice — more the second time — with a daily summary after each.
+    fn a_node_that_announced_twice() -> Chain {
+        let key = vec![5u8; 32];
+        let mut chain = Chain::node();
+        chain.then_carrying(
+            crate::kind::Kind::NODE_ANNOUNCE,
+            announcing_again(&[1, 3], &[ONE]),
+            &key,
+            Epoch::new(1),
+        );
+        chain.then_carrying(
+            crate::kind::Kind::NODE_SUMMARY,
+            BTreeMap::new(),
+            &key,
+            Epoch::new(24),
+        );
+        chain.then_carrying(
+            crate::kind::Kind::NODE_ANNOUNCE,
+            announcing_again(&[1, 2, 3], &[ONE, TWO]),
+            &key,
+            Epoch::new(30),
+        );
+        chain.then_carrying(
+            crate::kind::Kind::NODE_SUMMARY,
+            BTreeMap::new(),
+            &key,
+            Epoch::new(48),
+        );
+        chain
+    }
+
+    /// The four claims that describe that node truthfully, as of its last act.
+    fn what_the_node_is(chain: &Chain) -> [Claim; 4] {
+        let latest = chain.hash(3);
+        [
+            claim(Governs::NodeKey, Stated::Key(vec![5; 32]), latest.clone()),
+            claim(
+                Governs::Offers,
+                Stated::Numbers(BTreeSet::from([1, 2, 3])),
+                latest.clone(),
+            ),
+            claim(
+                Governs::Reachable,
+                Stated::Addresses(BTreeSet::from([ONE.to_owned(), TWO.to_owned()])),
+                latest.clone(),
+            ),
+            claim(Governs::Closed, Stated::Moment(None), latest),
+        ]
+    }
+
+    #[test]
+    fn a_node_s_own_chain_can_be_summarised() {
+        // A node's chain grows by one daily summary for as long as it runs, and until it had parts
+        // a summary could claim it owed one it could never pay. What a node **is** — its key, what
+        // it offers, where it says it is, whether it has closed — is set by its announcements and
+        // its closing, and is checked exactly as an account's parts are.
+        let chain = a_node_that_announced_twice();
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let placed = Placed {
+            carrier: &carrier,
+            branch: &walked,
+        };
+        let honest = what_the_node_is(&chain);
+        assert!(
+            falls_over(&honest, placed, &chain.every_act(), Epoch::new(48)).is_empty(),
+            "the latest announcement set every part, and it says what the acts say"
+        );
+
+        // A summary that says nothing about closing is not a smaller summary of a node.
+        let fell = falls_over(&honest[..3], placed, &chain.every_act(), Epoch::new(48));
+        assert_eq!(fell, vec![(Governs::Closed, Verdict::Missing)]);
+    }
+
+    #[test]
+    fn a_node_summary_that_hides_an_announcement_or_inflates_one_falls_over() {
+        let chain = a_node_that_announced_twice();
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let placed = Placed {
+            carrier: &carrier,
+            branch: &walked,
+        };
+
+        let stale = claim(
+            Governs::Offers,
+            Stated::Numbers(BTreeSet::from([1, 3])),
+            chain.hash(1),
+        );
+        assert_eq!(
+            left_out(&stale, placed),
+            Verdict::LeftOut(chain.hash(3)),
+            "citing the first announcement hides the second"
+        );
+
+        let inflated = claim(
+            Governs::Offers,
+            Stated::Numbers(BTreeSet::from([1, 2, 3, 4])),
+            chain.hash(3),
+        );
+        assert_eq!(
+            produces(&inflated, &chain.every_act(), Epoch::new(48)),
+            Verdict::Fabricated,
+            "and a capability nobody announced is not one"
+        );
+    }
+
+    #[test]
+    fn closing_a_node_is_a_part_of_what_it_is_and_the_moment_does_not_move() {
+        let key = vec![5u8; 32];
+        let mut chain = Chain::node();
+        chain.then_carrying(
+            crate::kind::Kind::NODE_CLOSE,
+            BTreeMap::new(),
+            &key,
+            Epoch::new(40),
+        );
+        chain.then_carrying(
+            crate::kind::Kind::NODE_SUMMARY,
+            BTreeMap::new(),
+            &key,
+            Epoch::new(48),
+        );
+        let walked = chain.walked();
+        let carrier = chain.head();
+        let placed = Placed {
+            carrier: &carrier,
+            branch: &walked,
+        };
+        let acts = chain.every_act();
+
+        let open = claim(Governs::Closed, Stated::Moment(None), chain.hash(0));
+        assert_eq!(left_out(&open, placed), Verdict::LeftOut(chain.hash(1)));
+
+        let closed = claim(
+            Governs::Closed,
+            Stated::Moment(Some(Epoch::new(40))),
+            chain.hash(1),
+        );
+        assert_eq!(
+            holds_up(&closed, placed, &acts, Epoch::new(48)),
+            Verdict::Stands
+        );
+
+        let moved = claim(
+            Governs::Closed,
+            Stated::Moment(Some(Epoch::new(41))),
+            chain.hash(1),
+        );
+        assert_eq!(produces(&moved, &acts, Epoch::new(48)), Verdict::Fabricated);
+    }
+
+    #[test]
+    fn every_shape_a_part_can_take_survives_the_wire() {
+        let cited = Name::of(b"the act that set it");
+        let claims = vec![
+            claim(Governs::Frozen, Stated::Flag(true), cited.clone()),
+            claim(
+                Governs::Pending,
+                Stated::Names(BTreeSet::from([Name::of(b"an asking")])),
+                cited.clone(),
+            ),
+            claim(
+                Governs::Offers,
+                Stated::Numbers(BTreeSet::from([1, 2])),
+                cited.clone(),
+            ),
+            claim(
+                Governs::Reachable,
+                Stated::Addresses(BTreeSet::from([ONE.to_owned()])),
+                cited.clone(),
+            ),
+            claim(
+                Governs::Closed,
+                Stated::Moment(Some(Epoch::new(40))),
+                cited.clone(),
+            ),
+        ];
+        let mut carrier = create(
+            Network::Development,
+            crate::kind::Kind::NODE_SUMMARY.number(),
+            1,
+            Epoch::GENESIS,
+            BTreeMap::new(),
+        );
+        carrier.payload.insert(super::FIELD, declaration(&claims));
+        assert_eq!(declared(&carrier), Ok(Some(claims)));
+
+        // And a value in the wrong shape for its part is refused rather than read as something.
+        let wrong_shape =
+            Value::Array(vec![Value::Uint(2), Value::Text(cited.as_str().to_owned())]);
+        carrier.payload.insert(
+            super::FIELD,
+            Value::Map(BTreeMap::from([(Governs::Frozen.number(), wrong_shape)])),
+        );
+        assert_eq!(
+            declared(&carrier),
+            Err(super::Unreadable(Some(Governs::Frozen.number())))
         );
     }
 }

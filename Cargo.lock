@@ -100,6 +100,7 @@ version = "0.1.0"
 dependencies = [
  "almena-agent-protocol",
  "almena-api",
+ "almena-frozen",
  "almena-log",
  "almena-lookup",
  "almena-mesh",
@@ -224,6 +225,7 @@ dependencies = [
  "almena-time",
  "async-trait",
  "libp2p",
+ "log",
  "tokio",
 ]
 
@@ -239,6 +241,37 @@ dependencies = [
  "almena-suite",
  "almena-time",
  "getrandom 0.3.4",
+]
+
+[[package]]
+name = "almena-partner"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "almena-api",
+ "almena-credential",
+ "almena-format",
+ "almena-log",
+ "almena-mailbox",
+ "almena-node",
+ "almena-sdk",
+ "almena-serve",
+ "almena-status",
+ "almena-store",
+ "almena-suite",
+ "almena-time",
+ "almena-tls",
+ "clap",
+ "getrandom 0.3.4",
+ "hmac",
+ "log",
+ "p256",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -320,7 +353,9 @@ dependencies = [
 name = "almena-tls"
 version = "0.1.0"
 dependencies = [
+ "almena-suite",
  "rustls-pki-types",
+ "tokio",
  "tokio-rustls",
 ]
 
@@ -1890,6 +1925,7 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
+ "hkdf",
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",

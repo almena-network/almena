@@ -1,11 +1,12 @@
 /**
  * The head of the Network screen: what is known about the network this node is on.
  *
- * Five figures, and today all five are a dash. That is the point rather than a placeholder: this
- * node is on no network, so it has looked at nothing, and `Figure` is the element that draws the
- * difference between "none" and "nobody looked".
+ * Every figure is a dash until the node is on a network, and that is the point rather than a
+ * placeholder: a node on no network has looked at nothing, and `Figure` is the element that draws
+ * the difference between "none" and "nobody looked". The peer count stays a dash a little longer
+ * — until the node has taken its place on the mesh — because until then nobody has counted.
  *
- * The same five the terminal draws, from the same place. Neither face works a figure out.
+ * The same figures the terminal draws, from the same place. Neither face works a figure out.
  */
 
 import { useTranslation } from "react-i18next";
@@ -28,7 +29,6 @@ interface NetworkFactsProps {
 /** The figures at the head of the Network screen. */
 function NetworkFacts({ reading }: NetworkFactsProps) {
   const { t } = useTranslation();
-  const peers = reading?.peers;
 
   return (
     <Card>
@@ -67,7 +67,19 @@ function NetworkFacts({ reading }: NetworkFactsProps) {
           />
           <Figure
             label={t("network.about.figure.peers")}
-            value={peers === null || peers === undefined ? null : String(peers.length)}
+            value={
+              reading?.peers === null || reading?.peers === undefined
+                ? null
+                : String(reading.peers)
+            }
+          />
+          <Figure
+            label={t("network.about.figure.silent")}
+            value={
+              reading?.silent === null || reading?.silent === undefined
+                ? null
+                : String(reading.silent)
+            }
           />
         </div>
       </CardContent>

@@ -9,6 +9,7 @@
 //! tipo      kind of operation
 //! version   version of that kind
 //! sujeto    the object it is about, when that is not its author   (optional)
+//! critical  the odd field numbers the operation's payload carries, in order
 //! ```
 //!
 //! **This is the universal part, and therefore the expensive one** — on the order of a hundred
@@ -21,6 +22,14 @@
 //!   understand and **to know when it does not understand it**.
 //! - `sujeto` is here so that a claim about someone else — a certification — can be indexed
 //!   without walking everything.
+//! - `critical` is here because `tipo` alone does not say whether an act can be applied. A field
+//!   nobody knew when the kind was numbered is what an extension looks like, and a reader that
+//!   cannot read it may not claim to have applied the act — but the payload is spread across the
+//!   network while the log is everywhere, so without this a reader checking a summary against the
+//!   log could vouch across an act it would have declared opaque had it held the act. The numbers
+//!   and never the values: what is asked is *could this build read it*, which the numbers answer
+//!   and the values do not, and two builds hash one entry to one thing only if nothing in it
+//!   depends on what either of them understands.
 
 use crate::cbor::Value;
 use crate::identifier::{Did, Name};
@@ -42,6 +51,11 @@ mod key {
     pub const VERSION: u64 = 6;
     /// What it is about, when that is not its author.
     pub const SUBJECT: u64 = 7;
+    /// The odd field numbers the operation's payload carries.
+    ///
+    /// Odd itself: an entry read without it is an entry whose act nobody can say they could
+    /// apply, so a reader that skipped it would be back to judging by kind alone.
+    pub const CRITICAL: u64 = 9;
 }
 
 /// One line of a node's log.
@@ -65,6 +79,14 @@ pub struct Entry {
     /// **A daily summary carries none**: it speaks about many nodes at once, and one
     /// entry per observed node per day is the N² that an aggregate was chosen to avoid.
     pub subject: Option<Did>,
+    /// The odd field numbers the operation's payload carries, strictly ascending.
+    ///
+    /// **Every one of them, whatever this build makes of them.** A reader holding the log and not
+    /// the act asks whether *its* vocabulary for that kind covers every number here; a number
+    /// outside it is a field the reader could not have applied, and the act is one it may not
+    /// vouch across. Written by whoever writes the entry from the payload itself, so two builds
+    /// that disagree about what a number means still write the same list.
+    pub critical: Vec<u64>,
 }
 
 impl Entry {
@@ -91,6 +113,12 @@ impl Entry {
         if let Some(subject) = &self.subject {
             fields.insert(key::SUBJECT, Value::Text(subject.to_string()));
         }
+        // Always present, and an empty list when the payload has no critical field: an act that
+        // any build can apply is a fact stated, exactly as *first in the chain* is.
+        fields.insert(
+            key::CRITICAL,
+            Value::Array(self.critical.iter().copied().map(Value::Uint).collect()),
+        );
         Value::Map(fields).to_bytes()
     }
 
@@ -119,8 +147,22 @@ impl Entry {
             kind: operation.kind,
             version: operation.version,
             subject,
+            critical: critical_fields_of(&operation.payload),
         }
     }
+}
+
+/// The odd field numbers a payload carries, in ascending order.
+///
+/// Taken from the payload's keys and from nothing this build knows about them: the parity is the
+/// mark, and the map is already in canonical order, so the list is the same whoever writes it.
+#[must_use]
+pub fn critical_fields_of(payload: &BTreeMap<u64, Value>) -> Vec<u64> {
+    payload
+        .keys()
+        .copied()
+        .filter(|number| crate::field::Field::new(*number).is_critical())
+        .collect()
 }
 
 /// Read an entry back from the bytes it was written in.
@@ -159,6 +201,7 @@ pub fn read(value: &Value) -> Option<Entry> {
         Some(Value::Text(did)) => Some(Did::parse(did).ok()?),
         Some(_) => return None,
     };
+    let critical = critical_read(fields.get(&key::CRITICAL)?)?;
 
     Some(Entry {
         sequence,
@@ -168,7 +211,33 @@ pub fn read(value: &Value) -> Option<Entry> {
         kind,
         version,
         subject,
+        critical,
     })
+}
+
+/// The critical-field list read back, held to the one shape it is written in.
+///
+/// Odd numbers, strictly ascending, and nothing else: a list in any other order would be a second
+/// encoding of one entry, and an even number in it would be a writer that does not agree with this
+/// about what the mark is. [`None`] for anything else.
+fn critical_read(value: &Value) -> Option<Vec<u64>> {
+    let Value::Array(listed) = value else {
+        return None;
+    };
+    let mut critical = Vec::with_capacity(listed.len());
+    for number in listed {
+        let &Value::Uint(number) = number else {
+            return None;
+        };
+        if !crate::field::Field::new(number).is_critical() {
+            return None;
+        }
+        if critical.last().is_some_and(|last| *last >= number) {
+            return None;
+        }
+        critical.push(number);
+    }
+    Some(critical)
 }
 
 #[cfg(test)]
@@ -288,6 +357,82 @@ mod tests {
             None,
             "and neither does a number"
         );
+    }
+
+    #[test]
+    fn an_entry_lists_the_critical_fields_its_act_carries_and_only_those() {
+        // What lets a reader holding the log and not the act say *this build could not have
+        // applied that* — the numbers, never the values, so that two builds write one list.
+        let mut operation = operation();
+        operation.payload = BTreeMap::from([
+            (4, Value::Uint(0)),
+            (3, Value::Uint(0)),
+            (1, Value::Uint(0)),
+            (101, Value::Uint(0)),
+            (100, Value::Uint(0)),
+        ]);
+        let entry = Entry::of(&operation, 0, None);
+        assert_eq!(
+            entry.critical,
+            vec![1, 3, 101],
+            "odd, ascending, even ones left out"
+        );
+        assert_eq!(
+            fields(&entry.to_bytes()).get(&key::CRITICAL),
+            Some(&Value::Array(vec![
+                Value::Uint(1),
+                Value::Uint(3),
+                Value::Uint(101)
+            ]))
+        );
+
+        let mut plain = operation.clone();
+        plain.payload = BTreeMap::from([(2, Value::Uint(0))]);
+        assert_eq!(
+            fields(&Entry::of(&plain, 0, None).to_bytes()).get(&key::CRITICAL),
+            Some(&Value::Array(Vec::new())),
+            "and an act any build can apply says so with an empty list, never by leaving it out"
+        );
+    }
+
+    #[test]
+    fn an_entry_without_the_list_or_with_a_list_in_another_shape_does_not_read() {
+        // One shape per entry. A missing list would be an entry back to judging by kind alone;
+        // one out of order, or carrying an even number, is written by something that does not
+        // agree with this about what the mark is.
+        let written = || match read(&Entry::of(&operation(), 0, None).to_bytes()) {
+            Ok(Value::Map(fields)) => fields,
+            other => panic!("an entry is a map, got {other:?}"),
+        };
+
+        let mut missing = written();
+        missing.remove(&key::CRITICAL);
+        assert_eq!(super::read(&Value::Map(missing)), None);
+
+        let mut backwards = written();
+        backwards.insert(
+            key::CRITICAL,
+            Value::Array(vec![Value::Uint(3), Value::Uint(1)]),
+        );
+        assert_eq!(super::read(&Value::Map(backwards)), None);
+
+        let mut twice = written();
+        twice.insert(
+            key::CRITICAL,
+            Value::Array(vec![Value::Uint(1), Value::Uint(1)]),
+        );
+        assert_eq!(super::read(&Value::Map(twice)), None);
+
+        let mut even = written();
+        even.insert(key::CRITICAL, Value::Array(vec![Value::Uint(2)]));
+        assert_eq!(super::read(&Value::Map(even)), None);
+
+        let mut not_a_number = written();
+        not_a_number.insert(
+            key::CRITICAL,
+            Value::Array(vec![Value::Text("1".to_owned())]),
+        );
+        assert_eq!(super::read(&Value::Map(not_a_number)), None);
     }
 
     #[test]

@@ -28,8 +28,12 @@ pub const KEYS: &[&str] = &[
     "network.about.figure.root",
     "network.about.figure.peer",
     "network.about.figure.peers",
+    "network.about.figure.silent",
+    "network.about.figure.interface",
+    "network.about.figure.link",
     "network.peers.noNetworkTitle",
     "network.peers.noNetwork",
+    "network.control.challengeShown",
     "cli.running",
     "cli.records",
     "cli.recordsNone",
@@ -48,9 +52,12 @@ pub fn draw(frame: &mut Frame<'_>, node: &Node, catalog: &Catalog) {
     let inside = block.inner(frame.area());
     frame.render_widget(block, frame.area());
 
-    let [heading, figures, explanation, records, footer] = Layout::vertical([
+    let rows = figures_of(node, catalog);
+    // Every figure row, and never a fixed number of them: the list grew once past the space it
+    // was given and the last three were clipped for a month before anybody noticed.
+    let [heading, figures, middle, records, footer] = Layout::vertical([
         Constraint::Length(2),
-        Constraint::Length(3),
+        Constraint::Length(u16::try_from(rows.len()).unwrap_or(u16::MAX)),
         Constraint::Min(3),
         Constraint::Length(2),
         Constraint::Length(1),
@@ -58,8 +65,14 @@ pub fn draw(frame: &mut Frame<'_>, node: &Node, catalog: &Catalog) {
     .areas(inside);
 
     draw_heading(frame, heading, catalog);
-    draw_figures(frame, figures, node, catalog);
-    draw_explanation(frame, explanation, catalog);
+    draw_figures(frame, figures, &rows);
+    // What goes in the middle is which emptiness this is, when there is one — a node on no network
+    // — and otherwise the one thing shown to a person and gone: the challenge, when one was asked.
+    if node.facts().network.is_none() {
+        draw_explanation(frame, middle, catalog);
+    } else if let Some(challenge) = node.challenge() {
+        draw_challenge(frame, middle, challenge, catalog);
+    }
     draw_records(frame, records, node, catalog);
     draw_footer(frame, footer, catalog);
 }
@@ -77,11 +90,13 @@ fn draw_heading(frame: &mut Frame<'_>, area: Rect, catalog: &Catalog) {
 
 /// What a node reports about itself, read from the core and not assembled here.
 ///
-/// The same five figures the windowed face draws, from the same place — which is what keeps the
-/// two from answering the same question differently.
-fn draw_figures(frame: &mut Frame<'_>, area: Rect, node: &Node, catalog: &Catalog) {
+/// The same figures the windowed face draws, from the same place — which is what keeps the two
+/// from answering the same question differently. The peer count is the mesh socket's and the
+/// interface address is the run's; neither is a fact the record holds, and both are drawn as what
+/// they are.
+fn figures_of(node: &Node, catalog: &Catalog) -> Vec<(String, Option<String>)> {
     let facts = node.facts();
-    let rows = [
+    vec![
         (catalog.text("network.about.figure.network"), facts.network),
         (
             catalog.text("network.about.figure.identity"),
@@ -97,8 +112,20 @@ fn draw_figures(frame: &mut Frame<'_>, area: Rect, node: &Node, catalog: &Catalo
             catalog.text("network.about.figure.peers"),
             node.peers().map(|count| count.to_string()),
         ),
-    ];
+        (
+            catalog.text("network.about.figure.silent"),
+            node.silent().map(|count| count.to_string()),
+        ),
+        (
+            catalog.text("network.about.figure.interface"),
+            node.interface_at().map(ToOwned::to_owned),
+        ),
+        (catalog.text("network.about.figure.link"), node.link()),
+    ]
+}
 
+/// The figure rows, one line each, with the labels lined up.
+fn draw_figures(frame: &mut Frame<'_>, area: Rect, rows: &[(String, Option<String>)]) {
     let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
     let lines: Vec<Line<'_>> = rows
         .iter()
@@ -111,6 +138,19 @@ fn draw_figures(frame: &mut Frame<'_>, area: Rect, node: &Node, catalog: &Catalo
         .collect();
 
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// The challenge, for whoever contributed this node to approve.
+///
+/// Text and the link beneath it, and no code drawn in blocks: nothing this program links encodes
+/// one, and a dependency taken on for a square of characters is a dependency. The windowed face
+/// draws the same challenge as a code; the text is the same string and approves the same thing.
+fn draw_challenge(frame: &mut Frame<'_>, area: Rect, challenge: &str, catalog: &Catalog) {
+    let lines = vec![
+        Line::from(Span::from(catalog.text("network.control.challengeShown")).bold()),
+        Line::from(challenge.to_owned()),
+    ];
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
 }
 
 /// Which emptiness this is, and why it is that one.
@@ -159,15 +199,19 @@ mod tests {
     /// The width the view is drawn at in these tests.
     const WIDTH: u16 = 72;
 
-    /// What the view draws for a node, one string per line of the terminal.
+    /// What the view draws for a node on no network, one string per line of the terminal.
     fn drawn(language: Language) -> Vec<String> {
-        let backend = TestBackend::new(WIDTH, 20);
+        drawn_of(&Node::start(None), language)
+    }
+
+    /// What the view draws for `node`, one string per line of the terminal.
+    fn drawn_of(node: &Node, language: Language) -> Vec<String> {
+        let backend = TestBackend::new(WIDTH, 24);
         let mut terminal = Terminal::new(backend).expect("a test terminal");
-        let node = Node::start(None);
         let catalog = Catalog::of(language);
 
         terminal
-            .draw(|frame| draw(frame, &node, &catalog))
+            .draw(|frame| draw(frame, node, &catalog))
             .expect("a frame");
 
         let cells: Vec<&str> = terminal
@@ -186,9 +230,29 @@ mod tests {
             .collect()
     }
 
-    /// The three figure rows, which are the three lines after the border and the heading.
+    /// How many figure rows the view draws, which is every one `figures_of` lists.
+    const FIGURES: usize = 9;
+
+    /// The figure rows, which are the lines after the border and the heading.
     fn figures(screen: &[String]) -> &[String] {
-        screen.get(3..6).unwrap_or_default()
+        screen.get(3..3 + FIGURES).unwrap_or_default()
+    }
+
+    /// A directory of this test's own, removed when it is done with it.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("almena-cli-draw-{name}"));
+            let _ = std::fs::remove_dir_all(&path);
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
@@ -198,12 +262,46 @@ mod tests {
 
         // Asserted on the figure rows rather than on the whole screen, because the prose below
         // them legitimately contains an em dash of its own. This is the test that fails the day
-        // somebody draws a zero for a count nobody took.
-        assert_eq!(figures.len(), 3, "{screen:?}");
+        // somebody draws a zero for a count nobody took — and the day a row is clipped again.
+        assert_eq!(figures.len(), FIGURES, "{screen:?}");
         for row in figures {
             assert!(row.ends_with(UNMEASURED), "{row}");
             assert!(!row.contains('0'), "a zero was drawn: {row}");
         }
+    }
+
+    #[test]
+    fn a_node_on_a_network_draws_every_row_and_no_explanation_of_an_emptiness() {
+        // **The other half.** The rows past the sixth used to be clipped, and the sentence about
+        // there being no network was drawn on every frame, network or not.
+        let scratch = Scratch::new("network");
+        let mut node = Node::in_directory(
+            None,
+            Some(scratch.0.clone()),
+            Vec::new(),
+            almena_node::Which::Development,
+        );
+        node.open("dev.almena.network", &[], true)
+            .expect("development opens on somebody's word");
+        node.serving_at("127.0.0.1:8791");
+
+        let screen = drawn_of(&node, Language::source());
+        let rows = figures(&screen);
+        assert_eq!(rows.len(), FIGURES, "{screen:?}");
+        assert!(rows[0].ends_with(&node.facts().network.expect("a network")));
+        assert!(
+            rows[6].ends_with('0'),
+            "silent is a count, and nought: {}",
+            rows[6]
+        );
+        assert!(rows[7].ends_with("127.0.0.1:8791"), "{}", rows[7]);
+        assert!(
+            rows[8].contains("almena://node?address=127.0.0.1:8791&peer="),
+            "{}",
+            rows[8]
+        );
+        assert!(!screen.join("\n").contains("No network"), "{screen:?}");
+        node.stop();
     }
 
     #[test]

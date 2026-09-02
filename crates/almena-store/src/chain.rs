@@ -23,17 +23,18 @@
 //! honest nodes in different states with nobody having lied, which is the one outcome this design
 //! cannot afford. Somebody with the right to sign on that object settles it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use almena_format::cbor::Value;
 use almena_format::identifier::{Did, Name};
 use almena_format::operation::Operation;
 use almena_suite::{ed25519, p256};
-use almena_time::{Clock, Epoch};
+use almena_time::{Clock, Day, EPOCHS_PER_DAY, Epoch};
 
 use crate::checkpoint::{Claim, Governs, Stated};
 use crate::kind::Kind;
-use crate::parameter::{CONTROL_PENDING_MOST, SUMMARISE_EVERY};
+use crate::parameter::{CONTROL_PENDING_MOST, DEPARTED_AFTER, SUMMARISE_EVERY};
+use crate::summary::Seen;
 
 /// Where an operation carries the key it is about — a holder's control key, a node's own.
 ///
@@ -207,10 +208,19 @@ pub enum State {
 }
 
 /// Why a node will not say what an object is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
     /// Two operations claim the same predecessor.
     Forked,
+    /// Two operations claim the same predecessor, on a chain somebody had already settled once.
+    ///
+    /// **Carries the act that settled it last time**, because that is what whoever signs next
+    /// needs: a settled chain that splits again looks, from the outside, exactly like one that
+    /// never was — and the person who kept a branch once would have to notice on their own that
+    /// they have to do it again. With the resolution named they can be offered *settle again*,
+    /// pre-filled with the branch they kept before, and a node that never saw the losing branch
+    /// until now says the same thing as one that set it aside at the time.
+    ForkedAgain(Name),
     /// Its history contains an act this build does not know.
     Unintelligible,
 }
@@ -391,6 +401,19 @@ pub enum Refused {
     /// that only reached memory would be telling somebody their act is kept when the next power
     /// cut takes it, and they would have no way of finding out.
     NotKept,
+    /// It claims a predecessor whose branch this node cannot rebuild the state of.
+    ///
+    /// **The branch is not held here, and nothing is guessed in its place.** A second act on a
+    /// predecessor that already has a successor is judged against the account as it stood *at that
+    /// predecessor* — never against the head, which is whichever branch happened to arrive first —
+    /// and that state is rebuilt from this node's own record. A node that let go of one of those
+    /// acts cannot rebuild it, and the two answers available to it are both wrong: keeping the act
+    /// would let an unsigned act split an object it cannot check, and refusing it for good would
+    /// have two honest nodes disagree over what one of them happens to hold.
+    ///
+    /// So it is refused **recoverably**, like an act the disk would not take: the branch is asked
+    /// for, and the act is handed over again once it is here. Nothing about the act is wrong.
+    BranchNotHeld,
 }
 
 /// What happened to an operation that was accepted.
@@ -446,7 +469,126 @@ struct Chain {
     /// precede. **What makes a wait un-rewindable**: an effect held back a fixed span from an
     /// act's own date is worth nothing if the date can be set to the past.
     dated: Epoch,
+    /// What the object was just after each of its most recent acts.
+    ///
+    /// **What a fork is judged against.** A second act on a predecessor that already has a
+    /// successor is checked against the account as it stood at that predecessor, and the head is
+    /// the wrong place to look: it is whichever branch happened to arrive first, and a rule that
+    /// read it would have two honest nodes disagree over the same pair of acts. Forks land near
+    /// the head in practice — an act composed against a head its author knew a moment ago — so the
+    /// last few states are kept here and anything older is rebuilt from this node's own record.
+    at: BTreeMap<Name, Snapshot>,
+    /// The acts in `at`, oldest first, so that the oldest is the one let go of.
+    recent: VecDeque<Name>,
+    /// The acts on branches a resolution discarded.
+    ///
+    /// **Remembered so that nothing carries on from them as though they had landed.** A losing
+    /// act stays in `seen` — it happened — but it is not on the branch that survives, so an act
+    /// chaining from it is not extending this object: it is splitting it again, and it has to be
+    /// treated exactly as a second act on a followed predecessor is, on every node that has it.
+    /// Read from `followed` alone it would look like an ordinary extension, and only the nodes that
+    /// happened to hold the losing branch would apply it.
+    set_aside: BTreeSet<Name>,
+    /// The act that last settled a split, if one ever did.
+    ///
+    /// What a chain that splits again is told to name, so that whoever signs the next resolution
+    /// is offered the branch they kept last time rather than left to notice on their own.
+    resolved_by: Option<Name>,
 }
+
+/// What an object was just after one act, kept so that a fork can be judged where it happened.
+///
+/// The three things `advance` reads off the chain before deciding anything, taken at one act
+/// rather than at the head: what the history said, whether it could still be read, and the epoch
+/// the next act may equal but not precede.
+#[derive(Debug, Clone)]
+struct Snapshot {
+    /// What the history said, as of that act.
+    state: State,
+    /// Whether an act this build cannot read had already gone by.
+    opaque: bool,
+    /// When that act was dated, which is the earliest the one after it may be.
+    dated: Epoch,
+}
+
+/// How many of an object's latest states are kept beside its chain.
+///
+/// **Sixteen, and it is a size for the common case rather than a rule.** A fork happens when
+/// somebody composes against a head that has since moved — a device that was offline while the
+/// others acted — and the distance it moved is a handful of acts, not hundreds. Anything further
+/// back is rebuilt by replaying the branch from this node's own record, which costs what it costs
+/// and happens rarely; what the cache buys is that the ordinary fork is judged without a replay.
+/// It is not a bound on what can be judged: only on what is judged cheaply.
+const SNAPSHOTS_KEPT: usize = 16;
+
+impl Chain {
+    /// Keep what the object was after one act, letting go of the oldest kept when there are too many.
+    fn remember(&mut self, act: Name, snapshot: Snapshot) {
+        if self.at.insert(act.clone(), snapshot).is_none() {
+            self.recent.push_back(act);
+        }
+        while self.recent.len() > SNAPSHOTS_KEPT {
+            let Some(oldest) = self.recent.pop_front() else {
+                break;
+            };
+            self.at.remove(&oldest);
+        }
+    }
+
+    /// What the object is at its head, which is what the chain's own fields say.
+    fn at_head(&self) -> Snapshot {
+        Snapshot {
+            state: self.state.clone(),
+            opaque: self.opaque,
+            dated: self.dated,
+        }
+    }
+
+    /// What the object was just after one act, where that is still to hand.
+    ///
+    /// The head first, because `beyond` marks the chain and not the snapshot: an object this node
+    /// gave up on is opaque at its head whatever the cache says.
+    fn snapshot(&self, act: &Name) -> Option<Snapshot> {
+        if *act == self.head {
+            return Some(self.at_head());
+        }
+        self.at.get(act).cloned()
+    }
+
+    /// Set aside, on this rebuilt chain, everything the chain it replaces had that is not on it.
+    ///
+    /// **What lost is set aside, and it stays set aside.** Every act that arrived and is not on
+    /// the branch that survives — from this split and from any settled before it — is remembered
+    /// as one nothing may quietly carry on from: an act chaining from it splits the object again
+    /// rather than extending what was kept. What it looked like is kept too, where it was known,
+    /// so that such an act is judged against it without a replay.
+    fn setting_aside(&mut self, held: &Self) {
+        self.set_aside = held
+            .set_aside
+            .iter()
+            .chain(&held.seen)
+            .filter(|act| !self.seen.contains(*act))
+            .cloned()
+            .collect();
+        let known: Vec<(Name, Snapshot)> = self
+            .set_aside
+            .iter()
+            .filter_map(|act| held.at.get(act).map(|was| (act.clone(), was.clone())))
+            .collect();
+        for (act, was) in known {
+            self.remember(act, was);
+        }
+    }
+}
+
+/// Where an act is found by its name, for rebuilding a branch this node holds.
+///
+/// **This node's own record, and nothing else.** What a fork is judged against is the state its
+/// own branch produced, replayed from acts this node took and validated when they arrived; a
+/// caller that answered from anywhere else would be a caller vouching for acts nobody here checked.
+/// [`None`] is an act this node does not hold, which refuses the fork recoverably rather than
+/// guessing.
+pub type Record<'a> = &'a dyn Fn(&Name) -> Option<Operation>;
 
 /// One status list, as the record names it.
 ///
@@ -645,6 +787,15 @@ pub struct Objects {
     /// Whether the key belongs to a node anybody has heard of is a different question, and reading
     /// the index through a census would make the same act land under two names on two honest nodes.
     contradicted: BTreeSet<[u8; ed25519::PUBLIC_KEY_WIDTH]>,
+    /// What every observer's summaries said of each node, by the day and the observer that said it.
+    ///
+    /// **How the record tells a node that has gone from one that never came.** The census names
+    /// every node that ever announced itself, and a share dealt to a node nobody can reach is a
+    /// copy that does not exist. What the record holds about that is the daily summaries — other
+    /// nodes, who gain nothing by it, wrote down whether it answered — so this is those summaries
+    /// read the other way round: per node observed rather than per observer. Read off the acts as
+    /// they are applied, so that two nodes holding the same record read the same silence.
+    observed: BTreeMap<Name, BTreeMap<(Day, Name), Seen>>,
 }
 
 impl Objects {
@@ -732,7 +883,12 @@ impl Objects {
             };
         };
         if chain.forked {
-            return Answer::CannotResolve(Reason::Forked);
+            // A chain somebody settled once says so: whoever signs next is told which branch was
+            // kept last time, rather than left to notice that this is not the first split.
+            return Answer::CannotResolve(match &chain.resolved_by {
+                Some(settled) => Reason::ForkedAgain(settled.clone()),
+                None => Reason::Forked,
+            });
         }
         if chain.opaque {
             return Answer::CannotResolve(Reason::Unintelligible);
@@ -740,19 +896,76 @@ impl Objects {
         Answer::Here(chain.state.clone())
     }
 
+    /// What an act is about when that is not its author, read with the record to hand.
+    ///
+    /// **The half [`crate::subject_of`] cannot answer alone.** A certification names its subject
+    /// in its own bytes; a reply names only the decision it answers, and who that decision was
+    /// about is the record's to say. So a reply's subject is the subject of the certification it
+    /// answers, or the entity whose own chain carries the asking it refuses — which is what puts
+    /// the answer beside the decision when anybody asks *what has been said about this entity*: a
+    /// seal, a withdrawal and the refusal of an asking, in one listing, without walking everything.
+    ///
+    /// Asked once the reply has been admitted, when what it answers is already here. Nothing for a
+    /// reply to something this node cannot place — it was refused before it got this far.
+    #[must_use]
+    pub fn subject_of(&self, operation: &Operation) -> Option<Did> {
+        if let Some(subject) = crate::subject_of(operation) {
+            return Some(subject);
+        }
+        if Kind::new(operation.kind) != Some(Kind::REPLY_PUBLISH) {
+            return None;
+        }
+        let answers = crate::reply::answers(operation)?;
+        if let Answer::Here(State::Certification(decision)) = self.resolve(&answers) {
+            return Some(decision.subject);
+        }
+        // An asking is an act and not an object, so it is found on the chain that carries it.
+        let network = operation.object.network();
+        self.chains.iter().find_map(|(name, chain)| {
+            matches!(&chain.state, State::Entity(entity) if entity.requests.contains_key(&answers))
+                .then(|| Did::new(network, name.clone()))
+        })
+    }
+
     /// Take an operation in, or say why not.
+    ///
+    /// **Without this node's record to hand**, so a fork whose predecessor is further back than
+    /// the states kept beside the chain is refused with [`Refused::BranchNotHeld`] rather than
+    /// judged against the wrong state. A caller holding the record passes it to
+    /// [`Objects::admit_from`] and has that fork judged where it happened.
     ///
     /// # Errors
     ///
     /// [`Refused`], naming which rule it broke.
     pub fn admit(&mut self, operation: &Operation, now: Epoch) -> Result<Admitted, Refused> {
+        self.admit_from(operation, now, &|_| None)
+    }
+
+    /// Take an operation in, with this node's own record to rebuild a branch from, or say why not.
+    ///
+    /// `record` answers for the acts this node holds, by name. It is read only when a second act
+    /// claims a predecessor that already has a successor and the state at that predecessor is no
+    /// longer kept beside the chain: the branch ending there is then walked back through `record`
+    /// and replayed, exactly as a resolution is, so that whether the signer was entitled is
+    /// answered by the branch the act is actually on.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused`], naming which rule it broke — [`Refused::BranchNotHeld`] where the record could
+    /// not supply the branch, which is mended by fetching it and handing the act over again.
+    pub fn admit_from(
+        &mut self,
+        operation: &Operation,
+        now: Epoch,
+        record: Record<'_>,
+    ) -> Result<Admitted, Refused> {
         if !Clock::accepts(operation.issued, now) {
             return Err(Refused::FromTheFuture);
         }
         signed_as_required(operation)?;
         match operation.previous.clone() {
             None => self.create(operation),
-            Some(previous) => self.advance(operation, &previous),
+            Some(previous) => self.advance(operation, &previous, now, record),
         }
     }
 
@@ -849,22 +1062,26 @@ impl Objects {
         let set_by = settles(Kind::new(operation.kind))
             .map(|part| (part, head.clone()))
             .collect();
-        self.chains.insert(
-            name,
-            Chain {
-                seen: BTreeSet::from([head.clone()]),
-                followed: BTreeSet::new(),
-                head,
-                state,
-                forked: false,
-                opaque,
-                set_by,
-                // The act that brings an object into existence is one more act to replay, so it
-                // counts like any other. An account nobody has touched since is one act behind.
-                since: 1,
-                dated: operation.issued,
-            },
-        );
+        let mut chain = Chain {
+            seen: BTreeSet::from([head.clone()]),
+            followed: BTreeSet::new(),
+            head: head.clone(),
+            state,
+            forked: false,
+            opaque,
+            set_by,
+            // The act that brings an object into existence is one more act to replay, so it
+            // counts like any other. An account nobody has touched since is one act behind.
+            since: 1,
+            dated: operation.issued,
+            at: BTreeMap::new(),
+            recent: VecDeque::new(),
+            set_aside: BTreeSet::new(),
+            resolved_by: None,
+        };
+        let born = chain.at_head();
+        chain.remember(head, born);
+        self.chains.insert(name, chain);
     }
 
     /// What one act does to an object whose chain has not split.
@@ -915,9 +1132,11 @@ impl Objects {
     ///
     /// Everything else is **kept without effect**, and that is a correction rather than a nicety.
     /// Once a chain has split its state is one branch's, frozen at the moment the split was noticed;
-    /// carrying on applying acts to it would move a state nobody may read, and an act extending the
-    /// *other* branch would be applied against a state it never followed. What a split object owes
-    /// is one answer — *ask somebody who may sign* — until somebody does.
+    /// carrying on applying acts to it would move a state nobody may read. Whether the signer was
+    /// entitled is still asked — against what *their own* predecessor left, which is the one state
+    /// the act can be said to have been signed against — so that a stranger cannot split an object
+    /// further and an act on either branch is answered the same on every node that has it. What a
+    /// split object owes is one answer — *ask somebody who may sign* — until somebody does.
     fn on_a_fork(
         &mut self,
         operation: &Operation,
@@ -927,11 +1146,41 @@ impl Objects {
         if on.already && crate::resolution::declared(operation) {
             return Ok(Admitted::Resolves);
         }
-        self.split(operation, on.name, head, on.state)
+        self.split(operation, on, head)
+    }
+
+    /// A second act on a predecessor that already has a successor, or one on a discarded branch.
+    ///
+    /// **Judged where it happened.** The state it is checked against is the one its own
+    /// predecessor left, taken from beside the chain or rebuilt from the record — never the head,
+    /// which is whichever branch this node heard of first. A signer entitled at the predecessor
+    /// splits the object on every node whatever order the acts reached it in; one who was not is
+    /// refused everywhere, and a node that cannot rebuild the branch says so instead of guessing.
+    fn forking(
+        &mut self,
+        operation: &Operation,
+        on: (&Name, &Name),
+        now: Epoch,
+        record: Record<'_>,
+    ) -> Result<Admitted, Refused> {
+        let (name, previous) = on;
+        let at = self.state_at(name, previous, now, record)?;
+        // Dated against the predecessor it claims, not against the head of another branch: a
+        // wait is rewound by dating an act before the act it follows, and that is the act it
+        // follows.
+        belongs_here(operation, at.dated)?;
+        let already = self.chains.get(name).is_some_and(|chain| chain.forked);
+        self.on_a_fork(operation, &Split { name, at, already }, operation.called())
     }
 
     /// A later operation, which follows one already here.
-    fn advance(&mut self, operation: &Operation, previous: &Name) -> Result<Admitted, Refused> {
+    fn advance(
+        &mut self,
+        operation: &Operation,
+        previous: &Name,
+        now: Epoch,
+        record: Record<'_>,
+    ) -> Result<Admitted, Refused> {
         let name = operation.object.name().clone();
         let Some(chain) = self.chains.get(&name) else {
             return Err(Refused::NoSuchPredecessor);
@@ -947,26 +1196,15 @@ impl Objects {
         if chain.seen.contains(&head) {
             return Ok(Admitted::AlreadyHere);
         }
+        // A predecessor that already has a successor, or one on a branch a resolution discarded:
+        // either way this act is not extending the object, and is judged where it happened.
+        if chain.forked || chain.followed.contains(previous) || chain.set_aside.contains(previous) {
+            return self.forking(operation, (&name, previous), now, record);
+        }
         // Everything an act must be to belong here at all, before anything is done with it.
         // Checked after the duplicate short-circuit, so an old act heard again is still one act.
         belongs_here(operation, chain.dated)?;
-        let (state, opaque, forking) = (
-            chain.state.clone(),
-            chain.opaque,
-            chain.followed.contains(previous),
-        );
-
-        if chain.forked || forking {
-            return self.on_a_fork(
-                operation,
-                &Split {
-                    name: &name,
-                    state: &state,
-                    already: chain.forked,
-                },
-                head,
-            );
-        }
+        let (state, opaque) = (chain.state.clone(), chain.opaque);
 
         // Nothing can be *applied* against a state that stopped being computable — but whether
         // somebody was entitled to write here is still a question this node can put, and it must.
@@ -989,7 +1227,72 @@ impl Objects {
         )?;
         self.domain_bound(operation, &name);
         self.alias_held(operation, &name);
+        self.observed(operation, &name);
         Ok(Admitted::Extended)
+    }
+
+    /// What the object was just after one of its acts, rebuilt from the record where it is not kept.
+    ///
+    /// The head and the last few acts are to hand. Anything older is the branch ending at that
+    /// act, walked back through `record` to the creation and replayed beside the rest of the
+    /// record — the same replay a resolution gets, for the same reason: what authorised an act is
+    /// the state its own branch produced and nobody's summary of it.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::BranchNotHeld`] where the record could not supply every act of the branch, and
+    /// whatever admitting one of them refuses.
+    fn state_at(
+        &self,
+        name: &Name,
+        act: &Name,
+        now: Epoch,
+        record: Record<'_>,
+    ) -> Result<Snapshot, Refused> {
+        let chain = self.chains.get(name).ok_or(Refused::NoSuchPredecessor)?;
+        if let Some(kept) = chain.snapshot(act) {
+            return Ok(kept);
+        }
+        let mut branch = Vec::new();
+        let mut following = Some(act.clone());
+        while let Some(named) = following {
+            let held = record(&named).ok_or(Refused::BranchNotHeld)?;
+            following = held.previous.clone();
+            branch.push(held);
+        }
+        branch.reverse();
+
+        // **Replayed beside the rest of the record and not in a vacuum**, as a resolution is: who
+        // may sign for an organisation is settled by resolving its owners' own chains, and a
+        // rebuild that could not see them would refuse every act it replayed. Thrown away after —
+        // nothing here was touched, and the answer is the one state at the end.
+        let mut rebuilding = self.clone();
+        rebuilding.chains.remove(name);
+        for held in &branch {
+            rebuilding.admit(held, now)?;
+        }
+        rebuilding
+            .chains
+            .remove(name)
+            .filter(|rebuilt| rebuilt.head == *act)
+            .map(|rebuilt| rebuilt.at_head())
+            .ok_or(Refused::BranchNotHeld)
+    }
+
+    /// Read off a summary what it said of each node, for telling a departed node from a silent one.
+    ///
+    /// Only an act that was applied reaches here, so a summary on a branch that lost is not read —
+    /// it landed nowhere, and a figure from an act without effect would be a figure from nowhere.
+    fn observed(&mut self, operation: &Operation, observer: &Name) {
+        let Some((day, _, seen, _)) = crate::summary::read(operation) else {
+            return;
+        };
+        for (node, figures) in seen {
+            self.observed
+                .entry(node.name().clone())
+                .or_default()
+                .insert((day, observer.clone()), figures);
+        }
     }
 
     /// Write down what one more act did to a chain that was already here.
@@ -1028,6 +1331,18 @@ impl Objects {
             Applied::State(next) => held.state = next.clone(),
             Applied::Beyond => held.opaque = true,
         }
+        // **An act that says it is a resolution is remembered as one, even where there was nothing
+        // to settle here.** A node that never saw the losing branch takes the resolution as an
+        // ordinary act — and when that branch arrives later, it has to answer *forked again,
+        // settled by this act* exactly as the node that set the branch aside at the time does.
+        // The act says what it is; whether this node happened to need it is not what decides.
+        if crate::resolution::declared(operation) {
+            held.resolved_by = Some(head.clone());
+        }
+        // Kept beside the chain, so that a second act on this one is judged against what it left
+        // and not against wherever the head has moved to by then.
+        let after = held.at_head();
+        held.remember(head.clone(), after);
         Ok(())
     }
 
@@ -1204,8 +1519,12 @@ impl Objects {
             .ok_or(Refused::NoSuchPredecessor)?;
         // The branch that survives may not carry a domain the losing one claimed, so what this
         // object holds is let go of first and taken again by the replay. Otherwise a name would
-        // stay bound by an act that no longer has any effect.
+        // stay bound by an act that no longer has any effect. What this node's summaries said of
+        // others is let go of the same way: a summary on the losing branch landed nowhere.
         rebuilding.domains.retain(|_, (_, bound)| bound != whose);
+        for said in rebuilding.observed.values_mut() {
+            said.retain(|(_, observer), _| observer != whose);
+        }
 
         for act in rest.iter().chain([settling]) {
             rebuilding.admit(act, now)?;
@@ -1215,15 +1534,18 @@ impl Objects {
             .chains
             .remove(whose)
             .ok_or(Refused::NoSuchPredecessor)?;
+        settled.setting_aside(&held);
         // Everything that ever arrived is still known to have arrived — the branches that lost are
         // kept, without effect, so their authors can see where they landed.
         settled.seen.extend(held.seen);
         settled.forked = false;
+        settled.resolved_by = Some(settling.called());
 
         // **Nothing here was touched until the replay came through.** A node left holding half a
         // rebuilt chain would be one in a state no act produced.
         self.domains = rebuilding.domains;
         self.nodes = rebuilding.nodes;
+        self.observed = rebuilding.observed;
         self.chains.insert(whose.clone(), settled);
         Ok(())
     }
@@ -1549,10 +1871,33 @@ impl Objects {
             return Governor::nobody();
         };
         let Answer::Here(State::Certification(decision)) = self.resolve(&answers) else {
-            return Governor::nobody();
+            return self.answering_a_request(&answers, operation);
         };
         let mut governor = self.governed_by(&decision.subject, operation.issued);
         governor.answering = Some(decision.subject.clone());
+        governor
+    }
+
+    /// Who may answer an asking to be certified: whoever was asked, which is Almena Government.
+    ///
+    /// **The mirror of a reply to a certification.** There the party the decision was *about*
+    /// answers the party that decided; here the party that was *asked* answers the party that
+    /// asked — a refusal, with a reason in both languages, published for ever beside the request.
+    /// Both are found the same way: from the thing named, resolved where the record is, and never
+    /// from the act's own claim about who is speaking.
+    ///
+    /// The request is an act and not an object, so it is found on the chain that carries it: the
+    /// entity whose history holds an asking under that name. Nobody where no entity asked under it.
+    fn answering_a_request(&self, request: &Name, operation: &Operation) -> Governor {
+        let asked = self.chains.values().any(|chain| {
+            matches!(&chain.state, State::Entity(entity) if entity.requests.contains_key(request))
+        });
+        let Some(government) = (asked).then_some(()).and(self.government.as_ref()) else {
+            return Governor::nobody();
+        };
+        let almena = Did::new(operation.object.network(), government.clone());
+        let mut governor = self.governed_by(&almena, operation.issued);
+        governor.answering = Some(almena);
         governor
     }
 
@@ -1766,15 +2111,70 @@ impl Objects {
     ///
     /// Asked at a moment, because *closed* is a moment: a share-out drawn for an epoch before a
     /// node closed has to be the same share-out afterwards, or the past would move.
+    ///
+    /// **A node that has gone quiet is not there either** — one every observer that asked it
+    /// anything over the last [`DEPARTED_AFTER`] epochs wrote down as answering nothing. A share
+    /// dealt to it is a copy that does not exist, and the record has the measurement that says so.
+    /// It is left out of *this* census only: its roots are still read, everything it said still
+    /// stands, and the capacity figures still count it, as silent ([`Objects::departed_at`]).
+    /// The reading is the record's and not this node's — two nodes holding the same summaries
+    /// leave out the same nodes — with the one consequence that follows from that: as summaries
+    /// about a window arrive, the census drawn for that window can change, until they are all here.
     pub fn nodes_at(&self, at: Epoch) -> impl Iterator<Item = &Name> {
         self.nodes.values().filter_map(move |(_, name)| {
             match self.chains.get(name).map(|chain| &chain.state) {
                 Some(State::Node {
                     closed: Some(gone), ..
                 }) if gone.number() <= at.number() => None,
+                _ if self.departed(name, at) => None,
                 _ => Some(name),
             }
         })
+    }
+
+    /// The nodes the record's observers found answering nothing, over the window ending at `at`.
+    ///
+    /// **Counted and never dropped.** What [`Objects::nodes_at`] leaves out of the share-out is
+    /// still a node the network is running, or was — and a capacity figure that quietly shrank its
+    /// denominator would say the network was healthier than it is, which is the one thing a
+    /// measurement must not do. So they are here to be counted as silent, by whoever draws the
+    /// figures, in the order their keys sort like everything else.
+    pub fn departed_at(&self, at: Epoch) -> impl Iterator<Item = &Name> {
+        self.nodes
+            .values()
+            .map(|(_, name)| name)
+            .filter(move |name| self.departed(name, at))
+    }
+
+    /// Whether every observer that asked this node anything lately wrote down that it never answered.
+    ///
+    /// The window is the last [`DEPARTED_AFTER`] epochs before `at`, and a day's summary is in it
+    /// when any epoch of that day is. Three things have to be true of what the record holds: some
+    /// observer asked it something in that window; none of them saw an answer; and nothing is
+    /// read into a summary that asked it nothing — an observer that never asked has no evidence
+    /// of silence, and a node could otherwise be left out of the share-out by observers that
+    /// simply looked the other way.
+    fn departed(&self, node: &Name, at: Epoch) -> bool {
+        let Some(said) = self.observed.get(node) else {
+            return false;
+        };
+        let window = DEPARTED_AFTER.at(at);
+        let mut asked = false;
+        for ((day, _), seen) in said {
+            let begins = day.begins().number();
+            // A day that had not begun by `at` says nothing about the time before it; one whose
+            // last epoch is more than a window ago is old news.
+            if begins > at.number()
+                || begins.saturating_add(EPOCHS_PER_DAY).saturating_add(window) <= at.number()
+            {
+                continue;
+            }
+            if seen.answered > 0 {
+                return false;
+            }
+            asked |= seen.asked > 0;
+        }
+        asked
     }
 
     /// What the record calls the node that holds this key.
@@ -1830,30 +2230,51 @@ impl Objects {
     fn split(
         &mut self,
         operation: &Operation,
-        name: &Name,
+        on: &Split<'_>,
         head: Name,
-        state: &State,
     ) -> Result<Admitted, Refused> {
+        let Split { name, at, .. } = on;
         // Checked whether or not this node can still read the object: one it has given up on is not
-        // one anybody may split further, and *cannot read* is not *anything goes*.
-        let governor = self.owners_and_thresholds(operation, state);
-        entitled(
-            operation,
-            state,
-            &Speaks {
-                owners: &governor.owners,
-                thresholds: governor.thresholds,
-                alone: governor.alone,
-                claimant: None,
-                answering: governor.answering.clone(),
-            },
-        )?;
+        // one anybody may split further, and *cannot read* is not *anything goes*. And checked
+        // against the state at the predecessor this act claims, which is the only state it can be
+        // said to have been signed against.
+        let governor = self.owners_and_thresholds(operation, &at.state);
+        let speaks = Speaks {
+            owners: &governor.owners,
+            thresholds: governor.thresholds,
+            alone: governor.alone,
+            claimant: None,
+            answering: governor.answering.clone(),
+        };
+        entitled(operation, &at.state, &speaks)?;
+        // What this act would leave, kept beside the chain without taking effect: an act chaining
+        // from *this* one is judged against it, and nothing else knows what it was. An act that
+        // could not be applied leaves nothing, and whatever chains from it is rebuilt from the
+        // record and refused the way this one would have been.
+        let after = (!at.opaque)
+            .then(|| apply(operation, &at.state, Kind::new(operation.kind), &speaks).ok())
+            .flatten()
+            .map(|applied| match applied {
+                Applied::State(state) => Snapshot {
+                    state,
+                    opaque: false,
+                    dated: operation.issued,
+                },
+                Applied::Beyond => Snapshot {
+                    state: at.state.clone(),
+                    opaque: true,
+                    dated: operation.issued,
+                },
+            });
         let held = self
             .chains
             .get_mut(name)
             .ok_or(Refused::NoSuchPredecessor)?;
-        held.seen.insert(head);
+        held.seen.insert(head.clone());
         held.forked = true;
+        if let Some(after) = after {
+            held.remember(head, after);
+        }
         Ok(Admitted::Forked)
     }
 
@@ -2199,8 +2620,8 @@ impl Governor {
 struct Split<'a> {
     /// Whose chain.
     name: &'a Name,
-    /// What it says, frozen at the moment the split was noticed.
-    state: &'a State,
+    /// What the object was just after the act this one claims to follow.
+    at: Snapshot,
     /// Whether it had already split before this act, or is splitting because of it.
     already: bool,
 }
@@ -2560,6 +2981,9 @@ const fn concerns_an_entity(kind: Kind) -> bool {
             | Kind::ENTITY_VETO
             | Kind::ENTITY_CLOSE
             | Kind::ENTITY_CHECKPOINT
+            // Asking to be certified is an act on the entity's own chain, signed by its owners
+            // like any routine act of theirs.
+            | Kind::CERTIFICATION_REQUEST
     )
 }
 
@@ -2733,6 +3157,12 @@ fn frozen_takes(
         // the words would freeze — freezing is immediate — and then wait out their own theft
         // with nobody able to say no.
         (Signer::Device(key), Kind::HOLDER_CANCEL) => cancelling(operation, holder, key),
+        // **A summary says the account is stopped, so it may be written on one.** It carries
+        // whether the account is frozen and what is waiting, and a reader holds both against the
+        // log — so a summary over a freeze cannot describe the account as moving, which is what
+        // used to make it a hole. What it concedes is nothing: it restates what the chain already
+        // produces, and a frozen account restated is a frozen account.
+        (Signer::Device(_) | Signer::Control, Kind::HOLDER_CHECKPOINT) => Ok(holder),
         (Signer::Device(_), _) => Err(Refused::NotAuthorised),
         // Frozen already is frozen: there is nothing for a second freeze to do, and an act that
         // does nothing is not written down.
@@ -2740,8 +3170,6 @@ fn frozen_takes(
         // The words never veto. Cancelling is the counterweight the *devices* hold against the
         // words — in the words' own hands it weighs nothing.
         (Signer::Control, Kind::HOLDER_CANCEL) => Err(Refused::NotAuthorised),
-        // A summary is routine, and a frozen account is the opposite of routine.
-        (Signer::Control, Kind::HOLDER_CHECKPOINT) => Err(Refused::NotAuthorised),
         // Everything else the words ask for still enters — as a wait, which is a window in which
         // every device can see it and say no. That is the whole defence against stolen words, and
         // a freeze that closed it would be a freeze working for the thief.
@@ -2765,18 +3193,12 @@ fn control_asks(operation: &Operation, holder: Holder, kind: Kind) -> Result<Hol
         // A summary restates what the chain already produces and concedes nothing, so there is
         // no effect to hold back and nothing for a wait to protect.
         //
-        // **Except that it cannot restate what is waiting, because the format has nowhere to put
-        // it.** A summary carries the control key and the devices; an asking in flight leaves no
-        // trace in one. And a node serves the last summary and what followed, so an asking made
-        // just before a summary is an asking no reader will ever see — it lands seventy-two epochs
-        // later on a state nobody was shown, which is `SPECS.md §11.12`'s notice deleted by
-        // arithmetic. The control key can write both acts, so it is a thing to be done on purpose.
-        //
-        // So a summary waits for the queue to be empty. It is the same rule the frozen account
-        // above already lives under and for the same reason: a summary is routine, and an account
-        // with something in flight is the opposite of routine. Everything waiting comes due within
-        // one window, so what this refuses is never permanent.
-        Kind::HOLDER_CHECKPOINT if !next.waiting.is_empty() => return Err(Refused::NotAuthorised),
+        // **Including what is waiting.** A summary carries the askings in flight by name beside
+        // the control key and the devices, and a reader holds that list against the log — so an
+        // asking made just before a summary is one every reader is shown, landing where the
+        // summary said it would. It used to be refused here instead, while the format had nowhere
+        // to put the queue: a summary written over an asking then carried it out of every reader's
+        // sight, and the words could write both acts.
         Kind::HOLDER_CHECKPOINT => return Ok(next),
         Kind::HOLDER_CANCEL => return Err(Refused::NotAuthorised),
         // **A recovery is not something the words ask for.** Whoever holds them does not need one:
@@ -2863,11 +3285,8 @@ fn device_does(
         // asking, with the wait that asking carries.
         Kind::HOLDER_UNFREEZE => return Err(Refused::Malformed),
         Kind::HOLDER_CANCEL => return cancelling(operation, next, key),
-        // **Not while anything is waiting**, for the reason the control key's own arm gives: a
-        // summary has nowhere to say what is in flight, and one written over an asking is an
-        // asking no reader will ever see. A device may summarise as freely as the words may, and
-        // is held to the same condition.
-        Kind::HOLDER_CHECKPOINT if !next.waiting.is_empty() => return Err(Refused::NotAuthorised),
+        // A summary says what is in flight, so one may be written while something is — the same
+        // as the control key's own arm, and a device may summarise as freely as the words may.
         Kind::HOLDER_CHECKPOINT => {}
         _ => return Err(Refused::Malformed),
     }
@@ -3015,12 +3434,19 @@ fn vouched_for_by_nothing(operation: &Operation) -> Result<State, Refused> {
 /// reply behind a governance threshold would be one its own owners could sit on.
 fn answered(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, Refused> {
     let by = speaks.answering.clone().ok_or(Refused::NotAuthorised)?;
-    let thresholds = speaks.thresholds.ok_or(Refused::NotAuthorised)?;
-    enough(
-        operation,
-        speaks.owners,
-        thresholds.of(crate::entity::Class::Routine),
-    )?;
+    // **Almena Government answering a request while it still has the one key the genesis gave
+    // it**, which is the same shape a seal takes: counting a set that does not exist would be
+    // counting nothing at all.
+    if let Some(key) = speaks.alone {
+        check(operation, &key)?;
+    } else {
+        let thresholds = speaks.thresholds.ok_or(Refused::NotAuthorised)?;
+        enough(
+            operation,
+            speaks.owners,
+            thresholds.of(crate::entity::Class::Routine),
+        )?;
+    }
     Ok(State::Reply(Box::new(crate::reply::born(operation, by)?)))
 }
 
@@ -3103,21 +3529,49 @@ fn under_an_entity(operation: &Operation, speaks: &Speaks<'_>) -> Result<State, 
 
 /// What each part of an object's state is right now.
 ///
-/// Empty for the objects whose state has no parts a summary may claim. A node's own chain grows
-/// faster than anybody's and has nothing here yet: what a node **is** arrives with the mesh that
-/// reads it, and inventing parts for it now would be summarising state nobody decided.
+/// Empty for the objects whose state has no parts a summary may claim. An account has four and a
+/// node has four; what an entity's summary may claim arrives with entities.
 fn stating(state: &State, at: Epoch) -> Vec<(Governs, Stated)> {
     match state {
         State::Holder(holder) => {
             // A summary states the account **as of the act that will carry it**, so what the
             // control key asked for alone counts exactly when its wait has run out by then —
-            // the same answer whoever checks the summary will compute.
+            // the same answer whoever checks the summary will compute. What has not run out by
+            // then is what the summary says is still waiting.
             let holder = holder.come_due(at);
             vec![
                 (Governs::Control, Stated::Key(holder.control.to_vec())),
                 (Governs::Devices, Stated::Keys(holder.devices.clone())),
+                (Governs::Frozen, Stated::Flag(holder.frozen)),
+                (
+                    Governs::Pending,
+                    Stated::Names(
+                        holder
+                            .waiting
+                            .iter()
+                            .map(|waiting| waiting.act.clone())
+                            .collect(),
+                    ),
+                ),
             ]
         }
+        // Nothing a node says waits, so the moment changes nothing: what the announcements and
+        // the closing say is what the node is.
+        State::Node {
+            key,
+            offers,
+            reachable,
+            closed,
+            ..
+        } => vec![
+            (Governs::NodeKey, Stated::Key(key.to_vec())),
+            (
+                Governs::Offers,
+                Stated::Numbers(offers.iter().map(|what| what.number()).collect()),
+            ),
+            (Governs::Reachable, Stated::Addresses(reachable.clone())),
+            (Governs::Closed, Stated::Moment(*closed)),
+        ],
         _ => Vec::new(),
     }
 }
@@ -5260,14 +5714,13 @@ mod tests {
     }
 
     #[test]
-    fn nothing_summarises_a_frozen_account_either() {
-        // **The same rule and the same reason as the entry below**: a summary carries the control
-        // key and the devices, and has nowhere to say the account is stopped. One written over a
-        // freeze would let a reader bootstrap a frozen account as a thawed one — which is the
-        // account somebody froze because their phone was in a stranger's pocket.
-        //
-        // A summary written *before* the freeze is no such hole: a reader takes the last summary
-        // **and everything after it**, so the freeze act is replayed on top of it.
+    fn a_summary_of_a_frozen_account_says_it_is_stopped_and_is_taken() {
+        // **It used to be refused**, because a summary carried the control key and the devices and
+        // had nowhere to say the account was stopped: one written over a freeze would have let a
+        // reader bootstrap a frozen account as a thawed one — the account somebody froze because
+        // their phone was in a stranger's pocket. Now the freeze is a part of the state the summary
+        // has to claim, cited like the others and held against the log by whoever reads it, and a
+        // summary that said otherwise falls over. So the summary is taken, and it says *stopped*.
         let (mut objects, object, control, device) = an_account();
         let head = objects.head(object.name()).expect("a head").clone();
         let stopped = signed_by_control(
@@ -5278,16 +5731,35 @@ mod tests {
             .admit(&stopped, once_due())
             .expect("freezing lands at once");
 
-        let hiding = summarising(&objects, &object, &control, once_due());
+        let standing = objects
+            .standing(object.name(), once_due())
+            .expect("it resolves");
+        let frozen = standing
+            .claims
+            .iter()
+            .find(|claim| claim.about == crate::checkpoint::Governs::Frozen)
+            .expect("a summary accounts for the freeze");
+        assert_eq!(frozen.stated, crate::checkpoint::Stated::Flag(true));
         assert_eq!(
-            objects.admit(&hiding, once_due()),
-            Err(Refused::NotAuthorised),
-            "the words may not summarise a stopped account"
+            frozen.set_by,
+            stopped.called(),
+            "and cites the act that stopped it"
+        );
+
+        let theirs = summarising(&objects, &object, &control, once_due());
+        assert_eq!(
+            objects.admit(&theirs, once_due()),
+            Ok(Admitted::Extended),
+            "the words may summarise a stopped account, because the summary says it is stopped"
+        );
+        assert!(
+            holder_at(&objects, &object, once_due()).frozen,
+            "and the account is exactly as frozen afterwards"
         );
 
         let head = objects.head(object.name()).expect("a head").clone();
-        let mut theirs = following_at(&object, &head, Kind::HOLDER_CHECKPOINT, &[], once_due());
-        theirs.payload = BTreeMap::from([(
+        let mut by_device = following_at(&object, &head, Kind::HOLDER_CHECKPOINT, &[], once_due());
+        by_device.payload = BTreeMap::from([(
             crate::checkpoint::FIELD,
             crate::checkpoint::declaration(
                 &objects
@@ -5297,24 +5769,22 @@ mod tests {
             ),
         )]);
         assert_eq!(
-            objects.admit(&signed_by_device(theirs, &device), once_due()),
-            Err(Refused::NotAuthorised),
-            "and a device may not either — on a frozen account only *no* can be said"
+            objects.admit(&signed_by_device(by_device, &device), once_due()),
+            Ok(Admitted::Extended),
+            "and so may a device: restating a stopped account concedes nothing"
         );
     }
 
-    #[test]
-    fn nothing_summarises_over_an_asking_still_in_flight() {
-        // **A summary has nowhere to say what is waiting.** It carries the control key and the
-        // devices; an asking in flight leaves no trace in one. And a node serves the last summary
-        // and what followed — so an asking made just before a summary is an asking no reader will
-        // ever see, landing seventy-two epochs later on a state nobody was shown. That is the
-        // notice `SPECS.md §11.12` promises, deleted by arithmetic, and the control key can write
-        // both acts, so it is a thing to be done on purpose rather than an accident.
+    /// An account on which the words have asked for a device of their own, which waits.
+    fn an_account_with_an_asking_in_flight() -> (
+        Objects,
+        Did,
+        ed25519::SigningKey,
+        p256::SigningKey,
+        Operation,
+    ) {
         let (mut objects, object, control, device) = an_account();
         let head = objects.head(object.name()).expect("a head").clone();
-
-        // The words ask for a device of their own, which waits.
         let asking = signed_by_control(
             following_at(
                 &object,
@@ -5328,16 +5798,66 @@ mod tests {
         objects
             .admit(&asking, once_due())
             .expect("the asking enters");
+        (objects, object, control, device, asking)
+    }
 
-        // And then a summary, which would carry it away with it.
-        let hiding = summarising(&objects, &object, &control, once_due());
+    #[test]
+    fn a_summary_written_over_an_asking_in_flight_names_the_asking() {
+        // **It used to be refused**, because a summary had nowhere to say what was waiting: a node
+        // serves the last summary and what followed, so an asking made just before a summary was
+        // an asking no reader would ever see, landing seventy-two epochs later on a state nobody
+        // was shown — the notice `SPECS.md §11.12` promises, deleted by arithmetic, and the words
+        // could write both acts. Now what is waiting is a part of the state the summary claims,
+        // by the name of the act that asked, and a reader holds it against the log.
+        let (objects, object, _control, _device, asking) = an_account_with_an_asking_in_flight();
+        let standing = objects
+            .standing(object.name(), once_due())
+            .expect("it resolves");
+        let pending = standing
+            .claims
+            .iter()
+            .find(|claim| claim.about == crate::checkpoint::Governs::Pending)
+            .expect("a summary accounts for what is waiting");
         assert_eq!(
-            objects.admit(&hiding, once_due()),
-            Err(Refused::NotAuthorised),
-            "not while anything is waiting"
+            pending.stated,
+            crate::checkpoint::Stated::Names(BTreeSet::from([asking.called()])),
+            "by the name of the act that asked"
+        );
+        assert_eq!(pending.set_by, asking.called());
+
+        // Once the wait has run out the summary says nothing is waiting.
+        let later = once_due()
+            .plus(almena_time::deadline::CONTROL_KEY_WAIT.epochs(once_due()))
+            .expect("no overflow");
+        let standing = objects.standing(object.name(), later).expect("it resolves");
+        assert_eq!(
+            standing
+                .claims
+                .iter()
+                .find(|claim| claim.about == crate::checkpoint::Governs::Pending)
+                .map(|claim| &claim.stated),
+            Some(&crate::checkpoint::Stated::Names(BTreeSet::new()))
+        );
+    }
+
+    #[test]
+    fn a_summary_over_an_asking_in_flight_is_taken_from_the_words_and_from_a_device() {
+        // The asking travels with the summary rather than away with it, so there is nothing left
+        // for the refusal to protect: the words may summarise, a device may summarise as freely
+        // and no more freely, and the asking is exactly as much in flight afterwards.
+        let (mut objects, object, control, device, _asking) = an_account_with_an_asking_in_flight();
+        let carrying = summarising(&objects, &object, &control, once_due());
+        assert_eq!(
+            objects.admit(&carrying, once_due()),
+            Ok(Admitted::Extended),
+            "taken, with the asking named"
+        );
+        assert_eq!(
+            holder_at(&objects, &object, once_due()).waiting.len(),
+            1,
+            "and the asking is still waiting afterwards, exactly as before"
         );
 
-        // A device's is refused for the same reason, and by the same rule.
         let head = objects.head(object.name()).expect("a head").clone();
         let mut theirs = following_at(&object, &head, Kind::HOLDER_CHECKPOINT, &[], once_due());
         theirs.payload = BTreeMap::from([(
@@ -5351,11 +5871,10 @@ mod tests {
         )]);
         assert_eq!(
             objects.admit(&signed_by_device(theirs, &device), once_due()),
-            Err(Refused::NotAuthorised),
+            Ok(Admitted::Extended),
             "a device may summarise as freely as the words, and no more freely"
         );
 
-        // Once the wait has run out there is nothing for a summary to hide, and it is taken.
         let later = once_due()
             .plus(almena_time::deadline::CONTROL_KEY_WAIT.epochs(once_due()))
             .expect("no overflow");

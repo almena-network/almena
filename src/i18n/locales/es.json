@@ -73,7 +73,10 @@
         "written": "Actos registrados",
         "root": "Raíz",
         "peer": "Nombre en la malla",
-        "peers": "Pares"
+        "peers": "Pares",
+        "silent": "En silencio",
+        "interface": "Interfaz",
+        "link": "Enlace para el cliente"
       }
     },
     "peers": {
@@ -81,11 +84,12 @@
       "lookingTitle": "Consultando.",
       "looking": "Todavía no ha contado nadie.",
       "noNetworkTitle": "Ninguna red.",
-      "noNetwork": "No hay ninguna red en la que un par pudiera estar: la capa entre pares aún no está escrita.",
+      "noNetwork": "Este nodo no está en ninguna red.",
       "noneTitle": "Ningún par.",
       "none": "Este nodo está en una red y no habla con nadie en ella.",
       "refresh": "Actualizar",
-      "lookedAt": "Consultado a las {{time}}, y de nuevo cada diez segundos."
+      "lookedAt": "Consultado a las {{time}}, y de nuevo cada diez segundos.",
+      "connected": "Conectado a {{count}} en la malla."
     },
     "health": {
       "ok": "Conectado",
@@ -138,20 +142,23 @@
         "notTheirs": "Se leyó, y no ata: la aprobación no está firmada por la clave que autoriza su propio registro, o el desafío había dejado de valer.",
         "notWrittenDown": "El registro no lo aceptó, y eso no debería poder pasar.",
         "addressUnavailable": "Nada ha podido escuchar en esa dirección.",
-        "unknown": "No ha funcionado, y esta versión no sabe leer lo que ha vuelto."
-      }
+        "unknown": "No ha funcionado, y esta versión no sabe leer lo que ha vuelto.",
+        "noNetworkYet": "Todavía no hay red: no hay nadie a quien unirse, y no se ha abierto ninguna.",
+        "governmentKeyNotKept": "La clave del gobierno no se ha podido guardar junto al registro, así que no se ha abierto nada.",
+        "nobodyIsThereIsForDevelopment": "Producción se abre con la palabra de la zona y nunca con la tuya.",
+        "resolverNotAnAddress": "ALMENA_RESOLVER no es una dirección."
+      },
+      "mediator": "Guardar correo para otras personas",
+      "closeThisNode": "Cerrar este nodo para siempre",
+      "closeThisNodeArmed": "Pulsa otra vez. No vuelve."
     },
     "published": {
       "title": "Lo que publica este nodo",
       "body": "Dónde se le alcanza, y dónde el interfaz se describe a sí mismo.",
       "interface": "Interfaz",
       "mesh": "Malla",
-      "description": "Descripción"
-    },
-    "claim": {
-      "title": "Reclamar este nodo",
-      "body": "Escanéalo con el cliente para firmar, en la red, que has contribuido este nodo.",
-      "none": "Todavía no hay identificador."
+      "description": "Descripción",
+      "link": "Enlace para el cliente"
     }
   },
   "ai": {
@@ -283,7 +290,44 @@
       "directoryHeld": "Otro proceso tiene tomado el directorio de este nodo.",
       "noRandomness": "El sistema no ha producido aleatoriedad.",
       "unreadableIdentity": "No se ha podido leer la clave de este nodo.",
-      "somethingElse": "No ha funcionado, y esta versión no tiene palabras para explicar por qué. El motivo está en los registros."
+      "somethingElse": "No ha funcionado, y esta versión no tiene palabras para explicar por qué. El motivo está en los registros.",
+      "thereIsANetwork": "La zona nombra a alguien, así que hay una red a la que unirse y no una que abrir.",
+      "formatIsNotFrozen": "El formato de esta compilación todavía se mueve, y una red de producción no debe abrirse sobre uno que se mueve. No se ha escrito nada.",
+      "recordWouldNotStart": "No se ha podido iniciar el registro de este nodo.",
+      "noClock": "No se ha podido leer el reloj del sistema, y el comienzo de una red es la única lectura de reloj de pared que esta plataforma escribe.",
+      "directoryCannotBeHeld": "No se ha podido saber si otro proceso tiene tomado el directorio de este nodo.",
+      "theZoneIsUnreadable": "La zona de esa red publica un registro seed que esta compilación no puede leer, así que no hay a quién unirse — y tampoco se puede abrir nada, porque hay algo publicado. Hay que corregir la zona antes de que ningún nodo pueda levantarse en ella.",
+      "meshAddressUnavailable": "No se ha podido escuchar en el puerto de la malla. Normalmente lo tiene otro.",
+      "addressUnavailable": "Nada ha podido escuchar en la dirección del interfaz.",
+      "noNetworkYet": "Todavía no hay red.",
+      "governmentKeyNotKept": "La clave del gobierno no se ha podido guardar junto al registro, así que no se ha abierto nada.",
+      "nobodyIsThereIsForDevelopment": "Producción se abre con la palabra de la zona y nunca con la tuya.",
+      "resolverNotAnAddress": "ALMENA_RESOLVER no es una dirección."
+    },
+    "name": "Almena Node",
+    "next": "Siguiente",
+    "back": "Atrás",
+    "claim": {
+      "title": "Quién ha contribuido este nodo",
+      "onProduction": "Este nodo está en producción.",
+      "onDevelopment": "Este nodo está en desarrollo.",
+      "scan": "Escanea con el cliente",
+      "body": "Escanear firma, desde tu propio dispositivo, que este nodo es tuyo. Es opcional: un nodo sin reclamar funciona igual, solo que no acredita a nadie.",
+      "drawing": "Dibujando el código…",
+      "none": "Sin código: este nodo no ha podido crear un reto.",
+      "expires": "Vale {{hours}} hora. Pasada, pide otro desde la pantalla de Red.",
+      "done": "Hecho"
+    },
+    "advanced": {
+      "title": "Avanzado",
+      "zone": "Zona, o vacío para la propia de esta red",
+      "seed": "Un registro semilla, o vacío para preguntar a la zona",
+      "nobodyIsThere": "No hay nadie: abrir desarrollo sin preguntar a la zona"
+    },
+    "checklist": {
+      "title": "¿Se puede congelar este formato?",
+      "holds": "se cumple",
+      "looking": "Preguntando a esta compilación."
     }
   }
 }

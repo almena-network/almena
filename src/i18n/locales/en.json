@@ -73,7 +73,10 @@
         "written": "Acts written down",
         "root": "Root",
         "peer": "Mesh name",
-        "peers": "Peers"
+        "peers": "Peers",
+        "silent": "Silent",
+        "interface": "Interface",
+        "link": "Link for the client"
       }
     },
     "peers": {
@@ -81,11 +84,12 @@
       "lookingTitle": "Looking.",
       "looking": "Nobody has counted yet.",
       "noNetworkTitle": "No network.",
-      "noNetwork": "There is no network for a peer to be on: the peer-to-peer layer is not written yet.",
+      "noNetwork": "This node is on no network.",
       "noneTitle": "No peers.",
       "none": "This node is on a network and is talking to nobody on it.",
       "refresh": "Refresh",
-      "lookedAt": "Looked at {{time}}, and again every ten seconds."
+      "lookedAt": "Looked at {{time}}, and again every ten seconds.",
+      "connected": "Connected to {{count}} on the mesh."
     },
     "health": {
       "ok": "Connected",
@@ -138,20 +142,23 @@
         "notTheirs": "It read, and it does not bind: the approval is not signed by the key their own record authorises, or the challenge had stopped being good.",
         "notWrittenDown": "The record would not take it, which should not be reachable.",
         "addressUnavailable": "Nothing could listen on that address.",
-        "unknown": "It did not work, and this build has no reading for what came back."
-      }
+        "unknown": "It did not work, and this build has no reading for what came back.",
+        "noNetworkYet": "There is no network yet: nobody is there to join, and nothing was opened.",
+        "governmentKeyNotKept": "The government's key could not be kept beside the record, so nothing was opened.",
+        "nobodyIsThereIsForDevelopment": "Production is opened on the zone's word and never on yours.",
+        "resolverNotAnAddress": "ALMENA_RESOLVER is not an address."
+      },
+      "mediator": "Hold post for other people",
+      "closeThisNode": "Close this node for good",
+      "closeThisNodeArmed": "Press again. It does not come back."
     },
     "published": {
       "title": "What this node publishes",
       "body": "Where it can be reached, and where the interface describes itself.",
       "interface": "Interface",
       "mesh": "Mesh",
-      "description": "Description"
-    },
-    "claim": {
-      "title": "Claim this node",
-      "body": "Scan it with the client to sign, on the network, that you contributed this node.",
-      "none": "No identifier yet."
+      "description": "Description",
+      "link": "Link for the client"
     }
   },
   "ai": {
@@ -283,7 +290,44 @@
       "directoryHeld": "Another process is holding this node's directory.",
       "noRandomness": "The system would not produce randomness.",
       "unreadableIdentity": "This node's key could not be read.",
-      "somethingElse": "It did not work, and this build has no words for why. The reason is in the records."
+      "somethingElse": "It did not work, and this build has no words for why. The reason is in the records.",
+      "thereIsANetwork": "The zone names somebody, so there is a network to join rather than one to open.",
+      "formatIsNotFrozen": "This build's format is still moving, and a production network must not open on one that is. Nothing was written.",
+      "recordWouldNotStart": "This node's record could not be started.",
+      "noClock": "The system clock could not be read, and a network's beginning is the one wall clock reading this platform writes down.",
+      "directoryCannotBeHeld": "It could not be told whether another process is holding this node's directory.",
+      "theZoneIsUnreadable": "That network's zone publishes a seed record this build cannot read, so there is nobody to join — and nothing can be opened either, because something is published. The zone has to be corrected before any node can come up on it.",
+      "meshAddressUnavailable": "The mesh port could not be listened on. Usually somebody else has it.",
+      "addressUnavailable": "Nothing could listen on the interface address.",
+      "noNetworkYet": "There is no network yet.",
+      "governmentKeyNotKept": "The government's key could not be kept beside the record, so nothing was opened.",
+      "nobodyIsThereIsForDevelopment": "Production is opened on the zone's word and never on yours.",
+      "resolverNotAnAddress": "ALMENA_RESOLVER is not an address."
+    },
+    "name": "Almena Node",
+    "next": "Next",
+    "back": "Back",
+    "claim": {
+      "title": "Who contributed this node",
+      "onProduction": "This node is on production.",
+      "onDevelopment": "This node is on development.",
+      "scan": "Scan with the client",
+      "body": "Scanning signs, from your own device, that this node is yours. It is optional — an unclaimed node works the same, it just credits nobody.",
+      "drawing": "Drawing the code…",
+      "none": "No code: this node could not make a challenge.",
+      "expires": "Good for {{hours}} hour. After that, ask for another from the Network screen.",
+      "done": "Done"
+    },
+    "advanced": {
+      "title": "Advanced",
+      "zone": "Zone, or empty for this network's own",
+      "seed": "A seed record, or empty to ask the zone",
+      "nobodyIsThere": "Nobody is there: open development without asking the zone"
+    },
+    "checklist": {
+      "title": "Can this format be frozen?",
+      "holds": "holds",
+      "looking": "Asking this build."
     }
   }
 }

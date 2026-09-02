@@ -31,6 +31,7 @@ members = [
   "crates/almena-suite",
   "crates/almena-time",
   "crates/almena-tls",
+  "partner",
   "src-tauri",
 ]
 
@@ -202,7 +203,9 @@ time = "0.3.55"
 # cross-compilation story for the five desktop platforms plus Android and iOS.
 sha2 = "0.10"
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
-p256 = { version = "0.13", default-features = false, features = ["std", "ecdsa"] }
+# `ecdh` is for the partner's DIDComm envelope, which agrees a key with a holder's device the way
+# the holder's app does; it turns on nothing that is not already in the graph.
+p256 = { version = "0.13", default-features = false, features = ["std", "ecdsa", "ecdh"] }
 # The words a person writes down. Derivation from them is SLIP-0010, which is short enough to
 # hold here rather than take a dependency for — see `seed.rs`.
 bip39 = { version = "2", default-features = false, features = ["std"] }
@@ -212,6 +215,11 @@ hmac = "0.12"
 # generator — so the need lands here instead. This is the operating system's own source and
 # carries no algorithm of its own: one crate, and nothing to get wrong.
 getrandom = "0.3"
+# The block cipher the partner's DIDComm envelope is built over: AES key wrap (RFC 3394) and
+# CBC are written out by hand on top of it, exactly as the holder's app composes them, so that
+# what the reference issuer seals is what a wallet opens. Already in the graph by way of the
+# mesh's handshake; named here so that nothing picks a second block cipher by accident.
+aes = "0.8"
 # The one compression this project does, and it is not a choice: the W3C Bitstring Status List
 # fixes GZIP, and a list encoded any other way is one nothing else can read. Pure Rust
 # (`miniz_oxide`) rather than the zlib backend, for the cross-compilation story `SPECS.md §4.11`

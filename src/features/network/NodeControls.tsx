@@ -18,6 +18,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 
+import ClaimCode from "@/components/ClaimCode";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -25,6 +26,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { choose, preferences } from "@/lib/preferences";
 
 /** What the controls are drawn from. */
 interface NodeControlsProps {
@@ -67,6 +69,9 @@ const SAYS = {
   not_a_claim: "notAClaim",
   not_theirs: "notTheirs",
   not_written_down: "notWrittenDown",
+  government_key_not_kept: "governmentKeyNotKept",
+  nobody_is_there_is_for_development: "nobodyIsThereIsForDevelopment",
+  resolver_not_an_address: "resolverNotAnAddress",
 } as const;
 
 /** The catalogue key for one refusal, or the general one where this build has never heard of it. */
@@ -84,10 +89,15 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
   // separate data directories, so they hold separate keys, so they are two participants that
   // happen to share a computer. Two nodes cannot share a port, and somebody running both while
   // working should not have to find that out from a bind that failed.
-  const [address, setAddress] = useState("127.0.0.1:8791");
+  const remembered = preferences();
+  const [address, setAddress] = useState(remembered.interface ?? "127.0.0.1:8791");
   const [zone, setZone] = useState("");
-  const [mesh, setMesh] = useState("4002");
+  const [mesh, setMesh] = useState(String(remembered.mesh ?? 4002));
   const [carry, setCarry] = useState(false);
+  const [mediator, setMediator] = useState(false);
+  // Closing is armed by one press and done by the next, because it does not come back. Anything
+  // else on this screen moving disarms it: a second press has to be a second decision.
+  const [closing, setClosing] = useState(false);
   const [carriedBy, setCarriedBy] = useState("");
   const [certificate, setCertificate] = useState("");
   const [privateKey, setPrivateKey] = useState("");
@@ -96,10 +106,7 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
   const [failed, setFailed] = useState<string | null>(null);
 
   /** Run one command, saying whether it worked and keeping whatever identifier came back. */
-  async function run(
-    command: string,
-    argument?: Record<string, string | number | boolean | string[] | undefined>,
-  ) {
+  async function run(command: string, argument?: Record<string, unknown>) {
     setFailed(null);
     try {
       await invoke(command, argument);
@@ -151,7 +158,11 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
             />
             <Button
               onClick={() =>
-                void run("open_development_network", {
+                /* The command takes which network now, and this control is the development one
+                   it always was: opening production is a decision with a screen of its own, in
+                   the walk a node with no network is taken through. */
+                void run("open_a_network", {
+                  which: "development",
                   zone: zone.trim() || undefined,
                 })
               }
@@ -189,11 +200,14 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
             onClick={() =>
               void run("serve_interface", {
                 address,
-                // Empty means none. A node with no certificate answers in the clear, which is
-                // right on the machine it runs on and wrong anywhere else — so it is a thing to
-                // ask for rather than a thing to be given quietly.
+                // Empty means the node's own key: every node has one, so every node has a
+                // certificate, and a pair of files is for an operator who already has one.
                 certificate: certificate.trim() || undefined,
                 privateKey: privateKey.trim() || undefined,
+              }).then((served) => {
+                // Remembered so that the next start serves where this one did: the address is
+                // the one that gets published.
+                if (served) void choose({ interface: address });
               })
             }
           >
@@ -217,10 +231,16 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
             disabled={!onNetwork}
             onClick={() =>
               void run("join_the_mesh", {
-                port: Number(mesh) || 0,
-                carry,
-                // Empty means nobody to ask, which is right for a node that can be dialled.
-                carriedBy: carriedBy.trim() ? [carriedBy.trim()] : [],
+                asked: {
+                  port: Number(mesh) || 0,
+                  carry,
+                  mediator,
+                  // Empty means nobody to ask, which is right for a node that can be dialled.
+                  carriedBy: carriedBy.trim() ? [carriedBy.trim()] : [],
+                },
+              }).then((placed) => {
+                // The port is the one that gets published, so the next start takes the same one.
+                if (placed) void choose({ mesh: Number(mesh) || null });
               })
             }
           >
@@ -241,6 +261,22 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
           />
           <label htmlFor="carry" className="text-sm">
             {t("network.control.carry")}
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* The mailbox, said in the record: a client picks a mediator from what the record says
+              a node offers, so holding post is an act on this node's chain before it is a service. */}
+          <input
+            id="mediator"
+            type="checkbox"
+            checked={mediator}
+            onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+              setMediator(event.target.checked)
+            }
+          />
+          <label htmlFor="mediator" className="text-sm">
+            {t("network.control.mediator")}
           </label>
         </div>
 
@@ -299,11 +335,7 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
               <p className="text-muted-foreground text-sm">
                 {t("network.control.challengeShown")}
               </p>
-              {/* Selectable text and never an input: it is the node's to show, not anybody's to
-                  edit, and what gets approved has to be what was shown. */}
-              <p className="bg-muted rounded-md p-2 font-mono text-xs break-all select-all">
-                {challenge}
-              </p>
+              <ClaimCode challenge={challenge} />
               <input
                 className="border-input bg-transparent h-9 rounded-md border px-3 font-mono text-sm"
                 aria-label={t("network.control.approval")}
@@ -340,6 +372,27 @@ function NodeControls({ onNetwork, onChanged }: NodeControlsProps) {
             onClick={() => void run("contributed_by_nobody")}
           >
             {t("network.control.letGo")}
+          </Button>
+        </div>
+
+        {/* The one way out of a node whose key is somebody else's, and not how a node is taken
+            down for the afternoon: it does not come back. Two presses, and the second says so. */}
+        <div className="flex flex-col gap-2 border-t pt-4">
+          <Button
+            variant="destructive"
+            disabled={!onNetwork}
+            onClick={() => {
+              if (!closing) {
+                setClosing(true);
+                return;
+              }
+              setClosing(false);
+              void run("close_this_node");
+            }}
+          >
+            {closing
+              ? t("network.control.closeThisNodeArmed")
+              : t("network.control.closeThisNode")}
           </Button>
         </div>
 

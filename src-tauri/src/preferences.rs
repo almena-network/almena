@@ -47,6 +47,40 @@ pub struct Preferences {
     /// The alternative — a default written down here — would put the vocabulary back on this
     /// side through the door the paragraph above closes.
     pub model: Option<String>,
+    /// Which network this node is for — `development` or `production` — once it is on one.
+    ///
+    /// **Written by the node and not by a person**, which is the one exception to the paragraph
+    /// above: the choice was taken once, in the walk, and a launch comes back to it without
+    /// asking. Each network keeps a directory of its own, and this is how a launch knows which.
+    pub network: Option<String>,
+    /// The mesh port the node last took its place on, so the next start takes the same one.
+    ///
+    /// The port is the one somebody publishes in the zone, so it has to be the same every start.
+    pub mesh: Option<u16>,
+    /// The address the interface was last served on, for the same reason.
+    pub interface: Option<String>,
+}
+
+/// Which network a launch should come back to, as the node last wrote it down.
+pub fn remembered_network(app: &AppHandle) -> Option<String> {
+    read(app).network
+}
+
+/// Write down which network this node is for, keeping every other choice as it was.
+///
+/// Read-modify-write of the whole file, as `set_preferences` does, so that a person's choices are
+/// never lost to the node remembering its own.
+pub fn remember_network(app: &AppHandle, network: &str) {
+    let mut preferences = read(app);
+    if preferences.network.as_deref() == Some(network) {
+        return;
+    }
+    preferences.network = Some(network.to_owned());
+    if let Err(error) = write(app, &preferences) {
+        warn!("network_not_remembered reason={error}");
+    } else {
+        info!("network_remembered network={network}");
+    }
 }
 
 /// Where the file is, or nothing when the platform will not say.

@@ -15,6 +15,7 @@
 
 pub mod arguments;
 pub mod catalog;
+pub mod clock;
 pub mod language;
 pub mod node;
 pub mod preferences;
@@ -22,8 +23,7 @@ pub mod records;
 pub mod serve;
 pub mod view;
 
-use clap::Parser as _;
-use log::{error, info};
+use log::{error, info, warn};
 
 use crate::arguments::Arguments;
 use crate::catalog::Catalog;
@@ -46,19 +46,41 @@ pub const IDENTIFIER: &str = "network.almena.cli";
 /// share a file, and `almena-app` is the other one's.
 pub const PROGRAM: &str = "almena";
 
-/// The certificate this run serves under, if it was given one.
+/// The certificate this run serves under: the operator's pair, or the node's own key.
 ///
-/// A node asked to serve under a certificate that will not load does not come up serving in the
-/// clear instead: whoever asked for one would be told all was well while every question put to
-/// their node travelled in the open.
+/// **Serving in the clear is not a mode.** Every node has a key, so every node has a certificate:
+/// one whose subject public key is the node's own, signed by that key, which whoever dials it pins
+/// against the identity the zone or the record told them. An operator who already has a
+/// certificate for the machine names two files instead — and a node asked to serve under files
+/// that will not load does not come up under its own key instead, because whoever named them
+/// would be told all was well while what they meant to serve under was not what was served.
 fn certificate_of(
     arguments: &Arguments,
-) -> Result<Option<almena_tls::Accepting>, almena_tls::NoCertificate> {
+    node: &Node,
+) -> Result<(almena_tls::Accepting, serve::Under), String> {
     match (&arguments.certificate, &arguments.private_key) {
-        (Some(certificate), Some(key)) => almena_tls::accepting(certificate, key).map(Some),
+        (Some(certificate), Some(key)) => almena_tls::accepting(certificate, key)
+            .map(|accepting| (accepting, serve::Under::ACertificate))
+            .map_err(|why| format!("{why:?}")),
         // Neither, or one without the other — which the parser refuses before this is reached.
-        _ => Ok(None),
+        _ => {
+            let key = node.identity().map_err(|why| format!("{why:?}"))?;
+            almena_tls::self_signed(&key.secret())
+                .map(|accepting| (accepting, serve::Under::OwnKey))
+                .map_err(|why| format!("{why:?}"))
+        }
     }
+}
+
+/// The zone this run looks in: the one named, or the network's own.
+fn zone_of(arguments: &Arguments) -> &str {
+    arguments
+        .zone
+        .as_deref()
+        .unwrap_or(match arguments.network {
+            crate::arguments::Network::Dev => crate::node::DEVELOPMENT_ZONE,
+            crate::arguments::Network::Pro => crate::node::PRODUCTION_ZONE,
+        })
 }
 
 /// Put the node on a network and on the mesh, as far as this run asked for.
@@ -69,27 +91,27 @@ fn certificate_of(
 /// past: a node half on a network is one whose published records describe something that is not
 /// there.
 fn bring_up(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
-    // **One flow, and the network chosen is the only thing that varies.** Opening asks that
-    // network's own zone whether anybody is there; coming back reads the record this directory
-    // already holds and asks nobody. What must never happen is the second becoming the first by
-    // accident, which is why opening is something a run says out loud.
-    let asking = match arguments.open {
-        true => node.open(
-            arguments
-                .zone
-                .as_deref()
-                .unwrap_or(match arguments.network {
-                    crate::arguments::Network::Dev => crate::node::DEVELOPMENT_ZONE,
-                    crate::arguments::Network::Pro => crate::node::PRODUCTION_ZONE,
-                }),
-            &arguments.seeds,
-        ),
-        // Nothing to come back to is not a failure worth stopping over: a node with no network
-        // still draws, still says what it is, and still has a network to be given.
-        false => match node.rejoin() {
-            Err(crate::node::Opening::NoNetwork) => Ok(()),
+    // **One flow, and what the run said is the only thing that varies.** Every start looks the
+    // zone up and honours the seeds it was given; a directory holding a record comes back to its
+    // network whatever was said. What differs is a directory holding nothing: `--open` makes a
+    // network and refuses when somebody is there, `--join` takes the one that is there and refuses
+    // when nobody is, and neither joins if it can and otherwise says there is no network yet.
+    let zone = zone_of(arguments);
+    let asking = if arguments.open {
+        node.open(zone, &arguments.seeds, arguments.nobody_is_there)
+    } else if arguments.join {
+        node.join(zone, &arguments.seeds)
+    } else {
+        match node.take_part(zone, &arguments.seeds) {
+            // Nothing to come back to and nobody to join is not a failure worth stopping over: a
+            // node with no network still draws, still says what it is, and still has a network to
+            // be given — and the records say which of the two words would give it one.
+            Err(crate::node::Opening::NoNetwork) => {
+                warn!("no_network_yet zone={zone}");
+                Ok(())
+            }
             other => other,
-        },
+        }
     };
     if let Err(why) = asking {
         error!("network_not_taken reason={why:?}");
@@ -105,10 +127,69 @@ fn bring_up(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
                 almena_mesh::Carrying::ForNobody
             },
             carried_by: &arguments.carried_by,
+            mediator: arguments.mediator,
         })
     {
         error!("mesh_not_joined reason={why:?}");
         return Err(1);
+    }
+    Ok(())
+}
+
+/// Act as Almena Government, as far as this run asked for, and say what was written.
+///
+/// **A ceremony and not a service.** Each of these is one act against the record of the node that
+/// opened the network, through that node's own admission — never a poke at the store — and the run
+/// ends with it. The identifiers logged are what somebody publishes or pastes next: the
+/// certification's, the reply's, and how much of the core was new.
+///
+/// # Errors
+///
+/// The code to leave with. A ceremony refused is a refusal and nothing to carry on past.
+fn governing(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
+    let reason = |arguments: &Arguments| {
+        let mut said = std::collections::BTreeMap::new();
+        if let Some(en) = &arguments.reason_en {
+            said.insert("en".to_owned(), en.clone());
+        }
+        if let Some(es) = &arguments.reason_es {
+            said.insert("es".to_owned(), es.clone());
+        }
+        said
+    };
+
+    if arguments.publish_core {
+        match node.publish_core() {
+            Ok(published) => info!(
+                "core_published sources={} attributes={} purposes={} already={}",
+                published.sources, published.attributes, published.purposes, published.already
+            ),
+            Err(why) => {
+                error!("core_not_published reason={why:?}");
+                return Err(1);
+            }
+        }
+    }
+
+    if let Some(subject) = &arguments.certify {
+        let grade = arguments.grade.and_then(almena_node::Grade::of).ok_or(1)?;
+        match node.certify(subject, grade, &reason(arguments)) {
+            Ok(sealed) => info!("certified subject={subject} certification={sealed}"),
+            Err(why) => {
+                error!("not_certified subject={subject} reason={why:?}");
+                return Err(1);
+            }
+        }
+    }
+
+    if let Some(to) = &arguments.reply {
+        match node.reply(to, &reason(arguments)) {
+            Ok(answered) => info!("replied to={to} reply={answered}"),
+            Err(why) => {
+                error!("not_replied to={to} reason={why:?}");
+                return Err(1);
+            }
+        }
     }
     Ok(())
 }
@@ -120,9 +201,10 @@ fn bring_up(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
 /// somebody.** A node nobody claimed is a machine, and a machine cannot be credited — so a node and
 /// whoever contributed it say so together, in the node's own chain, where anybody can read it.
 ///
-/// The challenge is printed rather than logged. It is a thing shown to a person and gone: it never
-/// reaches the record, and the one place it is worth having is in front of whoever is about to
-/// approve it.
+/// The challenge is drawn by the view, and printed where there is no view. It is a thing shown to
+/// a person and gone: it never reaches the record, and the one place it is worth having is in
+/// front of whoever is about to approve it — which, at a terminal that is about to open its
+/// alternate screen, is the screen and not the scrollback underneath it.
 ///
 /// # Errors
 ///
@@ -132,7 +214,11 @@ fn bring_up(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
 fn saying_who_contributed_it(arguments: &Arguments, node: &mut Node) -> Result<(), u8> {
     if let Some(epochs) = arguments.who_contributed_me {
         match node.asking_who_contributed_me(epochs) {
-            Ok(challenge) => println!("{challenge}"),
+            Ok(challenge) => {
+                if arguments.writes_records() {
+                    println!("{challenge}");
+                }
+            }
             Err(why) => {
                 error!("challenge_not_shown reason={why:?}");
                 return Err(1);
@@ -175,30 +261,37 @@ fn saying_who_contributed_it(arguments: &Arguments, node: &mut Node) -> Result<(
 /// The address that was asked for, when there is no network to serve on it. A node with a network
 /// has somewhere for the work to run and one without has nothing to serve, so the two absences are
 /// the same refusal.
-fn listen(
-    arguments: &Arguments,
-    node: &Node,
-    under: Option<almena_tls::Accepting>,
-) -> Result<Option<serve::Listening>, String> {
+fn listen(arguments: &Arguments, node: &mut Node) -> Result<Option<serve::Listening>, String> {
     let Some(address) = arguments.serve.as_deref() else {
         return Ok(None);
     };
     let Some(serving) = node.serving().cloned() else {
-        return Err(address.to_owned());
+        return Err(format!("address={address} reason=no_network"));
     };
-    serve::start(address, serving, node, under)
-        .map(Some)
-        .ok_or_else(|| address.to_owned())
+    let (under, how) =
+        certificate_of(arguments, node).map_err(|why| format!("address={address} reason={why}"))?;
+    let listening = serve::start(address, serving, node, under, how)
+        .ok_or_else(|| format!("address={address} reason=no_runtime"))?;
+    node.serving_at(address);
+    Ok(Some(listening))
 }
 
-/// The node this run is about, in the directory and against the resolvers it was told.
+/// The node this run is about, in the directory and against the resolvers it was told, with its
+/// clock moved by the file it was given if it was given one.
+///
+/// The parser has already refused the clock file beside production, so a file here is a
+/// development node's and nothing is checked again.
 fn held(arguments: &Arguments, records: Option<std::path::PathBuf>) -> Node {
-    Node::in_directory(
+    let node = Node::in_directory(
         records,
         arguments.directory.clone(),
         arguments.resolvers.clone(),
         arguments.network.which(),
-    )
+    );
+    match &arguments.clock_offset_file {
+        Some(file) => node.reading_the_clock_offset_from(file.clone()),
+        None => node,
+    }
 }
 
 /// Print whether the format this build writes is one a network may be opened on for good.
@@ -243,7 +336,7 @@ fn freeze_checklist() -> u8 {
 /// Returns the code the process should exit with: `0` unless the terminal itself failed.
 #[must_use]
 pub fn run() -> u8 {
-    let arguments = Arguments::parse();
+    let arguments = Arguments::parsed();
 
     // **Before anything else, because it is instead of everything else.** Nothing is opened,
     // joined, served or written: the run answers one question and leaves.
@@ -267,22 +360,26 @@ pub fn run() -> u8 {
         return code;
     }
 
+    // **A ceremony is an act and then the run ends.** The node came up on its record so that the
+    // act went through its own admission; staying up afterwards would be a node started by
+    // accident, drawing itself for nobody.
+    if arguments.is_a_ceremony() {
+        let code = match governing(&arguments, &mut node) {
+            Ok(()) => 0,
+            Err(code) => code,
+        };
+        node.stop();
+        return code;
+    }
+
     if let Err(code) = saying_who_contributed_it(&arguments, &mut node) {
         return code;
     }
 
-    let under = match certificate_of(&arguments) {
-        Ok(under) => under,
-        Err(why) => {
-            error!("interface_not_served reason={why:?}");
-            return 1;
-        }
-    };
-
-    let listening = match listen(&arguments, &node, under) {
+    let listening = match listen(&arguments, &mut node) {
         Ok(listening) => listening,
-        Err(address) => {
-            error!("interface_not_served address={address} reason=no_network");
+        Err(why) => {
+            error!("interface_not_served {why}");
             return 1;
         }
     };
@@ -350,8 +447,10 @@ fn wait_for_stop() {
 
 #[cfg(test)]
 mod tests {
-    use super::settle;
+    use super::{bring_up, held, listen, settle};
+    use crate::arguments::Arguments;
     use crate::language::Language;
+    use crate::node::Node;
 
     /// A directory of this test's own, removed when it is done with it.
     struct Scratch(std::path::PathBuf);
@@ -368,6 +467,145 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// How many nodes the record counts as offering this, by this node's own reading of it.
+    ///
+    /// The figure the registry draws and never the announcement itself: a node that said it
+    /// serves without being counted for it would have said it nowhere.
+    fn counted_offering(node: &Node, capability: almena_node::Capability) -> Option<usize> {
+        let serving = node.serving()?;
+        let now = node.now()?;
+        serving
+            .node()
+            .blocking_read()
+            .running(now)
+            .answer
+            .offering
+            .get(&capability)
+            .copied()
+    }
+
+    #[test]
+    fn a_node_started_with_serve_says_so_in_the_record() {
+        // **Where the capacity figures are drawn from.** A node answering on an interface it never
+        // announced is one the network cannot count, so serving says `Interface` on the node's
+        // own chain the moment the socket is bound — and once, however many times it is bound.
+        let scratch = Scratch::new("serves");
+        let directory = scratch.0.to_str().expect("a path").to_owned();
+        let arguments = Arguments::try_parsed_from([
+            "almena",
+            "--network",
+            "dev",
+            "--open",
+            "--nobody-is-there",
+            "--serve",
+            "127.0.0.1:0",
+            "--directory",
+            &directory,
+        ])
+        .expect("a command line this face parses");
+        let mut node = held(&arguments, None);
+        bring_up(&arguments, &mut node).expect("opens on somebody's word");
+        assert_eq!(
+            counted_offering(&node, almena_node::Capability::Interface),
+            Some(0),
+            "nothing served yet, so nothing said"
+        );
+
+        let listening = listen(&arguments, &mut node)
+            .expect("serves")
+            .expect("was asked to");
+        // Bound on the node's own work rather than here, so said a moment after being asked.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while counted_offering(&node, almena_node::Capability::Interface) != Some(1)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(
+            counted_offering(&node, almena_node::Capability::Interface),
+            Some(1),
+            "the record counts this node as serving"
+        );
+        listening.stop();
+
+        // Served again — a restart, a second address — is said no second time.
+        let again = listen(&arguments, &mut node)
+            .expect("serves")
+            .expect("was asked to");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(
+            counted_offering(&node, almena_node::Capability::Interface),
+            Some(1),
+            "one node, one announcement"
+        );
+        again.stop();
+        node.stop();
+    }
+
+    #[test]
+    fn a_clock_offset_file_moves_the_node_s_clock_as_it_is_written() {
+        // **The knob the development network is walked with.** The node's own reading of the
+        // epoch — the one every act it admits is placed at — is the wall's plus what the file
+        // says, and the file is read again on every look so the days pass while the node runs.
+        let scratch = Scratch::new("clock");
+        std::fs::create_dir_all(&scratch.0).expect("a directory");
+        let clock = scratch.0.join("clock");
+        std::fs::write(&clock, "5\n").expect("written");
+        let directory = scratch.0.to_str().expect("a path").to_owned();
+        let file = clock.to_str().expect("a path").to_owned();
+        let arguments = Arguments::try_parsed_from([
+            "almena",
+            "--network",
+            "dev",
+            "--open",
+            "--nobody-is-there",
+            "--clock-offset-file",
+            &file,
+            "--directory",
+            &directory,
+        ])
+        .expect("a command line this face parses");
+        let mut node = held(&arguments, None);
+        bring_up(&arguments, &mut node).expect("opens on somebody's word");
+
+        // The network opened a moment ago, so the wall's epoch is nought and what is left is
+        // the file's.
+        assert_eq!(node.now(), Some(almena_node::Epoch::new(5)));
+        std::fs::write(&clock, "72").expect("written");
+        assert_eq!(
+            node.now(),
+            Some(almena_node::Epoch::new(72)),
+            "read again on every look"
+        );
+        std::fs::remove_file(&clock).expect("taken away");
+        assert_eq!(
+            node.now(),
+            Some(almena_node::Epoch::GENESIS),
+            "an absent file is nought, and the clock is the wall's"
+        );
+        node.stop();
+    }
+
+    #[test]
+    fn without_a_clock_offset_file_the_clock_is_the_wall_s() {
+        let scratch = Scratch::new("wall");
+        let directory = scratch.0.to_str().expect("a path").to_owned();
+        let arguments = Arguments::try_parsed_from([
+            "almena",
+            "--network",
+            "dev",
+            "--open",
+            "--nobody-is-there",
+            "--directory",
+            &directory,
+        ])
+        .expect("a command line this face parses");
+        let mut node = held(&arguments, None);
+        bring_up(&arguments, &mut node).expect("opens on somebody's word");
+        assert_eq!(node.now(), Some(almena_node::Epoch::GENESIS));
+        node.stop();
     }
 
     #[test]

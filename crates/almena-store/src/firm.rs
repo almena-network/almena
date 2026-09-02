@@ -376,6 +376,10 @@ fn weighs(
     //
     // **What it is about comes from the same place the log gets it.** Deciding it separately here
     // would refuse honest proofs for honest acts, with nothing to look at and nobody at fault.
+    //
+    // Read off the act alone, which is all this has: a reply's subject is the record's to say (it
+    // is whoever the decision it answers was about), so a proof for a reply does not count here
+    // until whoever counts holds a record to ask.
     let entry = Entry::of(act, answer.at, crate::subject_of(act));
     let size =
         usize::try_from(answer.published.root.size).map_err(|_| NotCounted::NotInThatTree)?;

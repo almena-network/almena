@@ -100,6 +100,19 @@ pub mod field {
     pub const ALIAS: u64 = 15;
     /// An address to reach the organisation at, under a domain it has proved.
     pub const EMAIL: u64 = 17;
+    /// The grade an organisation asks to be certified at.
+    ///
+    /// **The seal's own numbering**, so that what was asked for and what was granted are compared
+    /// as one number and never translated. Odd, because a reader that passed over it would hold a
+    /// request for nothing in particular — and closed, for the reason the seal's grade is: a number
+    /// this build does not know is refused rather than read as the nearest one it does.
+    pub const GRADE: u64 = 19;
+    /// What the organisation has to say for itself when it asks.
+    ///
+    /// **Even, and it has to be.** A note is for whoever reads the request; an act that carried one
+    /// a reader could not follow would still be a request for the grade it names, so passing over
+    /// it is a worse screen and never a wrong claim.
+    pub const NOTE: u64 = 20;
 }
 
 /// Which class of threshold an act is counted against.
@@ -145,6 +158,10 @@ pub const fn class(kind: Kind) -> Option<Class> {
         // One surviving owner, because with small sets demanding two defeats its purpose — and if
         // the governance threshold were reachable this act would not be needed (`SPECS.md §8.3`).
         Kind::ENTITY_CONTINUITY | Kind::ENTITY_VETO => Class::Routine,
+        // **Asking concedes nothing.** A request changes neither who governs nor what the entity
+        // seals with; the decision it invites is somebody else's, published on their side. Putting
+        // it behind a higher threshold would make asking for a seal harder than issuing with one.
+        Kind::CERTIFICATION_REQUEST => Class::Routine,
         _ => return None,
     })
 }
@@ -229,6 +246,23 @@ pub struct Cooling {
     pub until: Epoch,
 }
 
+/// One asking to be certified, as the entity's own chain records it.
+///
+/// **The record of the asking and not of the answer.** What Almena decides is a certification — an
+/// object of its own pointing back at this entity — or a reply pointing at the act that asked, and
+/// either is found from the entity's side by asking what has been said about it. Nothing here is
+/// updated when the answer arrives: a request that could be marked *granted* on the entity's chain
+/// would be the entity writing down Almena's decision for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+    /// The grade asked for.
+    pub grade: crate::certification::Grade,
+    /// What the organisation said for itself, if it said anything.
+    pub note: Option<String>,
+    /// The epoch it asked in.
+    pub at: Epoch,
+}
+
 /// Owners being put back to recover a quorum, and when that lands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Continuity {
@@ -279,6 +313,12 @@ pub struct Entity {
     /// frozen entity from one that has had nothing to do, so no label is put on it: the date goes
     /// where the decision is taken, and whoever is about to rely on it decides.
     pub acted: Epoch,
+    /// Every asking to be certified this entity has made, by the act that asked.
+    ///
+    /// **By the act's name, because that is what an answer points at.** A reply that refuses a
+    /// request names the act it refuses, exactly as one names a certification, and whoever holds
+    /// the record has to find the asking from that name to know who may answer it.
+    pub requests: BTreeMap<almena_format::identifier::Name, Request>,
 }
 
 impl Entity {
@@ -366,9 +406,19 @@ pub fn vocabulary() -> almena_format::field::Vocabulary<'static> {
         Field::new(field::REVOKING),
         Field::new(field::ALIAS),
         Field::new(field::EMAIL),
+        Field::new(field::GRADE),
+        Field::new(field::NOTE),
         Field::new(crate::resolution::FIELD),
     ];
-    almena_format::field::Vocabulary::of(FIELDS)
+    const CLOSED: &[(Field, &[Value])] = &[
+        // The grade asked for is one of the three the seal knows and nothing else. A request for
+        // a grade this build has never heard of is not a request for the nearest one it has.
+        (
+            Field::new(field::GRADE),
+            &[Value::Uint(1), Value::Uint(2), Value::Uint(3)],
+        ),
+    ];
+    almena_format::field::Vocabulary::with_closed(FIELDS, CLOSED)
 }
 
 /// An entity, as the act that created it made it.
@@ -406,6 +456,7 @@ pub fn born(operation: &Operation, speaking: &Speaking, at: Epoch) -> Result<Ent
         cooling: None,
         email: None,
         acted: at,
+        requests: BTreeMap::new(),
     })
 }
 
@@ -439,6 +490,7 @@ pub fn alone(key: [u8; ed25519::PUBLIC_KEY_WIDTH], at: Epoch) -> Entity {
         cooling: None,
         email: None,
         acted: at,
+        requests: BTreeMap::new(),
     }
 }
 
@@ -496,9 +548,36 @@ pub fn does(operation: &Operation, entity: &Entity, kind: Kind) -> Result<Entity
         }
         // A summary restates what the chain already produces and concedes nothing.
         Kind::ENTITY_CHECKPOINT => {}
+        Kind::CERTIFICATION_REQUEST => {
+            next.requests
+                .insert(operation.called(), asking_for(operation)?);
+        }
         _ => return Err(Refused::Malformed),
     }
     Ok(next)
+}
+
+/// What an entity asked to be certified as, read from the act that asked.
+///
+/// # Errors
+///
+/// [`Refused::Malformed`] for a request with no grade, a grade the seal does not number, or a note
+/// that is not text. **A grade and not a wish**: an asking that named no grade would be one Almena
+/// had to guess the meaning of, and the whole of a published procedure is that nobody guesses.
+fn asking_for(operation: &Operation) -> Result<Request, Refused> {
+    let grade = crate::certification::Grade::of(number(operation, field::GRADE)?)
+        .ok_or(Refused::Malformed)?;
+    let note = match operation.payload.get(&field::NOTE) {
+        None => None,
+        Some(Value::Text(note)) if !note.trim().is_empty() => Some(note.clone()),
+        Some(Value::Text(_)) => None,
+        Some(_) => return Err(Refused::Malformed),
+    };
+    Ok(Request {
+        grade,
+        note,
+        at: operation.issued,
+    })
 }
 
 /// Owners being put back, and when that lands.
@@ -831,6 +910,7 @@ mod tests {
             cooling: None,
             email: None,
             acted: now(),
+            requests: BTreeMap::new(),
         }
     }
 

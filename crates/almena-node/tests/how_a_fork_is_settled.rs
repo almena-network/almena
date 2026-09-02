@@ -323,3 +323,91 @@ fn the_losing_branch_is_kept_and_left_without_effect() {
         "not even as something waiting: the branch it was on has no effect at all"
     );
 }
+
+/// A directory of this test's own, removed when it is done with it.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("almena-fork-{name}"));
+        let _ = std::fs::remove_dir_all(&path);
+        Self(path)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A node in `directory` holding an account whose fork was settled: the owner's rotation kept,
+/// the thief's set aside, and a device added along the surviving branch.
+fn a_settled_fork_in(directory: &std::path::Path) -> Did {
+    let mut node = Node::open_in(
+        directory,
+        &Opening {
+            which: Which::Development,
+            beginning: Epoch::GENESIS,
+            began: 1_800_000_000,
+        },
+        &[],
+        &words(5),
+        words(6),
+    )
+    .expect("nobody to join");
+    let (whose, head) = an_account(&mut node, 1, 11);
+
+    let theirs = rotating(&whose, &head, 7);
+    node.submit(&theirs, settled()).expect("taken");
+    let thiefs = rotating(&whose, &head, 9);
+    assert_eq!(
+        node.submit(&thiefs, settled()).expect("taken").answer,
+        Admitted::Forked
+    );
+
+    let mut resolving = following(
+        &whose,
+        &theirs.called(),
+        Kind::HOLDER_ADD_DEVICE,
+        settled(),
+        BTreeMap::from([(1, Value::Bytes(device(12).verifying_key().bytes().to_vec()))]),
+    );
+    resolution::declaring(&mut resolving, &theirs.called());
+    by_a_device(&mut resolving, &device(11));
+    assert_eq!(
+        node.submit(&resolving, settled()).expect("taken").answer,
+        Admitted::Resolves
+    );
+    assert!(matches!(
+        answer(&node, &whose),
+        Answer::Here(State::Holder(_))
+    ));
+    whose
+}
+
+#[test]
+fn a_fork_settled_before_a_restart_stays_settled_after_it() {
+    // **What a restart replays is admission, and admission alone does not settle a fork.** The
+    // losing branch is put out of effect by replaying the branch the resolution named, which the
+    // node did when the resolution arrived — and a restart that only re-admitted the acts would
+    // bring the fork back on the very node that closed it, answering *forked again* to whoever
+    // asked next. So the replay carries out the resolution exactly as the arrival did.
+    let scratch = Scratch::new("settled-survives");
+    let whose = a_settled_fork_in(&scratch.0);
+
+    let back = Node::rejoin(&scratch.0, words(6)).expect("its own record");
+    let Answer::Here(State::Holder(holder)) = answer(&back, &whose) else {
+        panic!(
+            "still settled after the restart: {:?}",
+            answer(&back, &whose)
+        )
+    };
+    assert!(
+        holder
+            .devices
+            .contains(device(12).verifying_key().bytes().as_slice()),
+        "along the branch that was named"
+    );
+    only_the_surviving_branch_is_waiting(&holder);
+}

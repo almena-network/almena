@@ -514,3 +514,269 @@ fn a_certification_is_the_issuer_s_to_take_back_and_nobody_else_s() {
         Err(Refused::NotAuthorised)
     );
 }
+
+/// The act by which an organisation asks to be certified, on its own chain.
+fn asking(whose: &Did, head: &Name, grade: u64, note: Option<&str>) -> Operation {
+    let mut payload = BTreeMap::from([(field::GRADE, Value::Uint(grade))]);
+    if let Some(note) = note {
+        payload.insert(field::NOTE, Value::Text(note.to_owned()));
+    }
+    on(whose, head, Kind::CERTIFICATION_REQUEST, payload)
+}
+
+/// A refusal signed with the key Almena Government was opened with.
+fn refusal_from_almena(set: &Set, to: &Name, said: Value) -> Operation {
+    let mut act = replying(to, said);
+    let public = words(ALMENA).verifying_key().bytes();
+    let signature = words(ALMENA).sign(&act.signing_bytes());
+    act.signatures.push(Signed {
+        by: set.almena.clone(),
+        key: public.to_vec(),
+        signature: signature.bytes(),
+    });
+    act
+}
+
+#[test]
+fn asking_to_be_certified_is_an_act_on_the_entity_s_own_chain() {
+    // **Nobody writes in somebody else's chain**, and that cuts both ways: the asking is the
+    // entity's, so it lands in the entity's history — signed by its owners at what a routine act
+    // costs them, and readable there by anybody deciding whether to answer it.
+    let mut set = a_set();
+    let mut request = asking(
+        &set.theirs,
+        &set.theirs_head,
+        Grade::Verified.number(),
+        Some("we bake bread, and we can show the oven"),
+    );
+    signed_by(&mut request, &[(&set.theirs_owner, 22)]);
+    assert_eq!(
+        set.objects.admit(&request, settled()),
+        Ok(Admitted::Extended),
+        "one owner at one-and-one is enough to ask"
+    );
+
+    let held = entity_at(&set.objects, &set.theirs);
+    let recorded = held
+        .requests
+        .get(&request.called())
+        .expect("the asking is in the entity's own state, under the act that asked");
+    assert_eq!(recorded.grade, Grade::Verified);
+    assert_eq!(
+        recorded.note.as_deref(),
+        Some("we bake bread, and we can show the oven")
+    );
+    assert_eq!(recorded.at, settled());
+}
+
+#[test]
+fn a_grade_the_seal_does_not_number_is_not_a_request_for_the_nearest_one() {
+    // The same closed vocabulary the seal has, and the same reason: *a grade slightly above the one
+    // I know* is exactly the reading that would be dangerous. The act is kept and the entity stops
+    // resolving here, which is what every closed vocabulary costs an old reader.
+    let mut set = a_set();
+    let mut request = asking(&set.theirs, &set.theirs_head, 4, None);
+    signed_by(&mut request, &[(&set.theirs_owner, 22)]);
+    assert_eq!(
+        set.objects.admit(&request, settled()),
+        Ok(Admitted::Extended),
+        "kept and passed on"
+    );
+    assert!(
+        matches!(
+            set.objects.resolve(set.theirs.name()),
+            Answer::CannotResolve(_)
+        ),
+        "and not read as a request for the third grade"
+    );
+}
+
+#[test]
+fn almena_answers_a_request_with_a_refusal_and_a_stranger_does_not() {
+    // **A reply names a request exactly as it names a certification** (`SPECS.md §7.10`): the
+    // refusal and the asking stand side by side for ever, with a reason in both languages, and the
+    // party asked is the only one who may answer — found from the request, resolved where the
+    // record is, never from what the reply says about itself.
+    let mut set = a_set();
+    let mut request = asking(&set.theirs, &set.theirs_head, Grade::Basic.number(), None);
+    signed_by(&mut request, &[(&set.theirs_owner, 22)]);
+    set.objects.admit(&request, settled()).expect("asked");
+    let asked = request.called();
+
+    let stranger = a_person(&mut set.objects, 4, 44);
+    let mut theirs = replying(&asked, reason());
+    signed_by(&mut theirs, &[(&stranger, 44)]);
+    assert_eq!(
+        set.objects.admit(&theirs, settled()),
+        Err(Refused::NotAuthorised),
+        "whoever was not asked does not answer"
+    );
+
+    let mut own = replying(&asked, reason());
+    signed_by(&mut own, &[(&set.theirs_owner, 22)]);
+    assert_eq!(
+        set.objects.admit(&own, settled()),
+        Err(Refused::NotAuthorised),
+        "and neither does the party that asked — an answer to oneself is not an answer"
+    );
+
+    let half = Reason::carried(&BTreeMap::from([("es".to_owned(), "no".to_owned())]));
+    assert_eq!(
+        set.objects
+            .admit(&refusal_from_almena(&set, &asked, half), settled()),
+        Err(Refused::Malformed),
+        "a refusal half the readers cannot read is not published beside anything"
+    );
+
+    let refusal = refusal_from_almena(&set, &asked, reason());
+    assert_eq!(
+        set.objects.admit(&refusal, settled()),
+        Ok(Admitted::Extended),
+        "Almena, with the key it was opened with, answers"
+    );
+    match set.objects.resolve(refusal.object.name()) {
+        Answer::Here(State::Reply(said)) => {
+            assert_eq!(said.to, asked, "it points at the act that asked");
+            assert_eq!(said.by, set.almena, "and says who is answering");
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // A reply naming an act nobody asked with is a reply to nothing.
+    let nowhere = refusal_from_almena(&set, &Name::of(b"an act nobody wrote"), reason());
+    assert_eq!(
+        set.objects.admit(&nowhere, settled()),
+        Err(Refused::NotAuthorised)
+    );
+}
+
+#[test]
+fn a_reply_is_about_whoever_the_decision_it_answers_was_about() {
+    // **The act names a decision and never a party**, so who a reply is about is the record's to
+    // say: the subject of the seal it answers, or the entity whose own chain carries the asking it
+    // refuses. That is what puts the answer beside the decision when anybody asks what has been
+    // said about an entity — read off the act alone, a reply would be about nobody.
+    let mut set = a_set();
+    let sealing = seal_from_almena(&set, &set.theirs, Grade::Basic, reason());
+    let seal = sealing.object.clone();
+    set.objects.admit(&sealing, settled()).expect("certified");
+    assert_eq!(
+        set.objects.subject_of(&sealing),
+        Some(set.theirs.clone()),
+        "a seal says who it is about in its own bytes"
+    );
+
+    let mut answer = replying(seal.name(), reason());
+    signed_by(&mut answer, &[(&set.theirs_owner, 22)]);
+    set.objects.admit(&answer, settled()).expect("answered");
+    assert_eq!(
+        set.objects.subject_of(&answer),
+        Some(set.theirs.clone()),
+        "the answer to a seal is about the seal's subject"
+    );
+
+    let mut request = asking(
+        &set.theirs,
+        &set.theirs_head,
+        Grade::Verified.number(),
+        None,
+    );
+    signed_by(&mut request, &[(&set.theirs_owner, 22)]);
+    set.objects.admit(&request, settled()).expect("asked");
+    assert_eq!(
+        set.objects.subject_of(&request),
+        None,
+        "an asking is the entity's own act, on its own chain"
+    );
+    let refusal = refusal_from_almena(&set, &request.called(), reason());
+    set.objects.admit(&refusal, settled()).expect("refused");
+    assert_eq!(
+        set.objects.subject_of(&refusal),
+        Some(set.theirs.clone()),
+        "and the refusal of an asking is about the entity that asked"
+    );
+
+    let nowhere = refusal_from_almena(&set, &Name::of(b"an act nobody wrote"), reason());
+    assert_eq!(
+        set.objects.subject_of(&nowhere),
+        None,
+        "a reply to nothing is about nobody"
+    );
+}
+
+/// What the asking below says, word for word.
+const NOTE: &str = "we bake bread, and we can show the oven";
+
+/// The asking for the second grade with that note, following the entity's proof of its domain,
+/// as the bytes every reader names it by — unsigned, because the name leaves the signatures out.
+const REQUEST: &str = "a701783e6469643a616c6d656e613a6465763a7a516d5a35364466766e416f53746a6f536e46346a554b354c6f5a4e453954396b377a356e51475776616f3143525402782f7a516d6573573373634470364d4764356475563373347a7a787678574267726762563566377a48755a6b6175793336031836040105184906a2130214782777652062616b652062726561642c20616e642077652063616e2073686f7720746865206f76656e0780";
+
+/// What that asking is called.
+const REQUEST_NAME: &str = "zQmQWrLUwNwMePVDbWkYsudZF73LzTPLFMQtcVSU8Emf2sj";
+
+/// Bytes as two hexadecimal digits each.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[test]
+fn an_asking_composed_here_is_these_bytes_and_this_name() {
+    // **Pinned so that another composer can be held to them.** Whoever composes an asking for an
+    // entity to sign — a portal, an app — has to produce the bytes this record admits under the
+    // name this record gives them; the inputs are written beside the hex so that the other side
+    // composes from the same facts and compares, rather than guessing at a field order.
+    let set = a_set();
+    let request = asking(
+        &set.theirs,
+        &set.theirs_head,
+        Grade::Verified.number(),
+        Some(NOTE),
+    );
+    let written = hex(&request.to_bytes());
+    let called = request.called();
+
+    if let Ok(dir) = std::env::var("ALMENA_VECTORS_DIR") {
+        let text = format!(
+            "# A CERTIFICATION_REQUEST (kind 54) the node's store composes and admits, for another\n\
+             # composer to be held to. Pinned in almena/crates/almena-store/tests/what_the_seal_decides.rs,\n\
+             # test `an_asking_composed_here_is_these_bytes_and_this_name`.\n\
+             #\n\
+             # Inputs:\n\
+             #   object (the entity's DID) = {entity}\n\
+             #   previous (its head: the act that proved panaderia.example) = {head}\n\
+             #   kind = 54, version = 1\n\
+             #   issued (epoch) = {issued}\n\
+             #   payload = {{19: grade 2 (uint), 20: note (text) = {note:?}}}\n\
+             #   signatures = [] (the name is over the naming bytes, which leave signatures out;\n\
+             #                    the entity's owners sign these bytes at the routine threshold)\n\
+             #\n\
+             # The act's name (what a REPLY answering it names in field 1):\n\
+             REQUEST_NAME={called}\n\
+             #\n\
+             # Operation::to_bytes() of the unsigned act, as hexadecimal:\n\
+             REQUEST={written}\n",
+            entity = set.theirs,
+            head = set.theirs_head.as_str(),
+            issued = settled().number(),
+            note = NOTE,
+            called = called.as_str(),
+        );
+        std::fs::create_dir_all(&dir).expect("a directory for the vectors");
+        std::fs::write(std::path::Path::new(&dir).join("request54.txt"), text)
+            .expect("the vector is written");
+    }
+
+    assert_eq!(written, REQUEST, "the bytes moved: re-export the vector");
+    assert_eq!(called.as_str(), REQUEST_NAME);
+    assert_eq!(
+        act_read(&request.to_bytes()).called(),
+        called,
+        "and they read back under the same name"
+    );
+}
+
+/// An act read back off its own bytes.
+fn act_read(bytes: &[u8]) -> Operation {
+    let value = almena_format::cbor::read(bytes).expect("canonical bytes");
+    almena_format::operation::read(&value).expect("an act")
+}

@@ -4,16 +4,18 @@
 //! itself, comes from the core — so that the two ways of running one cannot start answering the
 //! same question differently. Nothing here computes a fact.
 //!
-//! A node started here holds no network. Opening one means first knowing there is nobody to join,
-//! and reading the zone is not built, so this reports having no network rather than pretending to
-//! one. `null` is not zero: a count of zero is a measurement, and where none was taken these types
-//! say so rather than standing a number in for one.
+//! A node started here holds no network until it opens one, joins one or comes back to the one its
+//! directory holds — and until then it reports having no network rather than pretending to one.
+//! `null` is not zero: a count of zero is a measurement, and where none was taken these types say so
+//! rather than standing a number in for one. The peer count is the one figure that is not the
+//! record's: it is read off the mesh socket, which is a fact about connections and not about acts.
 
 use std::path::{Path, PathBuf};
 
 use log::{error, info};
 
 use crate::IDENTIFIER;
+use crate::clock::Offset;
 
 /// How often the clock looks at itself.
 ///
@@ -40,16 +42,21 @@ const ASK_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
 /// and must never be treated as it.
 const FETCH_WITHIN: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// What epoch it is, counted from the instant this network began.
+/// What epoch it is, counted from the instant this network began, plus whatever the clock offset
+/// file says where a development run named one.
 ///
 /// It is built once when the network opens and carried by whatever needs the time, so that the one
-/// wall-clock reading this platform ever writes down is not read again by anybody else.
-fn clock(began: u64) -> impl Fn() -> almena_node::Epoch + Clone + Send + Sync + 'static {
+/// wall-clock reading this platform ever writes down is not read again by anybody else. The offset
+/// is looked at on every call, because the file is what a test moves while the node runs.
+fn clock(
+    began: u64,
+    offset: std::sync::Arc<Offset>,
+) -> impl Fn() -> almena_node::Epoch + Clone + Send + Sync + 'static {
     move || {
         let since = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(began, |over| over.as_secs());
-        almena_node::Epoch::new(since.saturating_sub(began) / 3_600)
+        almena_node::Epoch::new(offset.applied(since.saturating_sub(began) / 3_600))
     }
 }
 
@@ -108,11 +115,28 @@ pub fn limits() -> almena_api::Limits {
     }
 }
 
-/// Where to find out who is already on the network.
+/// What a run asked for, when its directory turns out to hold no record.
+///
+/// **Three words and one meaning each.** Opening is the once-ever act and refuses when somebody is
+/// there; joining is what every node but the first does and refuses when nobody is; and a run that
+/// said neither joins if it can and otherwise comes up on no network, which is what the window does
+/// and what a first start with no flags should do rather than silently staying off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Intent {
+    /// Open the network, and refuse if the zone names somebody.
+    Open,
+    /// Join the network, and refuse if the zone names nobody.
+    Join,
+    /// Join if somebody is there, and otherwise say there is no network yet.
+    Whichever,
+}
+
+/// Where to find out who is already on the network, and what to do about the answer.
 ///
 /// One decision and not two: a node either asks the zone or is told by hand, and being told always
 /// means *somebody is there* — which is why it can stand in for a zone without letting anybody open
-/// a network on their own say-so.
+/// a network on their own say-so. The one exception is said out loud in `nobody_is_there`, and it
+/// reaches development alone.
 #[derive(Debug, Clone, Copy)]
 struct Looking<'a> {
     /// Which network is being opened, if it turns out nobody is there.
@@ -121,10 +145,18 @@ struct Looking<'a> {
     zone: &'a str,
     /// Seeds given by hand. Not empty means the zone is not asked at all.
     told: &'a [String],
+    /// What to do once it is known whether anybody is there.
+    intent: Intent,
+    /// Do not ask the zone: whoever is running this said nobody is there.
+    ///
+    /// **Development only, and the command line refuses it for production before this is
+    /// reached.** It exists for a machine with no resolver and a network being tried out with
+    /// nothing published anywhere; it is never the reason a production network opens.
+    nobody_is_there: bool,
 }
 
 /// Why a network could not be opened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opening {
     /// This node is already on one. A node is a directory with a key in it, and a second network
     /// over the same directory would be a second history for one identity.
@@ -217,6 +249,25 @@ pub enum Opening {
     /// Coming up anyway would be deciding, on a filesystem that will not answer, that nobody else
     /// is there — and being wrong about that is two histories under one identity.
     DirectoryCannotBeHeld,
+    /// Joining was asked for and the zone names nobody, so there is nothing to join.
+    ///
+    /// Told apart from silence: the zone answered, and what it said is that this network has no
+    /// node yet. Opening one is a different act with its own flag, and a join that opened would be
+    /// the accident that flag exists to prevent.
+    NobodyIsThere,
+    /// The network opened and Almena Government's key could not be kept beside the record.
+    ///
+    /// Refused before the record exists, so nothing was opened: a network whose government key
+    /// went with the process would be one nobody could ever publish the core on or answer for.
+    GovernmentKeyNotKept,
+    /// This node did not open the network, so it holds no government key to act with.
+    NoGovernmentKey,
+    /// The record would not take the government's act, for the reason named.
+    ///
+    /// Carried as the store's own word, because a ceremony's refusal is worth reading exactly:
+    /// a key that is not the government's, a reason short of a language, a grade the vocabulary
+    /// does not number, an act nobody asked with.
+    NotTaken(almena_node::NotTaken),
 }
 
 impl From<almena_node::directory::NotHeld> for Opening {
@@ -264,6 +315,8 @@ pub struct Joining<'a> {
     pub carrying: almena_mesh::Carrying,
     /// Relays to ask to carry this one, for a node that cannot be dialled.
     pub carried_by: &'a [String],
+    /// Whether this node holds post for other people, and says so in the record.
+    pub mediator: bool,
 }
 
 /// Ask each of those relays to carry this node.
@@ -280,6 +333,63 @@ fn asking_to_be_carried(listening: &mut almena_mesh::Listening, relays: &[String
     }
 }
 
+/// Drive the mesh until the operating system has said where this node can be reached.
+///
+/// That is a fact the node has to report, and afterwards the mesh belongs to whatever is keeping
+/// up — a face that went on reading it would be a face deciding what to do about it. Not hearing
+/// within [`REACHABLE_WITHIN`] is said rather than waited on: the port is what somebody publishes,
+/// and being reachable is the operating system's business.
+fn waiting_to_be_reachable(
+    runtime: &tokio::runtime::Runtime,
+    listening: &mut almena_mesh::Listening,
+) {
+    runtime.block_on(async {
+        let waiting = tokio::time::timeout(REACHABLE_WITHIN, async {
+            loop {
+                if let almena_mesh::Happened::Reachable(address) = listening.next().await {
+                    info!("mesh_reachable address={address}");
+                    if listening.port().is_some() {
+                        return;
+                    }
+                }
+            }
+        });
+        let _ = waiting.await;
+    });
+    match listening.port() {
+        Some(port) => info!("mesh_port port={port}"),
+        None => info!("mesh_port port=unknown"),
+    }
+}
+
+/// Say in the record that this node holds post, once.
+///
+/// **Where it is counted, and before anybody is told to come here.** A client picks a mediator
+/// from what the record says a node offers, and a mailbox that answered without having said so
+/// would be a service the network could not see. Saying it twice is one act: the core writes
+/// nothing when the record already says it.
+fn offering_post(
+    runtime: &tokio::runtime::Runtime,
+    serving: &almena_serve::Serving,
+    now: almena_node::Epoch,
+) {
+    let said = runtime.block_on(async {
+        serving
+            .node()
+            .write()
+            .await
+            .also_offering(almena_node::Capability::Mailbox, now)
+    });
+    info!(
+        "mediator_offered {}",
+        if said {
+            "written=now"
+        } else {
+            "written=before"
+        }
+    );
+}
+
 /// A node, running.
 ///
 /// Holding one of these means the node is up. Dropping it is not how it is stopped — see
@@ -294,7 +404,7 @@ pub struct Node {
     /// Where this node keeps things, resolved once at start.
     directories: almena_paths::Paths,
     /// The DNS servers an operator named, or nothing to use the machine's own.
-    resolvers: Vec<std::net::IpAddr>,
+    resolvers: Vec<std::net::SocketAddr>,
     /// Which network this node is for, chosen once and never mixed with the other.
     ///
     /// **It decides where the node lives**, so a node for one network cannot read the other's key,
@@ -312,6 +422,11 @@ pub struct Node {
     records: Option<PathBuf>,
     /// When this network's epoch zero began, so that this face can say what epoch it is.
     began: Option<u64>,
+    /// Epochs added to the wall clock's, from a file a development run named — or nothing.
+    ///
+    /// Shared with every clock this node hands out, so that the interface, the mesh and the
+    /// timekeeping all read the same file and move together.
+    offset: std::sync::Arc<Offset>,
     /// The node itself, once there is a network to be on.
     ///
     /// `None` until one is opened or joined. It is held ready to serve from the moment it exists,
@@ -345,6 +460,23 @@ pub struct Node {
     /// or not anybody is asking, and a node whose clock only ran while it was answering would
     /// leave gaps meaning *nothing happened* and *I was not here* at once.
     timekeeping: Option<almena_serve::Timekeeping>,
+    /// Who this node is connected to on the mesh, readable on every frame.
+    ///
+    /// Taken off the socket before it is handed to whatever keeps the mesh up, because afterwards
+    /// nothing else holds it. [`None`] until there is a mesh to count over — and that is *nobody
+    /// counted*, which a zero would misreport.
+    peers: Option<almena_mesh::Peers>,
+    /// The address the interface was asked to serve on, once it was.
+    ///
+    /// Kept because nothing else knows it: it is the caller's, and the one half of the link a
+    /// client reads that the node itself cannot work out.
+    interface: Option<String>,
+    /// The challenge shown this run, for the view to draw.
+    ///
+    /// It is a thing shown to a person and gone; it never reaches the record. The view draws it
+    /// rather than the run printing it, because printing happens before the alternate screen opens
+    /// and whoever is watching would see it only after leaving.
+    challenge: Option<String>,
 }
 
 impl Node {
@@ -365,7 +497,7 @@ impl Node {
     pub fn in_directory(
         records: Option<PathBuf>,
         directory: Option<PathBuf>,
-        resolvers: Vec<std::net::IpAddr>,
+        resolvers: Vec<std::net::SocketAddr>,
         which: almena_node::Which,
     ) -> Self {
         info!(
@@ -381,12 +513,28 @@ impl Node {
             records,
             holds: None,
             began: None,
+            offset: std::sync::Arc::new(Offset::none()),
             dialling: Vec::new(),
             told_network: None,
             held: None,
             runtime: None,
             timekeeping: None,
+            peers: None,
+            interface: None,
+            challenge: None,
         }
+    }
+
+    /// The same node, with the epochs written in `file` added to its clock on every look.
+    ///
+    /// **Before the node is on a network**, because the clock is handed out the moment it is,
+    /// and one handed out without the file would keep the wall's time while the rest moved. The
+    /// command line has refused this for production already; nothing here asks again.
+    #[must_use]
+    pub fn reading_the_clock_offset_from(mut self, file: PathBuf) -> Self {
+        info!("clock_offset_file path={}", file.display());
+        self.offset = std::sync::Arc::new(Offset::reading(file));
+        self
     }
 
     /// Open the network this node was told it is for, if there is nobody to join.
@@ -405,43 +553,77 @@ impl Node {
     /// [`Opening`], and each of them is a different thing to go and do about it. The one worth
     /// naming is [`Opening::NoRandomness`]: it is a refusal to start rather than something to work
     /// around, because a node with a guessable key is worse than one that did not come up.
-    pub fn open(&mut self, zone: &str, told: &[String]) -> Result<(), Opening> {
-        self.taking_part(Some(Looking {
+    /// [`Opening::ThereIsANetwork`] is the zone naming somebody: a network to join, not to open.
+    ///
+    /// `nobody_is_there` opens without asking the zone. It reaches development alone, and the
+    /// command line is what keeps it from production.
+    pub fn open(
+        &mut self,
+        zone: &str,
+        told: &[String],
+        nobody_is_there: bool,
+    ) -> Result<(), Opening> {
+        self.taking_part(Looking {
             which: self.which,
             zone,
             told,
-        }))
+            intent: Intent::Open,
+            nobody_is_there,
+        })
     }
 
-    /// Come back to the network this directory already holds, without opening anything.
+    /// Join the network the zone names, or the seeds given by hand.
     ///
-    /// **For every start after the first.** A node is a directory with a key in it, and one that
-    /// holds a record is already on a network — so this reads it back rather than asking a zone
-    /// whether it may open one.
+    /// **What every node but the first does.** Somebody already there hands the record over, it is
+    /// checked against the network the zone promised, and this node announces itself on it. When
+    /// nobody is there it refuses: opening is a different act, asked for with its own word.
     ///
     /// # Errors
     ///
-    /// [`Opening`], and [`Opening::NoNetwork`] where the directory holds no record: coming back to
-    /// a network this node was never on is not something it can do, and opening one is a different
-    /// thing that has to be asked for.
-    pub fn rejoin(&mut self) -> Result<(), Opening> {
-        self.taking_part(None)
+    /// [`Opening`], and [`Opening::NobodyIsThere`] when the zone answered and named nobody.
+    pub fn join(&mut self, zone: &str, told: &[String]) -> Result<(), Opening> {
+        self.taking_part(Looking {
+            which: self.which,
+            zone,
+            told,
+            intent: Intent::Join,
+            nobody_is_there: false,
+        })
     }
 
-    /// Take this node's place on a network: the one this directory holds, or a new one.
+    /// Take part in whatever network there is: come back to the one held, or join the one named.
     ///
-    /// `looking` is what to do when the directory holds no record. [`Some`] is *open one if the
-    /// zone says nobody is there*; [`None`] is *do not*, which is what every start after the first
-    /// asks for — and the difference is the whole of what keeps a second network from being opened
-    /// by a restart.
-    fn taking_part(&mut self, looking: Option<Looking<'_>>) -> Result<(), Opening> {
+    /// **For a run that said neither open nor join, which is every start after the first.** A
+    /// directory holding a record comes back to its network; one holding nothing joins if the zone
+    /// names somebody, as the window does, and otherwise says there is no network yet. It never
+    /// opens one: a start that opened whenever it found nobody would be how a restart on a moved
+    /// directory becomes a second network.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening`], and [`Opening::NoNetwork`] where there is nothing to come back to and nobody
+    /// to join — which a run carries on past, drawing a node on no network.
+    pub fn take_part(&mut self, zone: &str, told: &[String]) -> Result<(), Opening> {
+        self.taking_part(Looking {
+            which: self.which,
+            zone,
+            told,
+            intent: Intent::Whichever,
+            nobody_is_there: false,
+        })
+    }
+
+    /// Take this node's place on a network: the one this directory holds, or the one it is told of.
+    ///
+    /// **Every start looks for neighbours, and only a first start does anything with the answer.**
+    /// A directory holding a record comes back to its network and dials whoever the zone and the
+    /// seeds name — a node that only dialled on its first day would, after every restart, wait to
+    /// be dialled by nodes that were themselves waiting. A directory holding nothing does what
+    /// `looking` says, which is the whole of what keeps a restart from becoming a second network.
+    fn taking_part(&mut self, looking: Looking<'_>) -> Result<(), Opening> {
         if self.holds.is_some() {
             return Err(Opening::AlreadyOnOne);
         }
-        // Almena Government's key belongs to the network and is made with it — opening a
-        // development network again makes a new one, which is what opening a new network means.
-        let government = almena_node::fresh_key().map_err(|_| Opening::NoRandomness)?;
-
         // This node's own key belongs to the directory and outlives every run. Making one afresh
         // each time would be a different node every time, and anything published about it stale
         // without anybody being told.
@@ -465,15 +647,15 @@ impl Node {
                     "record_found network={} written={written}",
                     network.as_str()
                 );
+                // **Best effort, and silence is not fatal here.** The record is what this node is
+                // on; the zone only says who else to dial, and a node that refused to come back
+                // because DNS was slow would be a node whose uptime depended on somebody else's.
+                self.looking_for_neighbours(looking);
                 almena_node::Node::rejoin(&directory, key).map_err(Opening::from)?
             }
-            // **Nothing here, so this node is on no network.** Opening one is a thing to be asked
-            // for and never a thing a start falls into: a node that opened whenever it found its
-            // directory empty would open a second network the first time somebody moved one.
-            almena_node::record::Holding::Nothing => match looking {
-                Some(looking) => self.first_time(&directory, looking, government, key)?,
-                None => return Err(Opening::NoNetwork),
-            },
+            // **Nothing here, so this node is on no network.** What happens now is what the run
+            // asked for, and never something a start falls into.
+            almena_node::record::Holding::Nothing => self.first_time(&directory, looking, key)?,
         };
 
         let began = opened.began();
@@ -489,30 +671,90 @@ impl Node {
         self.hold(almena_serve::Serving::new(opened, limits()), began)
     }
 
-    /// Open a network in a directory that is holding none.
+    /// Where to dial once back on a network: the seeds given by hand, or what the zone says.
+    ///
+    /// **One look, and whatever it says.** A first start asks three times because reading a zone
+    /// as silent costs it the chance to open; a restart is on its network already and loses only
+    /// somebody to dial, which the record's own addresses cover too. So one budget, and silence is
+    /// a line in the records rather than a reason.
+    fn looking_for_neighbours(&mut self, looking: Looking<'_>) {
+        if !looking.told.is_empty() {
+            self.take_note_of(looking.told);
+            info!("seeds_given count={}", looking.told.len());
+            return;
+        }
+        if looking.nobody_is_there {
+            return;
+        }
+        match self.asking_once(looking.zone) {
+            Ok(seeds) => info!("zone_read_on_rejoin seeds={}", seeds.len()),
+            Err(_) => info!("zone_silent_on_rejoin zone={}", looking.zone),
+        }
+    }
+
+    /// Open a network, join one, or say there is none, in a directory that is holding no record.
     fn first_time(
         &mut self,
         directory: &Path,
         looking: Looking<'_>,
-        government: almena_node::SigningKey,
         key: almena_node::SigningKey,
     ) -> Result<almena_node::Node, Opening> {
-        let Looking { which, zone, told } = looking;
+        let Looking {
+            which,
+            zone,
+            told,
+            intent,
+            nobody_is_there,
+        } = looking;
         // Being told who is there and finding out are the same answer, and only one of them can
         // say *nobody*: a seed given by hand always means somebody is, which is why it can stand in
         // for a zone without letting anybody open a network on their own say-so.
-        let seeds = if told.is_empty() {
-            // **The check that makes opening safe, and it is only a check if somebody looks.**
-            self.who_is_there(zone)?
-        } else {
+        let seeds = if !told.is_empty() {
             self.take_note_of(told);
             info!("seeds_given count={}", told.len());
             told.to_vec()
+        } else if nobody_is_there {
+            // **Somebody's word instead of the zone's**, which the command line lets through for
+            // development alone. Said in the records, because a network opened this way beside one
+            // that was already there is a thing whoever reads them later has to be able to see.
+            info!("zone_not_asked reason=nobody_is_there");
+            Vec::new()
+        } else {
+            // **The check that makes opening safe, and it is only a check if somebody looks.**
+            self.who_is_there(zone)?
         };
 
         if !seeds.is_empty() {
+            if intent == Intent::Open {
+                // The core would refuse too; refusing here keeps the mesh from being dialled for
+                // a record this run has already said it does not want.
+                return Err(Opening::ThereIsANetwork);
+            }
             return self.joining(directory, key);
         }
+        match intent {
+            Intent::Open => self.opening(directory, which, key),
+            Intent::Join => Err(Opening::NobodyIsThere),
+            Intent::Whichever => Err(Opening::NoNetwork),
+        }
+    }
+
+    /// Open a network here, and keep Almena Government's key beside the record.
+    ///
+    /// **The key is written before the record and taken away if the record does not start**, so
+    /// that the two are never apart: a record without its government key is a network nobody can
+    /// publish the core on, and a key without a record is a file that would refuse the next open.
+    fn opening(
+        &mut self,
+        directory: &Path,
+        which: almena_node::Which,
+        key: almena_node::SigningKey,
+    ) -> Result<almena_node::Node, Opening> {
+        // Almena Government's key belongs to the network and is made with it — opening a
+        // development network again makes a new one, which is what opening a new network means.
+        let government = almena_node::fresh_key().map_err(|_| Opening::NoRandomness)?;
+        let kept = almena_node::government::keep(directory, &government)
+            .map_err(|_| Opening::GovernmentKeyNotKept)?;
 
         // The one wall clock reading this platform ever writes down. Everything afterwards counts
         // whole hours from it, so it is read once, here, and never again.
@@ -530,8 +772,8 @@ impl Node {
         // and this directory is holding nothing — but collapsing them into one reason would mean
         // that the day one of them did arise, the node would send somebody looking in the wrong
         // place.
-        almena_node::Node::open_in(directory, &opening, &seeds, &government, key).map_err(|why| {
-            match why {
+        let opened = almena_node::Node::open_in(directory, &opening, &[], &government, key)
+            .map_err(|why| match why {
                 almena_node::NotOpened::ThisNodeAlreadyHasOne => Opening::AlreadyOnOne,
                 almena_node::NotOpened::ThereIsAlreadyANetwork(_) => Opening::ThereIsANetwork,
                 almena_node::NotOpened::TheRecordWouldNotStart => Opening::RecordWouldNotStart,
@@ -539,8 +781,17 @@ impl Node {
                 // never asked the question; production is opened once and is asked it before
                 // anything is built.
                 almena_node::NotOpened::TheFormatIsNotFrozen(_) => Opening::FormatIsNotFrozen,
+            });
+        match opened {
+            Ok(node) => {
+                info!("government_key_at path={}", kept.display());
+                Ok(node)
             }
-        })
+            Err(why) => {
+                let _ = std::fs::remove_file(&kept);
+                Err(why)
+            }
+        }
     }
 
     /// Take up a node, and start its clock.
@@ -556,11 +807,11 @@ impl Node {
                 .map_err(|_| Opening::NoRuntime)?,
         );
         let timekeeping = almena_serve::Timekeeping::new();
-        runtime.spawn(
-            timekeeping
-                .clone()
-                .keeping_time(serving.clone(), clock(began), LOOK),
-        );
+        runtime.spawn(timekeeping.clone().keeping_time(
+            serving.clone(),
+            clock(began, std::sync::Arc::clone(&self.offset)),
+            LOOK,
+        ));
 
         self.runtime = Some(runtime);
         self.timekeeping = Some(timekeeping);
@@ -726,8 +977,9 @@ impl Node {
     /// Take a place on the mesh, listening on `port`.
     ///
     /// It runs on the work this node already has, beside answering questions and keeping the clock.
-    /// Nothing replicates yet: what this buys today is that the node is reachable and **knows its
-    /// own port**, which is the one value a zone record cannot be written without.
+    /// From here the node dials whoever the zone named and whoever the record says can be reached,
+    /// keeps up with what they wrote down, and **knows its own port**, which is the one value a zone
+    /// record cannot be written without.
     ///
     /// # Errors
     ///
@@ -737,6 +989,7 @@ impl Node {
             port,
             carrying,
             carried_by,
+            mediator,
         } = *joining;
         let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
         let runtime = self.runtime.as_ref().ok_or(Opening::NoNetwork)?;
@@ -761,39 +1014,24 @@ impl Node {
             })?;
 
         asking_to_be_carried(&mut listening, carried_by);
+        waiting_to_be_reachable(runtime, &mut listening);
 
-        // Driven here only until the operating system has said where this node can be reached.
-        // That is a fact the node has to report, and afterwards it belongs to whatever is keeping
-        // up — a face that went on reading the mesh would be a face deciding what to do about it.
-        runtime.block_on(async {
-            let waiting = tokio::time::timeout(REACHABLE_WITHIN, async {
-                loop {
-                    if let almena_mesh::Happened::Reachable(address) = listening.next().await {
-                        info!("mesh_reachable address={address}");
-                        if listening.port().is_some() {
-                            return;
-                        }
-                    }
-                }
-            });
-            let _ = waiting.await;
-        });
-        match listening.port() {
-            Some(port) => info!("mesh_port port={port}"),
-            // It came up and the operating system never said where. Said rather than assumed,
-            // because the port is what somebody publishes.
-            None => info!("mesh_port port=unknown"),
+        let telling = clock(
+            self.began.unwrap_or_default(),
+            std::sync::Arc::clone(&self.offset),
+        );
+        if mediator {
+            offering_post(runtime, serving, telling());
         }
+
+        // Taken before the socket goes: afterwards nothing else holds it, and a frame that wanted a
+        // peer count would have nobody to ask.
+        self.peers = Some(listening.peers());
 
         let seeds = self.dialling.clone();
         let node = std::sync::Arc::clone(serving.node());
-        let began = self.began.unwrap_or_default();
         runtime.spawn(almena_mesh::keeping::keeping_up(
-            listening,
-            node,
-            seeds,
-            clock(began),
-            ASK_EVERY,
+            listening, node, seeds, telling, ASK_EVERY,
         ));
         Ok(())
     }
@@ -830,18 +1068,24 @@ impl Node {
         self.holds.as_ref()
     }
 
+    /// This node's clock, for whatever needs the time while it runs.
+    ///
+    /// **One clock, handed out and never rebuilt**: the interface, the mesh and the timekeeping
+    /// all count from the same beginning and read the same offset file, so no two of them can
+    /// disagree about what hour it is. [`None`] until there is a network, because an epoch is
+    /// hours since **that network's** beginning and there is no such instant before one is opened.
+    #[must_use]
+    pub fn clock(&self) -> Option<impl Fn() -> almena_node::Epoch + Clone + Send + Sync + 'static> {
+        let began = self.began?;
+        Some(clock(began, std::sync::Arc::clone(&self.offset)))
+    }
+
     /// What epoch it is, by this node's own clock.
     ///
-    /// [`None`] until there is a network, because an epoch is hours since **that network's**
-    /// beginning and there is no such instant before one is opened.
+    /// [`None`] until there is a network, for the reason [`Self::clock`] gives.
     #[must_use]
     pub fn now(&self) -> Option<almena_node::Epoch> {
-        let began = self.began?;
-        let since = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_secs();
-        Some(almena_node::Epoch::new(since.saturating_sub(began) / 3_600))
+        self.clock().map(|telling| telling())
     }
 
     /// What this node reports about itself.
@@ -858,13 +1102,60 @@ impl Node {
             })
     }
 
-    /// How many peers this node is talking to.
+    /// How many peers this node is connected to on the mesh right now.
     ///
-    /// `None` and never `0`. Zero would be a count somebody took; this is the absence of one —
-    /// nothing here talks to anybody, because there is no mesh to talk over.
+    /// `None` until the node has taken a place on the mesh, and never `0` for that: zero is a count
+    /// somebody took, and before there is a socket nobody has. Read off the socket's own handle on
+    /// every frame, which is what makes it a fact about connections and not about the record.
     #[must_use]
     pub fn peers(&self) -> Option<usize> {
-        None
+        self.peers.as_ref().map(almena_mesh::Peers::count)
+    }
+
+    /// How many nodes the record's own observers have lately found answering nothing.
+    ///
+    /// A fact from the record, drawn beside the peer count: who this node reaches is one thing,
+    /// and who everybody's daily summaries say has gone quiet is another. `None` where there is no
+    /// record to read it from.
+    #[must_use]
+    pub fn silent(&self) -> Option<usize> {
+        let serving = self.holds.as_ref()?;
+        let now = self.now()?;
+        Some(serving.node().blocking_read().departed(now))
+    }
+
+    /// Where the interface is being served, once it is.
+    ///
+    /// The address the run asked for, which is the one somebody publishes and the one a client is
+    /// told. `None` is a state: nothing is served, and a plausible address standing in for one
+    /// would send somebody to a door that is not open.
+    #[must_use]
+    pub fn interface_at(&self) -> Option<&str> {
+        self.interface.as_deref()
+    }
+
+    /// Take note that the interface is being served on `address`.
+    pub fn serving_at(&mut self, address: &str) {
+        self.interface = Some(address.to_owned());
+    }
+
+    /// The link a client reads to choose this node: where its interface is, and who answers there.
+    ///
+    /// **The string the client reads, exactly.** `address` is `host:port` as the interface was
+    /// asked to serve, and `peer` is what the node answers to on the mesh — the same identity the
+    /// zone carries, and the key the client pins the interface's certificate against. `None` until
+    /// both halves exist, because a link with one of them would be a door with no lock on it.
+    #[must_use]
+    pub fn link(&self) -> Option<String> {
+        let address = self.interface.as_deref()?;
+        let peer = self.facts().peer?;
+        Some(format!("almena://node?address={address}&peer={peer}"))
+    }
+
+    /// The challenge shown this run, if one was asked for.
+    #[must_use]
+    pub fn challenge(&self) -> Option<&str> {
+        self.challenge.as_deref()
     }
 
     /// Where this node would keep what it cannot get back.
@@ -913,7 +1204,7 @@ impl Node {
     /// [`Opening::NoNetwork`] when there is no node to be claimed, and [`Opening::NoRandomness`]
     /// when the operating system will not produce any — a challenge somebody could guess is one an
     /// approval could be collected for in advance.
-    pub fn asking_who_contributed_me(&self, for_epochs: u64) -> Result<String, Opening> {
+    pub fn asking_who_contributed_me(&mut self, for_epochs: u64) -> Result<String, Opening> {
         let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
         let now = self.now().ok_or(Opening::NoNetwork)?;
         let until = now
@@ -923,8 +1214,111 @@ impl Node {
             .node()
             .blocking_read()
             .asking_who_contributed_me(until)
-            .map_err(|_| Opening::NoRandomness)?;
-        Ok(challenge.to_text())
+            .map_err(|_| Opening::NoRandomness)?
+            .to_text();
+        // Kept for the view. What was shown is what has to be approved, and the view is where
+        // whoever is watching this node will read it.
+        self.challenge = Some(challenge.clone());
+        Ok(challenge)
+    }
+
+    /// The key this node signs with, read back from its directory.
+    ///
+    /// **For the certificate it serves under**: the interface is served under the node's own key
+    /// unless an operator names a pair of files, and the key is the directory's rather than this
+    /// process's memory, so it is read where it lives.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening`], as when the node came up: the directory, or the key in it.
+    pub fn identity(&self) -> Result<almena_node::SigningKey, Opening> {
+        let directory = self.application_data().map_err(|_| Opening::NoDirectory)?;
+        almena_node::identity::load_or_make(&directory).map_err(Opening::from)
+    }
+
+    /// Almena Government's key, if this node opened the network.
+    fn government(&self) -> Result<almena_node::SigningKey, Opening> {
+        let directory = self.application_data().map_err(|_| Opening::NoDirectory)?;
+        almena_node::government::load(&directory).map_err(|why| match why {
+            almena_node::government::NoKey::NotHere => Opening::NoGovernmentKey,
+            almena_node::government::NoKey::Unreadable
+            | almena_node::government::NoKey::NotWritable => Opening::UnreadableIdentity,
+        })
+    }
+
+    /// Publish the core Almena maintains, as Almena Government.
+    ///
+    /// **Each act through this node's own admission, and nothing twice**: what the record already
+    /// holds is skipped, so this is safe to run again. Only the node that opened the network holds
+    /// the key this signs with.
+    ///
+    /// # Errors
+    ///
+    /// [`Opening::NoNetwork`] with no node, [`Opening::NoGovernmentKey`] where this node did not
+    /// open the network, and [`Opening::NotTaken`] with the store's own refusal.
+    pub fn publish_core(&mut self) -> Result<almena_node::CorePublished, Opening> {
+        let government = self.government()?;
+        let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
+        let now = self.now().ok_or(Opening::NoNetwork)?;
+        serving
+            .node()
+            .blocking_write()
+            .publish_core(&government, now)
+            .map_err(Opening::NotTaken)
+    }
+
+    /// Certify an entity, as Almena Government, with a reason in the languages given.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::publish_core`], and [`Opening::NotAClaim`] for text that is not an identifier.
+    pub fn certify(
+        &mut self,
+        subject: &str,
+        grade: almena_node::Grade,
+        reason: &std::collections::BTreeMap<String, String>,
+    ) -> Result<String, Opening> {
+        let subject = almena_node::Did::parse(subject).map_err(|_| Opening::NotAClaim)?;
+        let government = self.government()?;
+        let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
+        let now = self.now().ok_or(Opening::NoNetwork)?;
+        serving
+            .node()
+            .blocking_write()
+            .certify(
+                &government,
+                almena_node::Sealing {
+                    subject: &subject,
+                    grade,
+                    reason,
+                },
+                now,
+            )
+            .map(|sealed| sealed.to_string())
+            .map_err(Opening::NotTaken)
+    }
+
+    /// Answer an asking to be certified, as Almena Government, with what it says in the languages
+    /// given.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::certify`].
+    pub fn reply(
+        &mut self,
+        to: &str,
+        said: &std::collections::BTreeMap<String, String>,
+    ) -> Result<String, Opening> {
+        let to = almena_node::Name::parse(to).map_err(|_| Opening::NotAClaim)?;
+        let government = self.government()?;
+        let serving = self.holds.as_ref().ok_or(Opening::NoNetwork)?;
+        let now = self.now().ok_or(Opening::NoNetwork)?;
+        serving
+            .node()
+            .blocking_write()
+            .reply(&government, &to, said, now)
+            .map(|answered| answered.to_string())
+            .map_err(Opening::NotTaken)
     }
 
     /// Write down that somebody contributed this node, from what they handed back.
@@ -1002,7 +1396,45 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
-    use super::Node;
+    use super::{Intent, Looking, Node, Opening};
+
+    /// A directory of this test's own, removed when it is done with it.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("almena-cli-node-{name}"));
+            let _ = std::fs::remove_dir_all(&path);
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A node in a directory of its own, on no network yet.
+    fn in_scratch(scratch: &Scratch) -> Node {
+        Node::in_directory(
+            None,
+            Some(scratch.0.clone()),
+            Vec::new(),
+            almena_node::Which::Development,
+        )
+    }
+
+    /// What a run asks for when the zone is not to be asked at all.
+    fn on_somebody_s_word(intent: Intent) -> Looking<'static> {
+        Looking {
+            which: almena_node::Which::Development,
+            zone: "dev.almena.network",
+            told: &[],
+            intent,
+            nobody_is_there: true,
+        }
+    }
 
     #[test]
     fn a_new_node_has_measured_nothing() {
@@ -1016,6 +1448,10 @@ mod tests {
         assert!(facts.written.is_none());
         assert!(facts.root.is_none());
         assert!(node.peers().is_none());
+        assert!(node.silent().is_none());
+        assert!(node.interface_at().is_none());
+        assert!(node.link().is_none());
+        assert!(node.challenge().is_none());
     }
 
     #[test]
@@ -1033,5 +1469,79 @@ mod tests {
             directory.to_string_lossy().contains("network.almena.cli"),
             "{directory:?}"
         );
+    }
+
+    #[test]
+    fn opening_on_somebody_s_word_keeps_the_government_key_beside_the_record() {
+        // **What the ceremonies later run on.** The key is made when the network opens and
+        // nowhere else, so it is kept the moment it exists — readable by the owner alone.
+        let scratch = Scratch::new("opens");
+        let mut node = in_scratch(&scratch);
+        node.open("dev.almena.network", &[], true)
+            .expect("development opens on somebody's word");
+
+        let facts = node.facts();
+        assert!(facts.network.is_some());
+        assert!(
+            node.silent() == Some(0),
+            "a count, and nought: nobody has gone quiet"
+        );
+        assert!(node.peers().is_none(), "no mesh yet, so nobody counted");
+        assert!(almena_node::government::at(&scratch.0).exists());
+        assert!(
+            node.publish_core().is_ok(),
+            "and the key that opened the network is the one that publishes on it"
+        );
+        node.stop();
+    }
+
+    #[test]
+    fn joining_refuses_when_nobody_is_there_and_neither_word_says_there_is_no_network() {
+        // Three words, one meaning each. Only *open* makes a network; *join* refuses without one
+        // and a run that said neither is told, and carries on drawing a node on no network.
+        let scratch = Scratch::new("nobody");
+        let mut node = in_scratch(&scratch);
+        assert_eq!(
+            node.taking_part(on_somebody_s_word(Intent::Join)),
+            Err(Opening::NobodyIsThere)
+        );
+        assert_eq!(
+            node.taking_part(on_somebody_s_word(Intent::Whichever)),
+            Err(Opening::NoNetwork)
+        );
+        assert!(
+            !almena_node::government::at(&scratch.0).exists(),
+            "and no key was written for a network that was not opened"
+        );
+    }
+
+    #[test]
+    fn the_link_a_client_reads_needs_the_interface_and_the_peer() {
+        // Both halves or nothing: where to call, and who answers there.
+        let scratch = Scratch::new("link");
+        let mut node = in_scratch(&scratch);
+        assert!(node.link().is_none());
+        node.open("dev.almena.network", &[], true).expect("opens");
+        assert!(node.link().is_none(), "no interface yet");
+        node.serving_at("127.0.0.1:8791");
+        let link = node.link().expect("both halves");
+        let peer = node.facts().peer.expect("a peer");
+        assert_eq!(
+            link,
+            format!("almena://node?address=127.0.0.1:8791&peer={peer}")
+        );
+        node.stop();
+    }
+
+    #[test]
+    fn a_node_that_joined_holds_no_government_key() {
+        // Only the node that opened the network holds it; every other node is refused with a
+        // reason that says so rather than one that sends somebody to look at their key.
+        let scratch = Scratch::new("joined");
+        let mut node = in_scratch(&scratch);
+        node.open("dev.almena.network", &[], true).expect("opens");
+        std::fs::remove_file(almena_node::government::at(&scratch.0)).expect("taken away");
+        assert_eq!(node.publish_core(), Err(Opening::NoGovernmentKey));
+        node.stop();
     }
 }

@@ -44,9 +44,22 @@ pub fn key_of(peer: &PeerId) -> Option<[u8; ed25519::PUBLIC_KEY_WIDTH]> {
     digest[4..].try_into().ok()
 }
 
+/// The name a key answers to on the mesh.
+///
+/// **The other direction, for dialling somebody the record names.** The record says where a node
+/// can be reached and what key it announced itself with; an address is only worth dialling with
+/// that key on the end of it, or whoever took the host and port would be spoken to as that node.
+/// [`None`] for bytes that are not a key, which the record would not hold.
+#[must_use]
+pub fn name_of(key: &[u8; ed25519::PUBLIC_KEY_WIDTH]) -> Option<PeerId> {
+    libp2p::identity::ed25519::PublicKey::try_from_bytes(key)
+        .ok()
+        .map(|public| libp2p::identity::PublicKey::from(public).to_peer_id())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::key_of;
+    use super::{key_of, name_of};
     use almena_suite::ed25519;
 
     fn key(seed: u8) -> ed25519::SigningKey {
@@ -80,6 +93,26 @@ mod tests {
             .public()
             .to_peer_id();
         assert_ne!(key_of(&one), key_of(&other));
+    }
+
+    #[test]
+    fn the_name_made_from_a_key_is_the_one_the_key_answers_to() {
+        // What lets a node dial somebody the record names: the record holds the key, the socket
+        // wants the name, and the two have to be the same name the node itself works out.
+        for seed in [0u8, 1, 9, 200, 255] {
+            let key = key(seed);
+            let answers_to = crate::identity(&key).expect("a key").public().to_peer_id();
+            assert_eq!(
+                name_of(&key.verifying_key().bytes()),
+                Some(answers_to),
+                "seed {seed}"
+            );
+            assert_eq!(
+                name_of(&key.verifying_key().bytes()).and_then(|peer| key_of(&peer)),
+                Some(key.verifying_key().bytes()),
+                "and the key comes back out of it"
+            );
+        }
     }
 
     #[test]

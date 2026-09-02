@@ -40,6 +40,8 @@ almena-mesh = { workspace = true }
 almena-serve = { workspace = true }
 almena-tls = { workspace = true }
 almena-api = { workspace = true }
+# The format's own freeze checklist, shown before a production network is opened rather than after.
+almena-frozen = { workspace = true }
 tokio = { workspace = true }
 almena-log = { workspace = true }
 log = { workspace = true }

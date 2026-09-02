@@ -120,8 +120,8 @@ async fn two_left_to_it() -> Vec<Arc<RwLock<Node>>> {
 
     // **One dials, the other is dialled**, which is enough for both: a connection is a connection
     // whichever end opened it, so both learn of each other and either may go looking. Having them
-    // dial each other at once does not work today — see what is recorded about it — and it is not
-    // what is under test here.
+    // dial each other at once works too, and is checked where that is what is under test — here
+    // it would only add a second connection to look past.
     let mut behind: Vec<libp2p::Multiaddr> = Vec::new();
     for (which, (place, address)) in places.into_iter().enumerate() {
         tokio::spawn(almena_mesh::keeping::keeping_up(

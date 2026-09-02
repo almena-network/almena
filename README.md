@@ -27,8 +27,10 @@ running both is **two nodes**.
 
 > **Status: under construction.** This is the starting point of the application, not a
 > release: interfaces, data formats, commands and configuration change without notice, and no
-> release has been published. The peer-to-peer layer is not written yet, so this build joins
-> no network — the first screen says exactly that.
+> release has been published. A node opens a network, joins one through the zone or a seed,
+> takes its place on the mesh, keeps up with what the others wrote down, and serves the interface
+> under its own key — on development, against a zone emulated on one machine; the live zones hold
+> no seed yet.
 
 The project's working agreements are kept in the
 [almena-network](https://github.com/almena-network/almena-network) repository — the rules this
@@ -106,7 +108,7 @@ The full set, which `task` on its own prints too:
 | `task format` | Formats the Rust source with `cargo fmt`. |
 | `task icons` | Regenerates every icon from `assets/branding`. |
 | `task dev` | Runs the windowed application on this computer, with hot reload. Also available as `task dev:desktop`. `ARGS` gives it a command line — `task dev ARGS="--hidden"`. |
-| `task dev:cli` | Runs the node in this terminal. No hot reload: this program has no frontend. `ARGS` reaches it directly — `task dev:cli ARGS="--quiet"`. |
+| `task dev:cli` | Runs a whole development node in this terminal: `--network dev --open`, serving on `API` and listening on `MESH`. `NETWORK=pro`, `RESOLVER=127.0.0.1:5300` (the emulated zone), `JOIN=true` (the second node on a machine) and `MEDIATOR=true` are the knobs; `ARGS` reaches it directly — `task dev:cli ARGS="--quiet"`. `task dev:cli:mediator` is the same with `MEDIATOR=true`. |
 | `task build` | Builds the desktop installer for this host's operating system. Also available as `task build:desktop`. The binary itself lands at `target/release/almena-app`. |
 | `task build:debug` | The same bundle, unoptimized, at `target/debug/`. It keeps `debug_assertions`, so it is the one bundle that still says *Development* on its status strip. |
 | `task build:cli` | Builds the node for this computer. One binary, at `target/release/almena`, and no bundle. |
@@ -228,10 +230,15 @@ that forgot the flag gets the behaviour it meant rather than a program fighting 
 that is not there. The flag exists on top of that detection because somebody at a real terminal
 is entitled to say they would rather read records.
 
-The drawn view reports which network this node belongs to, who it is, and how many peers it is
-talking to. All three are a dash today and that is the point: there is no peer-to-peer layer,
-so nothing has been measured, and a dash is what *not measured* looks like where a `0` would be
-a count somebody took. `q` leaves.
+The drawn view reports which network this node belongs to, who it is, what it has written down,
+its root, what it answers to on the mesh, how many peers it is connected to, how many nodes the
+record's own summaries say have gone silent, where the interface is served, and the
+`almena://node?address=…&peer=…` link a client reads to choose it. A figure nobody has measured is
+a dash — the peer count until the node has taken its place on the mesh — because a dash is what
+*not measured* looks like where a `0` would be a count somebody took. `q` leaves, `e` closes the
+epoch now. A challenge asked for with `--who-contributed-me` is drawn in the view as text and as
+the link, not as a code: nothing this program links encodes one, and the same string typed into
+the client approves the same thing.
 
 It speaks English and Spanish, from the same two catalogs the screens use — the words for
 *network*, *this node* and *peers* are the same keys. Which one is chosen comes from `LC_ALL`,
@@ -239,7 +246,8 @@ It speaks English and Spanish, from the same two catalogs the screens use — th
 `clap` builds it before a catalog can be.
 
 It keeps its records in its own directory, named `network.almena.cli` — not the windowed
-application's. Two applications, two directories, and one day two keys.
+application's, and one subdirectory per network, `dev` or `pro`. Two applications, two
+directories, two keys.
 
 ### Opening a network, and the question asked before one is opened for good
 
@@ -249,9 +257,10 @@ network beside the first, that nobody can tell apart, because both say the same 
 themselves.
 
 ```bash
-almena                        # comes back to the network this directory holds
+almena                        # comes back to the network this directory holds, or joins if the zone names somebody
 almena --network pro          # the same, for the production one
-almena --open                 # opens that network, if its zone says nobody is there
+almena --open                 # opens that network, and refuses if its zone says somebody is there
+almena --join                 # joins that network, and refuses if its zone says nobody is
 almena --freeze-checklist     # can this format be frozen? nothing is opened
 ```
 
@@ -268,16 +277,107 @@ mean a careless afternoon there costing a node in production.
 
 **Opening is the same act on both**, asked of a different zone. What differs is what is at stake:
 development is opened again as often as it needs to be, and production is opened once, ever, after
-the node has held the format to its own freeze checklist. Without `--open` a run comes back to the
-network its directory already holds and opens nothing, which is what every start after the first
-wants — and what keeps a restart from ever becoming a second network.
+the node has held the format to its own freeze checklist. `--open` refuses when the zone names
+somebody and `--join` refuses when it names nobody: two words with one meaning each. With neither,
+a directory holding a record comes back to its network — which is what every start after the first
+wants, and what keeps a restart from ever becoming a second network — and a fresh directory joins
+if the zone names somebody, and otherwise comes up on no network and writes `no_network_yet`.
+**Every start looks the zone up** and honours `--seed`, so a node that restarts dials whoever the
+zone names as well as whoever the record says can be reached; on a restart the look is best effort
+and silence is a line in the records, `zone_silent_on_rejoin`, rather than a reason.
 
-`--resolver <ADDRESS>` asks named servers instead of whatever this machine uses for DNS, for a
-machine whose own resolver is not usable — behind a VPN, pointed at servers it cannot reach, or
-simply answering every other tool on the machine and not this one. A node that cannot look up a
-zone cannot open a network at all, because reading silence as an empty zone is how a second network
-gets started, so being able to name a resolver is the difference between a machine that can take
-part and one that cannot.
+`--resolver <ADDRESS>` asks named servers instead of whatever this machine uses for DNS, as `ip`
+or `ip:port` — for a machine whose own resolver is not usable, and for the zone emulated on the
+machine itself, which answers on `127.0.0.1:5300`. A node that cannot look up a zone cannot open a
+network at all, because reading silence as an empty zone is how a second network gets started, so
+being able to name a resolver is the difference between a machine that can take part and one that
+cannot.
+
+`--nobody-is-there` opens development without asking the zone, on your word. The parser refuses it
+beside `--network pro`: production is opened on the zone's word and never on anybody's.
+
+`--clock-offset-file <PATH>` adds the epochs written in that file to the node's clock, and reads
+the file again on every look — a development knob, refused beside `--network pro` the same way. A
+device the twelve words add waits seventy-two epochs before it may sign, so a network opened this
+morning cannot be walked past its first act this morning on the wall's clock; the file holds one
+integer and a test moves it (`echo 72 > clock`) while the nodes run. Every node on the network
+reads the same file, so they move together. A file that is absent or holds no integer counts as
+nought and is said once in the records; each change is `clock_offset epochs=N`.
+
+`--mesh <PORT>` takes a place on the mesh, `--carry` carries other nodes' traffic, and
+`--mediator` holds post for people whose device is not on — the mailbox a client's post travels
+through — and says so in the record with `mediator_offered`, once, before anybody is told to
+come here.
+
+`--serve <ADDRESS>` serves the interface **under the node's own key**: a certificate whose subject
+public key is the node's, signed by it, which whoever dials the node pins against the `peer=` the
+zone or the record told them. Serving in the clear is not a mode. `--certificate` and
+`--private-key` serve under a pair an operator already has instead, and the records say which:
+`interface_serving address=… under=own_key` or `under=a_certificate`. Once the socket is bound the
+node announces `Interface` on its own chain, once, the way `--mediator` announces the mailbox —
+`interface_offered written=now` the first time and `written=before` on every start after — so the
+network's capacity figures count it; a socket that was refused claims nothing.
+
+**The node that opened a network holds Almena Government's key**, written beside its record as
+`government.key` (readable by its owner alone) and said in the records as `government_key_at`.
+Three ceremonies run against that directory, each an act through the node's own admission, and
+each ends the run when it is done:
+
+```bash
+almena --network dev --publish-core                       # sources, the core's attributes, the purposes; skips what is there
+almena --network dev --certify <did> --grade 2 --reason-en "…" --reason-es "…"
+almena --network dev --reply <act name> --reason-en "…" --reason-es "…"
+```
+
+A node that joined rather than opened is refused with `NoGovernmentKey`; a reason short of a
+language is refused where the seal is. The records say what was written: `core_published
+sources=… attributes=… purposes=… already=…`, `certified certification=…`, `replied reply=…`.
+
+### The records an operator reads
+
+Every line carries a stable identifier and `name=value` pairs, never a sentence. The ones a node
+coming up writes, in the order they happen: `node_started`, `identity_at`, `record_found` or
+`zone_answered seeds=N` (after `zone_silent_asking_again` up to three times), `seeds_given`,
+`zone_not_asked reason=nobody_is_there`, `government_key_at`, `record_fetched acts=N`,
+`on_network network=… node=… peer=…`, `mesh_reachable`, `mesh_port port=…`, `mediator_offered
+written=now|before`, `interface_serving address=… under=…`, `interface_offered
+written=now|before`. While it runs, the mesh writes `mesh_dialling address=… from=seeds|record`,
+`mesh_parted peer=…`, `mesh_not_reached address=…`, `mesh_dialling_later address=… attempt=N of=8
+in_ms=…`, `mesh_dialling_again` and `mesh_gave_up`; the clock writes `epochs_closed`, and with
+`--clock-offset-file` it writes `clock_offset_file path=…` at start, `clock_offset epochs=N` on
+every change of what the file says, and `clock_offset_unreadable path=… reason=absent|
+unreadable|not_an_integer` once. A refusal to come up is `network_not_taken reason=…` with the
+reason the core gave, and a directory with nothing to come back to and nobody to join is
+`no_network_yet`.
+
+### The development loop, against an emulated zone
+
+The live zones hold no seed, and publishing one is a deployment. The dns repository emulates the
+zone on this machine (`task emulate:dev`, `dns/emulation/README.md`): a small authoritative server
+on `127.0.0.1:5300` reading a JSON file it re-reads on every query, so publishing is editing the
+file.
+
+```bash
+# in dns/: task emulate:dev                                     # empty of _seed, _api, _mediator
+almena --network dev --open --resolver 127.0.0.1:5300 \
+       --directory /tmp/a --mesh 4907 --serve 127.0.0.1:8897 --mediator --quiet
+# read peer= and network= off the on_network line and write A into dns/emulation/dev.json:
+#   _seed      v=1 host=localhost port=4907 peer=12D3KooW… net=zQm…
+#   _api       v=1 url=https://127.0.0.1:8897 peer=12D3KooW…
+#   _mediator  v=1 url=https://127.0.0.1:8897 peer=12D3KooW…
+almena --network dev --join --resolver 127.0.0.1:5300 \
+       --directory /tmp/b --mesh 4908 --serve 127.0.0.1:8898 --quiet     # joins through A
+curl -k https://127.0.0.1:8897/network                                     # the C4 shapes, CBOR
+```
+
+`task dev:cli RESOLVER=127.0.0.1:5300` is the first line and `task dev:cli RESOLVER=127.0.0.1:5300
+JOIN=true MESH=4003 API=127.0.0.1:8792` the second, from this repository.
+
+To walk the holder's road on the day the network opens, start both nodes with the same
+`--clock-offset-file` (`task dev:cli ARGS="--clock-offset-file /tmp/clock"`), and move the file
+when the road waits: a device the words add may sign seventy-two epochs after it was added, so
+`echo 72 > /tmp/clock` is three days passing for every node that reads it. The root repository's
+`task up` starts its two nodes this way and its `task live` moves the file as it walks.
 
 The two networks are not one thing with a setting. **Development is re-opened as often as the
 format moves; production is opened once**, and a record is append-only, so whatever is missing on
@@ -747,30 +847,49 @@ it is the one thing on the strip that should be noticed, and it is not drawn in 
 being a development build is not one of the four states, and borrowing one would cost all four
 their meaning.
 
+A node with no network is shown the walk instead of the application: what this is, which
+network — the one decision that does not come undone — and who contributed it. **One press puts
+it on a network and makes it a node**: it joins through the zone, or opens where the zone names
+nobody, takes its place on the mesh on port 4002 and serves the interface on `127.0.0.1:8791`
+(both remembered, both changed from the Network screen), and the last screen draws the challenge
+somebody with the client scans. Behind a disclosure on the choosing screen are the things the
+terminal takes as flags — another zone, a seed by hand, and *nobody is there* for development —
+so the window can be tried against an emulated zone too; the resolver is `ALMENA_RESOLVER=ip:port`
+in the environment while developing, and nothing a deployment sets. `ALMENA_CLOCK_OFFSET_FILE`
+is the terminal's `--clock-offset-file` spelt for the environment: a development node in the
+window reads the epochs in that file on every look at its clock, and a production node ignores it
+and says so once (`clock_offset_ignored`). The production card carries
+the freeze checklist, so a refusal to open production is never the first anybody hears of it. Each
+network keeps a directory of its own under the application's data, `dev` or `pro`, and a launch
+comes back to the one the preferences remember.
+
 The first screen titles itself and carries two cards. It carried the mark and the product's
 name too, until those moved to the head of the navigation where they are bigger and where a
-person meets them before any screen. One card says what the application is and that it is on no
-network, which is the whole of what it can honestly say — the peer-to-peer layer is not here,
-so no figure on it is measured and none is invented. The other is the one thing this build can
-actually do, which is [send a notification](#notifications). They flow rather than stack: side
-by side once there is room for both, one above the other the moment there is not, out of a
-single auto-fitting grid in `src/components/CardGrid.tsx` and with no breakpoint of their own.
+person meets them before any screen. One card says what the application is and which network it is
+on. The other is the one thing every build can do, which is [send a notification](#notifications).
+They flow rather than stack: side by side once there is room for both, one above the other the
+moment there is not, out of a single auto-fitting grid in `src/components/CardGrid.tsx` and with
+no breakpoint of their own.
 
-Network carries those two cards on **two screens**: what is known about the network this node
-is on, and the peers it is talking to. AI carries two as well — the conversation, and the agent
-itself, which is where its version and the model in force are drawn. Both had crossed on
-`agent_status` since it was written and neither was drawn anywhere. **All of it is a dash and an empty state**, because there is no peer-to-peer
-layer and therefore no network, no identity and no peer. What is real is the machinery — a
-reading taken every ten seconds and on demand, a refresh button, and the time of the last look
-beside it so that pressing the button does something a person can see. The list draws a peer
-the day there is one, without this screen changing.
+Network carries **two screens**: what is known about the network this node is on — the figures,
+what it publishes including the `almena://node?address=…&peer=…` link a client reads, and the
+controls — and the peers it is connected to. AI carries two as well — the conversation, and the
+agent itself, which is where its version and the model in force are drawn. A figure nobody has
+measured is a dash: the peer count until the node has taken its place on the mesh, everything
+until it is on a network. What is drawn beside the peer count is *silent*, how many nodes the
+record's own daily summaries say have gone quiet, which is a fact from the record and not a
+measurement of this node's. The reading is taken every ten seconds and on demand, with a refresh
+button and the time of the last look beside it so that pressing the button does something a
+person can see.
 
 The peer list has **three** ways of holding nothing and says which, because they are three
-different facts: nobody has looked yet, there is no network to have peers on, or there is a
-network and it has none. A screen that shared one sentence between them would be telling a
-reader the wrong one most of the time —
+different facts: nobody has looked yet, nothing has been counted, or there is a mesh and nobody is
+on the other end of it. What is drawn when there is somebody is the count, because the count is
+what the mesh hands over — who is connected is a fact about sockets, and which node each one is
+would be a claim the screen has not checked against the record. A screen that shared one sentence
+between the three would be telling a reader the wrong one most of the time —
 [honest-emptiness.md](https://github.com/almena-network/almena-network/blob/main/.agents/rules/honest-emptiness.md)
-is the agreement, and it is why `readNetwork` returns `null` rather than an empty array.
+is the agreement, and it is why `readNetwork` returns `null` rather than nought.
 
 Settings holds four cards across **two screens**, and it opens on the first of them every time.
 **Appearance** is a screen of its own: the palette — dark, light, or whatever the operating
@@ -816,13 +935,13 @@ Stated rather than discovered by running something and being surprised.
 
 | | Today |
 | --- | --- |
-| The peer-to-peer layer | Not written yet. Almena is the node, but neither program joins a network, reads the configuration a network is described by, or speaks to a peer; the first screen and the node's view both say so, because that is the whole truth available to them. |
-| Anything a client can reach | Nothing. A phone or a tablet is a client and not a node, and it is built in [its own repository](https://github.com/almena-network/client); which API it speaks, over which protocol, and who serves it are open questions, and this side of the answer is not written. No node here offers a client anything, and nothing here shows a code for one to read. |
+| A seed in the live zones | Both zones answer *nobody is there*, so the first development node has not been deployed; every flow runs against the zone emulated in the dns repository. Publishing a seed is a deployment step from a running node — its `mesh_port`, `peer` and `network` off the `on_network` line — and not code here. |
+| Credit | A node is claimed with the challenge both faces draw and the client approves; what a claimed node earns is not computed anywhere yet. |
 | `task check` | Rust and `tsc` only. ESLint, Prettier and the frontend test suite are not installed yet, so `task test` runs Rust alone and there is no `task format` for TypeScript. Until ESLint arrives, the limits on file and function size and the ban on arbitrary Tailwind values are a reviewer's rather than a tool's. |
 | Where updates come from | The updater plugin is registered and inert. Which host serves the releases and which key signs them are both undecided, so `endpoints` and `pubkey` are empty and nothing calls the plugin. See [Registered, and not yet called](#registered-and-not-yet-called). |
 | `--help` in one language | The one thing a person reads that does not come from a catalog. `clap` builds it from the CLI's argument declarations before a catalog can be loaded, so it is English wherever it is read. The drawn view is not affected and is in both languages. |
-| The node's identity | The CLI has somewhere to keep one and nothing to put there. A node is identified by a key generated on its own device, and which kind of key that is belongs to the peer-to-peer layer above. Until then a node is a different participant on every run, which costs nothing while there is no network to be a participant in. |
-| A stored language for the CLI | It reads `LC_ALL`, `LC_MESSAGES` and `LANG` and there is no way to overrule them, because overruling would mean storing a choice. The Settings screen does exactly that for the windowed application; the CLI has no settings and is not getting any. |
+| A code in the terminal | The challenge is drawn as text and as the link, not as a square: nothing this program links encodes one, and a dependency taken on for a square of characters is a dependency. The windowed face draws the same challenge as a code. |
+| Government ceremonies in the window | Publishing the core, certifying and answering run from the terminal against the directory of the node that opened the network. The parity table says so in words, and a window that offered them would be publishing the whole network's core from wherever it happened to be open. |
 | Packages for the CLI | `task build:cli` produces a binary. The CLI is named for Fedora and Ubuntu, and which packages that becomes — the `.deb` and `.rpm` families the desktop already bundles for — is undecided. |
 | Running the node as a service | `--quiet` is what a service manager runs, and nothing here writes a unit file, a plist or a service entry. Whether shipping those is Almena's job or the operator's is undecided. |
 | Signing an agent on macOS | A PyInstaller tree is hundreds of Mach-O objects under `Contents/Resources/`, and notarization wants every one signed with a Developer ID and a secure timestamp, inside-out, before Tauri bundles — plus `disable-library-validation` for a hardened runtime loading a tree of `.so` files. No Apple Developer identity is decided anywhere in this project. Unsigned local builds work; a downloaded, notarized one carrying an agent is unresolved. |

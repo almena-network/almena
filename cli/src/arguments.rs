@@ -1,8 +1,10 @@
-//! What this program accepts on a command line, which is two things and no more.
+//! What this program accepts on a command line.
 //!
-//! Neither of them names a peer, a network or an address: this build joins no network, so such a
-//! flag would be accepted, used for nothing and refused by nothing. It arrives with the code that
-//! can honour it.
+//! Every flag here is honoured by the code behind it, and the ones that are one decision are held
+//! together by the parser rather than by whoever remembers: a certificate without its key, a join
+//! that is also an open, *nobody is there* said of the production network — each is refused before
+//! anything starts, because a node half configured is a node whose published records describe
+//! something that is not there.
 
 use clap::{Parser, ValueEnum};
 
@@ -76,9 +78,44 @@ pub struct Arguments {
     /// a second network.
     ///
     /// Read `--freeze-checklist` before opening production. It answers the same question with
-    /// nothing at stake.
-    #[arg(long)]
+    /// nothing at stake. **It refuses when somebody is there**: a zone that names a node is a
+    /// network to join, and `--join` is the word for that.
+    #[arg(long, conflicts_with = "join")]
     pub open: bool,
+
+    /// Join that network, through whoever its zone names.
+    ///
+    /// **The other half of `--open`, and the one every node but the first wants.** It asks the
+    /// zone — or takes `--seed` — for somebody already there, pulls the record from them, checks
+    /// it is the network the zone promised, and announces itself on it. When nobody is there it
+    /// refuses rather than opening: opening is a different act, said out loud with its own flag.
+    ///
+    /// Neither flag is needed on a start after the first: a directory holding a record comes back
+    /// to its network. And a fresh directory given neither joins when the zone names somebody,
+    /// which is what the window does, and otherwise comes up on no network and says so.
+    #[arg(long, conflicts_with = "open")]
+    pub join: bool,
+
+    /// Open the development network without asking its zone, on your word that nobody is there.
+    ///
+    /// **Development only, and the parser refuses it beside `--network pro`.** The whole defence
+    /// against a second production network is the zone being asked; this is the one place that
+    /// defence is set aside, and it is set aside where a second network costs an afternoon rather
+    /// than the platform. For a machine with no resolver at all, or a network being tried out with
+    /// nothing published anywhere.
+    #[arg(long, requires = "open")]
+    pub nobody_is_there: bool,
+
+    /// Add the epochs written in this file to the clock, re-reading it on every look.
+    ///
+    /// **Development only, and the parser refuses it beside `--network pro`.** A device the words
+    /// add waits three days before it may sign, so a network opened this morning cannot be walked
+    /// this morning on the wall's clock; the file holds one integer, the epochs to add, and a test
+    /// moves it while the node runs. A file that is absent or holds no integer counts as nought,
+    /// said once in the records. A node whose clock somebody can move signs roots for hours that
+    /// have not happened, which is why production never reads one.
+    #[arg(long = "clock-offset-file", value_name = "PATH")]
+    pub clock_offset_file: Option<std::path::PathBuf>,
 
     /// Say whether the format this build writes is one a network may be opened on for good.
     ///
@@ -112,6 +149,15 @@ pub struct Arguments {
     /// counted like anything else a node offers.
     #[arg(long)]
     pub carry: bool,
+
+    /// Hold post for people whose device is not on: run a mailbox, and say so in the record.
+    ///
+    /// **Volunteered, like carrying, and said where it is counted.** A client chooses a mediator
+    /// from what the zone and the record name, and the record is what says this node is one — so
+    /// turning this on writes an act on the node's own chain, once, and the mailbox answers from
+    /// then on. Nothing held is replicated, signed by this node, or kept past it.
+    #[arg(long)]
+    pub mediator: bool,
 
     /// Ask this node to carry ours, and publish where that makes us reachable.
     ///
@@ -190,8 +236,12 @@ pub struct Arguments {
     /// between a machine that can take part and one that cannot.
     ///
     /// Addresses, not names: a resolver named by a name would need a resolver.
-    #[arg(long = "resolver", value_name = "ADDRESS")]
-    pub resolvers: Vec<std::net::IpAddr>,
+    ///
+    /// `ip` or `ip:port`, and a bare address means the port DNS is spoken on. The port is for the
+    /// one case where a resolver answers somewhere unusual, which on this platform is a zone
+    /// emulated on the machine itself: `--resolver 127.0.0.1:5300`.
+    #[arg(long = "resolver", value_name = "ADDRESS", value_parser = resolver)]
+    pub resolvers: Vec<std::net::SocketAddr>,
 
     /// Look for somebody to join in this zone instead of the usual one.
     ///
@@ -216,6 +266,42 @@ pub struct Arguments {
     /// The private key for `--certificate`, in PEM.
     #[arg(long, value_name = "PATH", requires = "certificate")]
     pub private_key: Option<std::path::PathBuf>,
+
+    /// Publish the core Almena maintains, as Almena Government, and leave.
+    ///
+    /// **A government ceremony, run against the directory of the node that opened the network**,
+    /// which is where that network's government key was kept. Sources first, then the attributes
+    /// copied from them, then the closed list of purposes — each an act through this node's own
+    /// admission, and each skipped where the record already holds it, so running it twice costs
+    /// nothing. The node is not left running: a ceremony is an act, and the run ends with it.
+    #[arg(long)]
+    pub publish_core: bool,
+
+    /// Certify this entity, as Almena Government, and leave.
+    ///
+    /// Needs `--grade` and a reason in both languages, because a decision with no published reason
+    /// is arbitrariness and one half the readers cannot read is not published.
+    #[arg(long, value_name = "DID", requires_all = ["grade", "reason_en", "reason_es"])]
+    pub certify: Option<String>,
+
+    /// Which grade `--certify` gives: 1 basic, 2 verified, 3 reinforced.
+    #[arg(long, value_name = "N", requires = "certify", value_parser = clap::value_parser!(u64).range(1..=3))]
+    pub grade: Option<u64>,
+
+    /// Answer this asking to be certified, as Almena Government, with a refusal, and leave.
+    ///
+    /// The act named is the entity's own asking, on its own chain. The reply is published beside it
+    /// for ever, which is what makes a refusal something anybody can read and judge.
+    #[arg(long, value_name = "ACT", requires_all = ["reason_en", "reason_es"])]
+    pub reply: Option<String>,
+
+    /// Why, in English, for `--certify` or `--reply`.
+    #[arg(long, value_name = "TEXT")]
+    pub reason_en: Option<String>,
+
+    /// Why, in Spanish, for `--certify` or `--reply`.
+    #[arg(long, value_name = "TEXT")]
+    pub reason_es: Option<String>,
     /// Speak this language from now on — `en`, `es`. Remembered.
     ///
     /// What a person chooses overrules what the system says, and is remembered. Without this
@@ -229,7 +315,69 @@ pub struct Arguments {
     pub language: Option<String>,
 }
 
+/// A resolver's address as clap hands it over: `ip` or `ip:port`.
+///
+/// The reading is `almena_lookup`'s; this only turns its refusal into a sentence `clap` can print,
+/// because the lookup crate has no business knowing there is a command line.
+fn resolver(written: &str) -> Result<std::net::SocketAddr, String> {
+    almena_lookup::server(written)
+        .map_err(|_| "an IP address, with :port when DNS is not on 53 — never a name".to_owned())
+}
+
 impl Arguments {
+    /// The command line, parsed, with the one rule `clap` cannot hold on its own applied.
+    ///
+    /// **`--nobody-is-there` and `--clock-offset-file` beside `--network pro` are refused here,
+    /// and the process leaves as it would for any other conflict.** A conflict between a flag and
+    /// a *value* is not one `clap` declares, and the rules matter too much to be left to the code
+    /// that would otherwise honour them: opening production without asking its zone is the one
+    /// accident this platform cannot undo, and a production node whose clock can be moved is one
+    /// signing roots for hours that have not happened.
+    #[must_use]
+    pub fn parsed() -> Self {
+        match Self::try_parsed_from(std::env::args_os()) {
+            Ok(arguments) => arguments,
+            Err(refusal) => refusal.exit(),
+        }
+    }
+
+    /// The same, from any command line, for a test to hold the rule to.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `clap` refused, or the development-only rule above as a `clap` error of the same
+    /// shape, so that both print the same way.
+    pub fn try_parsed_from<I, T>(arguments: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        use clap::CommandFactory as _;
+        let parsed = Self::try_parse_from(arguments)?;
+        if parsed.nobody_is_there && parsed.network == Network::Pro {
+            return Err(Self::command().error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--nobody-is-there is for development: production is opened on the zone's word and never on yours",
+            ));
+        }
+        if parsed.clock_offset_file.is_some() && parsed.network == Network::Pro {
+            return Err(Self::command().error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--clock-offset-file is for development: production keeps the wall's clock and nobody moves it",
+            ));
+        }
+        Ok(parsed)
+    }
+
+    /// Whether this run is a government ceremony rather than a node being brought up to stay.
+    ///
+    /// Publishing the core, certifying and answering are acts on the record and then the run
+    /// ends: a node that stayed up drawing after a ceremony would be a node started by accident.
+    #[must_use]
+    pub fn is_a_ceremony(&self) -> bool {
+        self.publish_core || self.certify.is_some() || self.reply.is_some()
+    }
+
     /// Whether this run should write records rather than draw a view.
     ///
     /// True when it was asked for, and true when there is no terminal to draw on — a unit file
@@ -360,6 +508,227 @@ mod tests {
                 .as_deref(),
             Some("127.0.0.1:8080")
         );
+    }
+
+    #[test]
+    fn opening_and_joining_are_two_flags_and_never_both() {
+        // One is *make a network* and the other is *take the one that is there*; a run that asked
+        // for both would be asking for whichever the zone happened to answer.
+        assert!(Arguments::try_parse_from(["almena", "--open", "--join"]).is_err());
+        assert!(Arguments::parse_from(["almena", "--join"]).join);
+    }
+
+    #[test]
+    fn nobody_is_there_is_refused_for_production_and_taken_for_development() {
+        // **The one accident this platform cannot undo**, refused at the parser and not left to
+        // the code that would honour it. Development is where a second network costs an afternoon.
+        assert!(
+            Arguments::try_parsed_from([
+                "almena",
+                "--network",
+                "pro",
+                "--open",
+                "--nobody-is-there"
+            ])
+            .is_err()
+        );
+        let taken = Arguments::try_parsed_from([
+            "almena",
+            "--network",
+            "dev",
+            "--open",
+            "--nobody-is-there",
+        ])
+        .expect("development may be opened on somebody's word");
+        assert!(taken.nobody_is_there);
+        assert!(
+            Arguments::try_parsed_from(["almena", "--nobody-is-there"]).is_err(),
+            "and it means nothing without --open"
+        );
+    }
+
+    #[test]
+    fn a_clock_offset_is_refused_for_production_and_taken_for_development() {
+        // A production node whose clock somebody can move signs roots for hours that have not
+        // happened — refused at the parser, like opening on somebody's word, and for development
+        // it is how the three-day wait passes on the morning a network opens.
+        assert!(
+            Arguments::try_parsed_from([
+                "almena",
+                "--network",
+                "pro",
+                "--clock-offset-file",
+                "/tmp/clock"
+            ])
+            .is_err()
+        );
+        let taken = Arguments::try_parsed_from([
+            "almena",
+            "--network",
+            "dev",
+            "--clock-offset-file",
+            "/tmp/clock",
+        ])
+        .expect("development may move its clock");
+        assert_eq!(
+            taken.clock_offset_file.as_deref(),
+            Some(std::path::Path::new("/tmp/clock"))
+        );
+        assert_eq!(
+            Arguments::try_parsed_from(["almena"])
+                .expect("parses")
+                .clock_offset_file,
+            None,
+            "and nothing is read unless a file is named"
+        );
+    }
+
+    #[test]
+    fn a_resolver_is_an_address_with_or_without_a_port() {
+        let bare = Arguments::parse_from(["almena", "--resolver", "127.0.0.1"]);
+        assert_eq!(bare.resolvers[0].port(), almena_lookup::DNS_PORT);
+        let with = Arguments::parse_from([
+            "almena",
+            "--resolver",
+            "127.0.0.1:5300",
+            "--resolver",
+            "[::1]:5300",
+        ]);
+        assert_eq!(with.resolvers.len(), 2);
+        assert_eq!(with.resolvers[0].port(), 5300);
+        assert!(
+            Arguments::try_parse_from(["almena", "--resolver", "dns.example"]).is_err(),
+            "a resolver named by a name would need a resolver"
+        );
+    }
+
+    #[test]
+    fn a_ceremony_needs_its_reason_in_both_languages() {
+        // A decision with no published reason is arbitrariness, and one half the readers cannot
+        // read is not published — refused before a key is touched.
+        assert!(
+            Arguments::try_parse_from(["almena", "--certify", "did:almena:dev:z1", "--grade", "1"])
+                .is_err()
+        );
+        assert!(
+            Arguments::try_parse_from([
+                "almena",
+                "--certify",
+                "did:almena:dev:z1",
+                "--grade",
+                "4",
+                "--reason-en",
+                "a",
+                "--reason-es",
+                "b"
+            ])
+            .is_err()
+        );
+        let sealed = Arguments::parse_from([
+            "almena",
+            "--certify",
+            "did:almena:dev:z1",
+            "--grade",
+            "2",
+            "--reason-en",
+            "a",
+            "--reason-es",
+            "b",
+        ]);
+        assert!(sealed.is_a_ceremony());
+        assert_eq!(sealed.grade, Some(2));
+        assert!(Arguments::try_parse_from(["almena", "--reply", "zQm1"]).is_err());
+        assert!(Arguments::parse_from(["almena", "--publish-core"]).is_a_ceremony());
+        assert!(!Arguments::parse_from(["almena"]).is_a_ceremony());
+    }
+
+    #[test]
+    fn a_mediator_is_asked_for_and_never_assumed() {
+        assert!(!Arguments::parse_from(["almena"]).mediator);
+        assert!(Arguments::parse_from(["almena", "--mediator"]).mediator);
+    }
+
+    /// Which flag offers which capability, for the check against the table both faces are held to.
+    const BY_FLAG: &[(&str, &[almena_node::facade::Capability])] = {
+        use almena_node::facade::Capability;
+        &[
+            ("quiet", &[Capability::Watch]),
+            (
+                "network",
+                &[Capability::OpenNetwork, Capability::JoinNetwork],
+            ),
+            ("open", &[Capability::OpenNetwork]),
+            ("join", &[Capability::JoinNetwork]),
+            ("nobody_is_there", &[Capability::NobodyIsThere]),
+            ("clock_offset_file", &[Capability::ClockOffset]),
+            ("freeze_checklist", &[Capability::FreezeChecklist]),
+            ("serve", &[Capability::Serve]),
+            ("mesh", &[Capability::JoinTheMesh]),
+            ("carry", &[Capability::JoinTheMesh]),
+            ("mediator", &[Capability::Mediator]),
+            ("carried_by", &[Capability::JoinTheMesh]),
+            ("who_contributed_me", &[Capability::SayWhoContributedIt]),
+            ("contributed_by", &[Capability::SayWhoContributedIt]),
+            ("contributed_by_nobody", &[Capability::SayWhoContributedIt]),
+            ("close_this_node", &[Capability::CloseThisNode]),
+            ("directory", &[Capability::Directory]),
+            ("seeds", &[Capability::WhereToLook]),
+            ("resolvers", &[Capability::WhereToLook]),
+            ("zone", &[Capability::WhereToLook]),
+            ("certificate", &[Capability::Certificate]),
+            ("private_key", &[Capability::Certificate]),
+            ("publish_core", &[Capability::PublishCore]),
+            ("certify", &[Capability::Certify]),
+            ("grade", &[Capability::Certify]),
+            ("reply", &[Capability::Reply]),
+            ("reason_en", &[Capability::Certify, Capability::Reply]),
+            ("reason_es", &[Capability::Certify, Capability::Reply]),
+            ("language", &[Capability::Language]),
+        ]
+    };
+
+    #[test]
+    fn what_this_face_parses_is_what_the_table_says_it_offers() {
+        // **The terminal's half of the parity check.** The table in the core says which
+        // capabilities the terminal draws; `BY_FLAG` maps every flag `clap` parses onto them — plus
+        // the three that are not flags: coming back is the absence of one, closing an epoch is a
+        // key in the view, and watching is the view itself — and the two lists are held to each
+        // other. A flag added without a row, or a row without a flag, fails here.
+        use almena_node::facade::{Capability, offered_by_terminal};
+        use clap::CommandFactory as _;
+
+        let mut drawn: Vec<Capability> = BY_FLAG
+            .iter()
+            .flat_map(|(_, capabilities)| capabilities.iter().copied())
+            .collect();
+        drawn.extend([
+            Capability::ComeBack,
+            Capability::CloseEpoch,
+            Capability::Watch,
+        ]);
+
+        for argument in Arguments::command().get_arguments() {
+            let id = argument.get_id().as_str();
+            if id == "help" || id == "version" {
+                continue;
+            }
+            assert!(
+                BY_FLAG.iter().any(|(flag, _)| *flag == id),
+                "--{id} is parsed and maps onto no capability"
+            );
+        }
+        for capability in offered_by_terminal() {
+            assert!(
+                drawn.contains(&capability),
+                "{capability:?}: the table says the terminal offers it and no flag does"
+            );
+        }
+        for capability in &drawn {
+            assert!(
+                offered_by_terminal().contains(capability),
+                "{capability:?}: a flag offers it and the table does not say so"
+            );
+        }
     }
 
     #[test]

@@ -187,6 +187,20 @@ impl Kind {
     /// are published together, and for ever** — whoever chooses their own root of trust reads both
     /// and judges.
     pub const REPLY_PUBLISH: Kind = Kind(52);
+
+    // Certification, asked for
+    /// `request` on an entity's own chain: an organisation asking to be certified at a grade.
+    ///
+    /// **On the entity's chain and not on Almena's**, for the reason a reply is an object of its
+    /// own: nobody writes in somebody else's chain. Asking is something the entity does in its own
+    /// name, so it is signed by its owners at what a routine act costs them and lands in its own
+    /// history — where anybody reading that history sees what it asked for and when. What Almena
+    /// decides is a certification (an object pointing back at the entity) or a reply pointing at
+    /// this act, and both are published for ever beside it.
+    ///
+    /// Numbered after the node's closing act rather than beside the other certification acts,
+    /// because a number is never reassigned: the ones between were spent before this existed.
+    pub const CERTIFICATION_REQUEST: Kind = Kind(54);
 }
 
 impl Kind {
@@ -216,7 +230,7 @@ impl Kind {
     }
 
     /// Every act this build knows, in the order they are numbered.
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 54] = [
         Self::HOLDER_CREATE,
         Self::HOLDER_ADD_DEVICE,
         Self::HOLDER_REMOVE_DEVICE,
@@ -270,6 +284,7 @@ impl Kind {
         Self::GENESIS,
         Self::REPLY_PUBLISH,
         Self::NODE_CLOSE,
+        Self::CERTIFICATION_REQUEST,
     ];
 }
 
@@ -289,7 +304,7 @@ mod tests {
         // catches a number typed twice or skipped — either of which would be an act nobody could
         // name, or two acts nobody could tell apart.
         let numbers: Vec<u64> = Kind::ALL.iter().map(|kind| kind.number()).collect();
-        assert_eq!(numbers, (1..=53).collect::<Vec<u64>>());
+        assert_eq!(numbers, (1..=54).collect::<Vec<u64>>());
     }
 
     #[test]

@@ -131,6 +131,12 @@ pub enum Why {
     Forked = 1,
     /// Its history contains an act this build does not know.
     Unintelligible = 2,
+    /// Two acts claim the same predecessor, on a chain somebody had already settled once.
+    ///
+    /// **The payload is the name of the act that settled it last time**, so that whoever may sign
+    /// can be offered *settle again* pre-filled with the branch they kept before — a settled chain
+    /// that splits again looks, from outside, exactly like one that never was.
+    ForkedAgain = 3,
 }
 
 /// What this node will and will not do, published so that saying and doing can be compared.
@@ -180,6 +186,14 @@ pub enum Ask {
     State(Did, Option<Name>),
     /// What has been said about somebody by somebody else.
     About(Did),
+    /// The entries of an object's own chain, in the order this node wrote them.
+    ///
+    /// **The other half of holding a summary to the log.** A summary cites the act that last set
+    /// each part of an object; whether it left one out is answered by the object's own acts, which
+    /// are never *about* it — they are its — and so never come back under `About`. Entries and
+    /// not acts, because a reader checking for an omission needs the kind of every act and the
+    /// bytes of none of them.
+    Log(Did),
     /// Where an act sits in this node's tree, and the path that proves it.
     /// Where a node wrote an act down, proved against a root it signed.
     ///
@@ -234,6 +248,14 @@ pub enum Ask {
     /// holds, so two nodes holding the same acts answer the same thing and whoever asked can work
     /// it out again without asking anybody.
     Kept(u64),
+    /// Which network this node is on: its name, when it began, and whether it is the real one.
+    ///
+    /// **So that nobody has to be told out of band.** The name is the act that opened the network,
+    /// which is the one fact a node reads everything else against; when it began is the only
+    /// wall-clock reading this platform ever writes down, and every epoch is hours from it. A
+    /// reader that had to carry those in a configuration file would be a reader that could be
+    /// pointed at one network while believing it was reading another.
+    Network,
 }
 
 /// A response: what happened, and the bytes that say so.
@@ -296,6 +318,9 @@ pub fn parse(method: &str, path: &str) -> Result<Ask, Unreadable> {
         ("about", Some(did), None) => Did::parse(did)
             .map(Ask::About)
             .map_err(|_| Unreadable::Malformed),
+        ("log", Some(did), None) => Did::parse(did)
+            .map(Ask::Log)
+            .map_err(|_| Unreadable::Malformed),
         ("root", Some(epoch), None) => numbered(epoch).map(Ask::Root),
         ("capacity", None, None) => Ok(Ask::Capacity),
         ("anchor", None, None) => Ok(Ask::Anchor),
@@ -309,6 +334,7 @@ pub fn parse(method: &str, path: &str) -> Result<Ask, Unreadable> {
             .parse::<u64>()
             .map(Ask::Kept)
             .map_err(|_| Unreadable::Malformed),
+        ("network", None, None) => Ok(Ask::Network),
         _ => Err(Unreadable::NoSuchQuestion),
     }
 }
@@ -368,16 +394,18 @@ pub fn answer(node: &Node, ask: &Ask, now: Epoch, limits: &Limits) -> Said {
             // about the issuer, made out of this node's own share of the work.
             None => said(node, now, State::NotHere, None, None),
         },
-        Ask::About(subject) => match node.about(subject, now).answer {
-            Some(hashes) => {
-                let listed = hashes
-                    .into_iter()
-                    .map(|hash| Value::Text(hash.as_str().to_owned()))
+        Ask::About(subject) => match node.said_about(subject, now).answer {
+            Some(entries) => {
+                let listed = entries
+                    .iter()
+                    .map(|entry| Value::Map(line_of(entry)))
                     .collect();
                 said(node, now, State::Here, Some(Value::Array(listed)), None)
             }
             None => said(node, now, State::NotYetAskable, None, None),
         },
+        Ask::Log(object) => logged(node, object, now),
+        Ask::Network => said(node, now, State::Here, Some(network_of(node)), None),
         Ask::Inclusion(epoch, name) => proved(node, name, *epoch, now),
         Ask::Root(epoch) => match node.root_at(*epoch) {
             // Signed on the way out, not stored signed: the signature is over bytes that never
@@ -453,6 +481,8 @@ const fn rule(refused: Refused) -> u64 {
         Refused::NotAContradiction => 10,
         Refused::BeforeItsPredecessor => 11,
         Refused::TooManyWaiting => 12,
+        // Recoverable: the branch is fetched and the act handed over again.
+        Refused::BranchNotHeld => 13,
     }
 }
 
@@ -482,11 +512,18 @@ fn resolved(node: &Node, name: &Name, now: Epoch) -> Said {
         Answer::DoesNotExist => said(node, now, State::DoesNotExist, None, None),
         Answer::NotHere => said(node, now, State::NotHere, None, None),
         Answer::CannotResolve(reason) => {
-            let why = match reason {
-                Reason::Forked => Why::Forked,
-                Reason::Unintelligible => Why::Unintelligible,
+            // Which of the reasons, as a number; and for a chain settled once and split again,
+            // the act that settled it, so that whoever may sign is offered *settle again* with the
+            // branch they kept before.
+            let (why, carried) = match reason {
+                Reason::Forked => (Why::Forked, None),
+                Reason::Unintelligible => (Why::Unintelligible, None),
+                Reason::ForkedAgain(settled) => (
+                    Why::ForkedAgain,
+                    Some(Value::Text(settled.as_str().to_owned())),
+                ),
             };
-            said(node, now, State::CannotResolve, None, Some(why as u64))
+            said(node, now, State::CannotResolve, carried, Some(why as u64))
         }
         Answer::Here(_) => {
             // The state itself is not served: whoever asked composes it from the acts, checking
@@ -704,6 +741,85 @@ fn composing(node: &Node, object: &Did, after: Option<&Name>, now: Epoch) -> Sai
         body.insert(3, Value::Text(more.as_str().to_owned()));
     }
     said(node, now, State::Here, Some(Value::Map(body)), None)
+}
+
+/// What has been said about somebody, one line per log entry — and, under `/log`, what an object
+/// itself did, in the same lines.
+///
+/// **The entry and not only the act's name**, so that a reader can tell a seal from a withdrawal
+/// from a contradiction — and can hold a summary's citations against the log — without fetching
+/// every act. All odd: a reader that passed over the kind would hold a list of names it cannot
+/// place, which is what this used to be. One shape for both listings, so that a reader has one
+/// line to read and never has to ask which door it came through.
+mod about {
+    /// What the act is called.
+    pub const HASH: u64 = 1;
+    /// Which kind of act it is.
+    pub const KIND: u64 = 3;
+    /// Which version of that kind.
+    pub const VERSION: u64 = 5;
+    /// The act it follows on its object's chain, when it follows one.
+    pub const PREVIOUS: u64 = 7;
+}
+
+/// The entries of an object's own chain, one line each, in the order this node wrote them.
+///
+/// **Empty is a fact and not an absence.** An object nobody has written an act for has no chain,
+/// and a reader holding a summary against nothing sees that nothing was left out — which is the
+/// true answer, so it is not dressed as *does not exist*.
+fn logged(node: &Node, object: &Did, now: Epoch) -> Said {
+    let listed = node
+        .chain_of(object, now)
+        .answer
+        .iter()
+        .map(|entry| Value::Map(line_of(entry)))
+        .collect();
+    said(node, now, State::Here, Some(Value::Array(listed)), None)
+}
+
+/// One log entry, as a line of what has been said about somebody.
+fn line_of(entry: &almena_format::entry::Entry) -> BTreeMap<u64, Value> {
+    let mut line = BTreeMap::from([
+        (about::HASH, Value::Text(entry.hash.as_str().to_owned())),
+        (about::KIND, Value::Uint(entry.kind)),
+        (about::VERSION, Value::Uint(entry.version)),
+    ]);
+    // Left out on a first act rather than written as null: absent is absent, and a reader that
+    // found the key would otherwise have to check whether it meant anything.
+    if let Some(previous) = &entry.previous {
+        line.insert(about::PREVIOUS, Value::Text(previous.as_str().to_owned()));
+    }
+    line
+}
+
+/// Which network this node is on.
+///
+/// All odd, and every one of them a fact of the record rather than of this node: the name is the
+/// act that opened it, the instant is written inside that act, and which network it is was declared
+/// there too. Two nodes on one network answer the same bytes.
+mod network {
+    /// What the network is called: the name of the act that opened it.
+    pub const NAME: u64 = 1;
+    /// When its epoch zero began, in seconds since the Unix epoch.
+    pub const BEGAN: u64 = 2;
+    /// Which network it is: one for development, two for production.
+    pub const WHICH: u64 = 3;
+}
+
+/// The network this node is on, as an answer.
+fn network_of(node: &Node) -> Value {
+    let which = match node.government().network() {
+        almena_format::identifier::Network::Development => 1,
+        almena_format::identifier::Network::Production => 2,
+    };
+    Value::Map(BTreeMap::from([
+        (
+            network::NAME,
+            Value::Text(node.network().as_str().to_owned()),
+        ),
+        (network::BEGAN, Value::Uint(node.began())),
+        (network::WHICH, Value::Uint(which)),
+    ]))
 }
 
 /// What the limits look like as an answer.
@@ -1111,6 +1227,83 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines, reason = "one listing, held from both doors")]
+    fn an_object_s_own_acts_come_back_under_log_and_never_under_about() {
+        // **The two halves of holding a summary to the record.** What was said *about* an object
+        // is somebody else's act on their own chain; what the object itself did is its own chain.
+        // A reader checking that a summary left nothing out walks the second, and a listing that
+        // folded the two together would have it count a stranger's seal as an act of the account.
+        let mut node = a_node();
+        let control = key(9);
+        let account = an_account(&control, Epoch::GENESIS);
+        node.submit(&account, Epoch::GENESIS).expect("taken");
+        let device = a_device_on(&account, &control);
+        node.submit(&device, Epoch::GENESIS).expect("taken");
+
+        let own = answer(
+            &node,
+            &Ask::Log(account.object.clone()),
+            Epoch::GENESIS,
+            &limits(),
+        );
+        assert_eq!(own.state, State::Here);
+        let Some(Value::Array(lines)) = body(&own).get(&field::PAYLOAD).cloned() else {
+            panic!("a list of the object's own entries")
+        };
+        assert_eq!(lines.len(), 2, "the creation and the asking, in log order");
+        let Value::Map(first) = &lines[0] else {
+            panic!("one map per entry")
+        };
+        assert_eq!(
+            first.get(&super::about::HASH),
+            Some(&Value::Text(account.called().as_str().to_owned()))
+        );
+        assert_eq!(
+            first.get(&super::about::KIND),
+            Some(&Value::Uint(Kind::HOLDER_CREATE.number()))
+        );
+        assert_eq!(first.get(&super::about::PREVIOUS), None);
+        let Value::Map(second) = &lines[1] else {
+            panic!("one map per entry")
+        };
+        assert_eq!(
+            second.get(&super::about::HASH),
+            Some(&Value::Text(device.called().as_str().to_owned()))
+        );
+        assert_eq!(
+            second.get(&super::about::PREVIOUS),
+            Some(&Value::Text(account.called().as_str().to_owned())),
+            "the same shape /about uses, previous and all"
+        );
+
+        // Nothing was said about the account by anybody else, and its own acts do not count.
+        let about = answer(
+            &node,
+            &Ask::About(account.object.clone()),
+            Epoch::GENESIS,
+            &limits(),
+        );
+        assert_eq!(
+            body(&about).get(&field::PAYLOAD),
+            Some(&Value::Array(Vec::new()))
+        );
+
+        // An object nobody wrote an act for has an empty chain, which is a fact about the record.
+        let nobody = Did::new(Network::Development, Name::of(b"nobody"));
+        let empty = answer(&node, &Ask::Log(nobody), Epoch::GENESIS, &limits());
+        assert_eq!(empty.state, State::Here);
+        assert_eq!(
+            body(&empty).get(&field::PAYLOAD),
+            Some(&Value::Array(Vec::new()))
+        );
+        assert_eq!(
+            parse("GET", "/log/did:almena:dev:x/y"),
+            Err(Unreadable::NoSuchQuestion)
+        );
+        assert_eq!(parse("GET", "/log/not a did"), Err(Unreadable::Malformed));
+    }
+
+    #[test]
     fn handing_over_a_good_act_writes_it_down() {
         let mut node = a_node();
         let before = node.written();
@@ -1166,6 +1359,7 @@ mod tests {
             (Refused::NotAContradiction, 10),
             (Refused::BeforeItsPredecessor, 11),
             (Refused::TooManyWaiting, 12),
+            (Refused::BranchNotHeld, 13),
         ];
         for (refused, number) in numbered {
             assert_eq!(rule(refused), number, "{refused:?}");
@@ -1204,6 +1398,120 @@ mod tests {
         // the signature rather than discovering.
         assert_eq!(parse("POST", "/limits"), Err(Unreadable::NoSuchQuestion));
         assert_eq!(parse("PUT", "/object/x"), Err(Unreadable::NoSuchQuestion));
+    }
+
+    #[test]
+    fn the_reasons_an_object_cannot_be_resolved_are_numbered_and_not_ordered() {
+        // The same rule the refusals live under: a number pasted into a support channel has to
+        // mean the same thing on every node, whatever order somebody declared the variants in.
+        assert_eq!(Why::Forked as u64, 1);
+        assert_eq!(Why::Unintelligible as u64, 2);
+        assert_eq!(Why::ForkedAgain as u64, 3);
+    }
+
+    /// Almena Government certifying that account at the first grade, with the key it was opened
+    /// with — the plainest thing that can be said about somebody.
+    fn a_seal_on(node: &Node, subject: &Did, now: Epoch) -> almena_format::operation::Operation {
+        use almena_store::certification::{Reason, field as certification};
+        let mut sealing = create(
+            Network::Development,
+            Kind::CERTIFICATION_ISSUE.number(),
+            1,
+            now,
+            BTreeMap::from([
+                (
+                    certification::BY,
+                    Value::Text(node.government().to_string()),
+                ),
+                (certification::SUBJECT, Value::Text(subject.to_string())),
+                (certification::GRADE, Value::Uint(1)),
+                (
+                    certification::REASON,
+                    Reason::carried(&BTreeMap::from([
+                        ("en".to_owned(), "checked".to_owned()),
+                        ("es".to_owned(), "comprobado".to_owned()),
+                    ])),
+                ),
+            ]),
+        );
+        let signature = key(5).sign(&sealing.signing_bytes());
+        sealing.signatures.push(Signed {
+            by: node.government().clone(),
+            key: key(5).verifying_key().bytes().to_vec(),
+            signature: signature.bytes(),
+        });
+        sealing
+    }
+
+    #[test]
+    fn what_has_been_said_about_somebody_says_what_kind_of_thing_each_act_is() {
+        // **A list of names was a list a reader could not place**: a seal, a withdrawal and a
+        // contradiction all came back as text, and telling them apart cost one fetch each. The
+        // entry already carries the kind, so it comes back as a map per entry — never as bare text
+        // again, so that a reader cannot mistake one shape for the other.
+        let mut node = a_node();
+        let now = Epoch::GENESIS;
+        let certified = an_account(&key(9), now);
+        node.submit(&certified, now).expect("taken");
+        let sealing = a_seal_on(&node, &certified.object, now);
+        node.submit(&sealing, now)
+            .expect("Almena, with the key it was opened with, seals");
+
+        let said = answer(&node, &Ask::About(certified.object.clone()), now, &limits());
+        assert_eq!(said.state, State::Here);
+        let Some(Value::Array(lines)) = body(&said).get(&field::PAYLOAD).cloned() else {
+            panic!("a list of what was said")
+        };
+        assert_eq!(lines.len(), 1);
+        let Value::Map(line) = &lines[0] else {
+            panic!("one map per entry, never bare text")
+        };
+        assert_eq!(
+            line.get(&super::about::HASH),
+            Some(&Value::Text(sealing.called().as_str().to_owned()))
+        );
+        assert_eq!(
+            line.get(&super::about::KIND),
+            Some(&Value::Uint(Kind::CERTIFICATION_ISSUE.number()))
+        );
+        assert_eq!(line.get(&super::about::VERSION), Some(&Value::Uint(1)));
+        assert_eq!(
+            line.get(&super::about::PREVIOUS),
+            None,
+            "a first act follows nothing, and says so by leaving it out"
+        );
+    }
+
+    #[test]
+    fn which_network_a_node_is_on_is_a_question_it_answers() {
+        // **So that nobody carries it in a configuration file.** The name is the act that opened
+        // the network, when it began is written inside that act, and which one it is was declared
+        // there — three facts of the record, answered by any node on it.
+        assert_eq!(parse("GET", "/network"), Ok(Ask::Network));
+        assert_eq!(
+            parse("GET", "/network/dev"),
+            Err(Unreadable::NoSuchQuestion)
+        );
+
+        let node = a_node();
+        let said = answer(&node, &Ask::Network, Epoch::GENESIS, &limits());
+        assert_eq!(said.state, State::Here);
+        let Some(Value::Map(network)) = body(&said).get(&field::PAYLOAD).cloned() else {
+            panic!("it says which network")
+        };
+        assert_eq!(
+            network.get(&super::network::NAME),
+            Some(&Value::Text(node.network().as_str().to_owned()))
+        );
+        assert_eq!(
+            network.get(&super::network::BEGAN),
+            Some(&Value::Uint(1_800_000_000))
+        );
+        assert_eq!(
+            network.get(&super::network::WHICH),
+            Some(&Value::Uint(1)),
+            "development is one; production is two"
+        );
     }
 
     #[test]

@@ -18,6 +18,10 @@ almena-suite = { workspace = true }
 almena-time = { workspace = true }
 async-trait = { workspace = true }
 libp2p = { workspace = true }
+# The facade every program in this workspace writes records through. What the mesh says through
+# it is the one thing an operator cannot see from a face: whom it dialled again, and when it gave
+# up — said as stable identifiers, so a log line can be searched for rather than read.
+log = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "macros"] }
 
 [dev-dependencies]
